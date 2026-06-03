@@ -53,3 +53,18 @@ def run_suite(cases: list[EvalCase], *, store, embedder, k: int = 8) -> dict[str
             "latency_ms_p50": sorted(r.latency_ms for r in results)[len(results)//2],
         }
     return summary
+
+def run_ablation(*, query, project, relevant_ids, store, embedder, k=8):
+    out = {}
+    for name, expand in (("similarity-only", False), ("similarity+edges", True)):
+        r = Retriever(store, embedder, k=k, recency_weight=0.0, edge_expand=expand)
+        tr = r.query(query, Scope(project=project))
+        ids = [h.artifact.id for h in tr.hits]
+        out[name] = {"recall@k": recall_at_k(ids, relevant_ids, k),
+                     "ndcg@k": ndcg_at_k(ids, relevant_ids, k)}
+    return out
+
+def run_contradiction_eval(*, query, project, stale_id, current_id, store, embedder, k=8):
+    r = Retriever(store, embedder, k=k, edge_expand=True)
+    ids = [h.artifact.id for h in r.query(query, Scope(project=project)).hits]
+    return (current_id in ids) and (stale_id not in ids)
