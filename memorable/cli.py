@@ -116,5 +116,14 @@ def ingest_doc(path: str, project: str = typer.Option(...), kind: str = "note",
     typer.echo(f"ingested {len(arts)} chunks from {path}")
 
 
+@app.command("daemon")
+def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
+           projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/")):
+    """Run the auto-ingest daemon (foreground). Watches ~/.claude/projects/ for new transcripts."""
+    from memorable.daemon import run_daemon, CLAUDE_PROJECTS_DIR
+    d = Path(projects_dir) if projects_dir else CLAUDE_PROJECTS_DIR
+    run_daemon(poll_interval=poll_interval, projects_dir=d)
+
+
 if __name__ == "__main__":
     app()
