@@ -1,5 +1,5 @@
 from typer.testing import CliRunner
-from memorable.cli import app
+from memor.cli import app
 
 def test_cli_query_smoke(tmp_path, monkeypatch):
     runner = CliRunner()

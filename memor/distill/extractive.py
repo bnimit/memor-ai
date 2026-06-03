@@ -8,7 +8,7 @@ Picks the highest-signal chunks from a session using:
 from __future__ import annotations
 import hashlib, math, re
 from collections import Counter
-from memorable.types import Artifact
+from memor.types import Artifact
 
 MIN_CHUNK_TOKENS = 15
 MAX_EXTRACTS = 12

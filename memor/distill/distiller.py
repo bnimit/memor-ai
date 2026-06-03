@@ -1,8 +1,8 @@
 from __future__ import annotations
 import hashlib, json, re
-from memorable.types import Artifact, Scope
-from memorable.llm.base import DISTILL_PROMPT
-from memorable.distill.extractive import extract_key_chunks
+from memor.types import Artifact, Scope
+from memor.llm.base import DISTILL_PROMPT
+from memor.distill.extractive import extract_key_chunks
 
 DEDUP_SIM_THRESHOLD = 0.92
 

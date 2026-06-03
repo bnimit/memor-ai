@@ -1,4 +1,4 @@
-from memorable.eval.baselines.base import ExternalBaseline
+from memor.eval.baselines.base import ExternalBaseline
 
 class StubBaseline(ExternalBaseline):
     name = "stub"
@@ -7,7 +7,7 @@ class StubBaseline(ExternalBaseline):
     def retrieve(self, query, project, k): return list(self._texts.keys())[:k]
 
 def test_external_baseline_contract():
-    from memorable.types import Artifact
+    from memor.types import Artifact
     b = StubBaseline()
     assert b.available()
     b.index([Artifact(id="x",kind="note",project="p",source="t",text="hi",

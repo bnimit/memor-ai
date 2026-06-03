@@ -1,5 +1,5 @@
 [project]
-name = "memorable"
+name = "memor"
 version = "0.0.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -15,7 +15,10 @@ anthropic = ["anthropic>=0.40"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-memorable = "memorable.cli:app"
+memor = "memor.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["memor*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,8 +1,8 @@
 from __future__ import annotations
-from memorable.types import Scope
-from memorable.retrieve.retriever import Retriever
-from memorable.eval.dataset import EvalCase, CaseResult
-from memorable.eval.metrics import recall_at_k, ndcg_at_k
+from memor.types import Scope
+from memor.retrieve.retriever import Retriever
+from memor.eval.dataset import EvalCase, CaseResult
+from memor.eval.metrics import recall_at_k, ndcg_at_k
 
 BASELINES = ["no-memory", "last-N", "naive-RAG", "memory"]
 

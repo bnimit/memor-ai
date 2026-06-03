@@ -1,7 +1,7 @@
 from __future__ import annotations
 import hashlib, re
 from pathlib import Path
-from memorable.types import Artifact
+from memor.types import Artifact
 
 def parse_document(path: Path, project: str, kind: str = "note",
                    created_at: float = 0.0) -> list[Artifact]:

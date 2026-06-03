@@ -1,5 +1,5 @@
 from pathlib import Path
-from memorable.ingest.documents import parse_document
+from memor.ingest.documents import parse_document
 
 def test_parse_markdown_chunks_by_heading(tmp_path):
     p = tmp_path/"notes.md"

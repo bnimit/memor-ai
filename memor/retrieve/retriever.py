@@ -1,7 +1,7 @@
 from __future__ import annotations
 import time
-from memorable.types import Scope, Hit, RetrievalTrace
-from memorable.interfaces import Embedder, MemoryStore
+from memor.types import Scope, Hit, RetrievalTrace
+from memor.interfaces import Embedder, MemoryStore
 
 EDGE_TYPES = ["fixes", "supersedes", "part_of", "derived_from"]
 

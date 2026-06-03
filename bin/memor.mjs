@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * memorable CLI — thin wrapper that delegates to the Python CLI.
+ * memor CLI — thin wrapper that delegates to the Python CLI.
  * Handles venv discovery, the `inspector` shortcut, and `setup` re-run.
  */
 import { execFileSync, spawn } from "node:child_process";
@@ -18,7 +18,7 @@ const STREAMLIT = join(VENV_BIN, "streamlit");
 function ensureSetup() {
   if (!existsSync(PYTHON)) {
     console.error(
-      "memorable-ai: Python venv not found. Running setup...\n" +
+      "memor-ai: Python venv not found. Running setup...\n" +
       "If this fails, run: node scripts/postinstall.mjs"
     );
     try {
@@ -33,7 +33,7 @@ function main() {
   const args = process.argv.slice(2);
   const command = args[0];
 
-  // `memorable setup` — re-run postinstall
+  // `memor setup` — re-run postinstall
   if (command === "setup") {
     execFileSync("node", [join(ROOT, "scripts", "postinstall.mjs")], { stdio: "inherit" });
     return;
@@ -41,10 +41,10 @@ function main() {
 
   ensureSetup();
 
-  // `memorable inspector` — launch the Streamlit UI
+  // `memor inspector` — launch the Streamlit UI
   if (command === "inspector") {
     const port = args[1] || "8501";
-    console.log(`memorable-ai: launching inspector at http://localhost:${port}`);
+    console.log(`memor-ai: launching inspector at http://localhost:${port}`);
     const child = spawn(STREAMLIT, ["run", join(ROOT, "inspector.py"),
       "--server.port", port, "--server.headless", "true"], {
       cwd: ROOT,
@@ -56,7 +56,7 @@ function main() {
   }
 
   // Everything else → delegate to the Python CLI
-  const child = spawn(PYTHON, ["-m", "memorable.cli", ...args], {
+  const child = spawn(PYTHON, ["-m", "memor.cli", ...args], {
     cwd: process.cwd(),
     stdio: "inherit",
     env: { ...process.env, PATH: `${VENV_BIN}:${process.env.PATH}` },

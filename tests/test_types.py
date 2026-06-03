@@ -1,4 +1,4 @@
-from memorable.types import Artifact, Scope, Hit, RetrievalTrace
+from memor.types import Artifact, Scope, Hit, RetrievalTrace
 
 def test_artifact_defaults_and_scope_match():
     a = Artifact(id="a1", kind="session_chunk", project="stablex",

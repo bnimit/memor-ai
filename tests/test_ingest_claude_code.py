@@ -1,5 +1,5 @@
 from pathlib import Path
-from memorable.ingest.claude_code import parse_transcript
+from memor.ingest.claude_code import parse_transcript
 
 def test_parse_transcript_yields_chunks():
     f = Path(__file__).parent / "fixtures" / "sample.jsonl"

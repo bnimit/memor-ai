@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * postinstall — sets up the Python venv and installs memorable's Python deps.
+ * postinstall — sets up the Python venv and installs memor's Python deps.
  * Runs automatically on `npm install` / `bun install`.
  */
 import { execSync, execFileSync } from "node:child_process";
@@ -26,12 +26,12 @@ function findPython() {
 }
 
 function main() {
-  console.log("memorable-ai: setting up Python environment...");
+  console.log("memor-ai: setting up Python environment...");
 
   const python = findPython();
   if (!python) {
     console.error(
-      "memorable-ai: Python 3.11+ is required but not found.\n" +
+      "memor-ai: Python 3.11+ is required but not found.\n" +
       "Install it from https://python.org or via your package manager."
     );
     process.exit(1);
@@ -41,42 +41,41 @@ function main() {
   const venvPython = join(VENV, isWindows ? "Scripts" : "bin", isWindows ? "python.exe" : "python3");
   const pip = join(VENV, isWindows ? "Scripts" : "bin", "pip");
 
-  // Check if already set up (venv exists + memorable importable)
+  // Check if already set up (venv exists + memor importable)
   if (existsSync(venvPython)) {
     try {
-      execFileSync(venvPython, ["-c", "import memorable"], { cwd: ROOT, stdio: "pipe" });
-      console.log("memorable-ai: already set up, skipping. Run `memorable setup` to force re-install.");
-      // Still ensure ~/.memorable exists
+      execFileSync(venvPython, ["-c", "import memor"], { cwd: ROOT, stdio: "pipe" });
+      console.log("memor-ai: already set up, skipping. Run `memor setup` to force re-install.");
       const home = process.env.HOME || process.env.USERPROFILE;
-      const memorableDir = join(home, ".memorable");
-      if (!existsSync(memorableDir)) mkdirSync(memorableDir, { recursive: true });
+      const memorDir = join(home, ".memor");
+      if (!existsSync(memorDir)) mkdirSync(memorDir, { recursive: true });
       return;
     } catch {}
   }
 
   // Create venv if it doesn't exist
   if (!existsSync(venvPython)) {
-    console.log(`memorable-ai: creating venv with ${python}...`);
+    console.log(`memor-ai: creating venv with ${python}...`);
     execFileSync(python, ["-m", "venv", VENV], { cwd: ROOT, stdio: "inherit" });
   }
 
   // Install Python deps
-  console.log("memorable-ai: installing Python dependencies...");
+  console.log("memor-ai: installing Python dependencies...");
   execFileSync(pip, ["install", "-e", ".[dev]"], { cwd: ROOT, stdio: "inherit" });
 
   // Install sentence-transformers (local embeddings)
-  console.log("memorable-ai: installing sentence-transformers for local embeddings...");
+  console.log("memor-ai: installing sentence-transformers for local embeddings...");
   execFileSync(pip, ["install", "sentence-transformers>=3.0"], { cwd: ROOT, stdio: "inherit" });
 
-  // Create ~/.memorable directory
+  // Create ~/.memor directory
   const home = process.env.HOME || process.env.USERPROFILE;
-  const memorableDir = join(home, ".memorable");
-  if (!existsSync(memorableDir)) {
-    mkdirSync(memorableDir, { recursive: true });
-    console.log(`memorable-ai: created ${memorableDir}`);
+  const memorDir = join(home, ".memor");
+  if (!existsSync(memorDir)) {
+    mkdirSync(memorDir, { recursive: true });
+    console.log(`memor-ai: created ${memorDir}`);
   }
 
-  console.log("memorable-ai: setup complete! Run `memorable --help` to get started.");
+  console.log("memor-ai: setup complete! Run `memor --help` to get started.");
 }
 
 main();

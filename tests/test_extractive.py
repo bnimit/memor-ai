@@ -1,9 +1,9 @@
 """Tests for extractive (LLM-free) distillation."""
-from memorable.distill.extractive import extract_key_chunks, _tfidf_scores, _heuristic_score
-from memorable.distill.distiller import ExtractiveDistiller
-from memorable.embed.fake import FakeEmbedder
-from memorable.store.sqlite_store import SqliteStore
-from memorable.types import Artifact
+from memor.distill.extractive import extract_key_chunks, _tfidf_scores, _heuristic_score
+from memor.distill.distiller import ExtractiveDistiller
+from memor.embed.fake import FakeEmbedder
+from memor.store.sqlite_store import SqliteStore
+from memor.types import Artifact
 
 
 def _chunk(i, text, tok=None, role="assistant"):

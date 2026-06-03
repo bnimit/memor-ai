@@ -1,5 +1,5 @@
 from __future__ import annotations
-from memorable.types import Artifact
+from memor.types import Artifact
 
 
 class ExternalBaseline:

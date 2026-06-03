@@ -1,7 +1,7 @@
-from memorable.store.sqlite_store import SqliteStore
-from memorable.embed.fake import FakeEmbedder
-from memorable.distill.distiller import Distiller
-from memorable.types import Artifact
+from memor.store.sqlite_store import SqliteStore
+from memor.embed.fake import FakeEmbedder
+from memor.distill.distiller import Distiller
+from memor.types import Artifact
 import json
 
 class FakeLLM:
@@ -37,6 +37,6 @@ def test_supersede_on_contradiction(tmp_path):
         {"type":"decision","text":"Use argon2 for hashing","supersedes_text":"Use bcrypt for hashing"}]}))
     new_ids = d2.distill_session("s2", c2, project="p")
     # old memory deactivated, new active
-    from memorable.types import Scope
+    from memor.types import Scope
     active = [a.id for a,_ in s.search(e.embed(["hashing"])[0], Scope(project="p"), k=10)]
     assert new_ids[0] in active and old_ids[0] not in active

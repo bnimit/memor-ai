@@ -6,7 +6,7 @@ def test_recall_script_outputs_context_block(tmp_path):
     # build a tiny db via the CLI (fake embedder), then call the skill entrypoint
     db = str(tmp_path / "m.db")
     subprocess.run(
-        [sys.executable, "-m", "memorable.cli", "ingest-cc",
+        [sys.executable, "-m", "memor.cli", "ingest-cc",
          "tests/fixtures/sample.jsonl", "--project", "stablex", "--db", db,
          "--fake", "--no-filter"],
         check=True,
@@ -36,4 +36,4 @@ def test_recall_script_missing_db(tmp_path):
     )
     assert out.returncode != 0
     assert "Database not found" in out.stdout
-    assert "memorable daemon" in out.stdout
+    assert "memor daemon" in out.stdout

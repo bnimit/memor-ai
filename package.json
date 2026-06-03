@@ -1,24 +1,24 @@
 {
-  "name": "memorable-ai",
+  "name": "memor-ai",
   "version": "0.1.0",
   "description": "Measured memory layer for coding agents — store, distill, and retrieve past session context instead of re-sending full history",
-  "keywords": ["ai", "memory", "agent", "coding", "retrieval", "claude", "llm"],
+  "keywords": ["ai", "memory", "agent", "coding", "retrieval", "claude", "llm", "memor"],
   "license": "MIT",
   "bin": {
-    "memorable": "./bin/memorable.mjs"
+    "memor": "./bin/memor.mjs"
   },
   "files": [
     "bin/",
     "scripts/",
-    "memorable/",
+    "memor/",
     "skill/",
     "inspector.py",
     "pyproject.toml"
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
-    "dev": "node bin/memorable.mjs",
-    "inspector": "node bin/memorable.mjs inspector"
+    "dev": "node bin/memor.mjs",
+    "inspector": "node bin/memor.mjs inspector"
   },
   "engines": {
     "node": ">=18"

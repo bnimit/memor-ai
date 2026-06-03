@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json, sqlite3, struct
 import sqlite_vec
-from memorable.types import Artifact, Scope
+from memor.types import Artifact, Scope
 
 def _serialize(v: list[float]) -> bytes:
     return struct.pack("%sf" % len(v), *v)

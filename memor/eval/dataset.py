@@ -16,7 +16,7 @@ class CaseResult:
     latency_ms: float
 
 import re
-from memorable.types import Artifact
+from memor.types import Artifact
 
 _WORD = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]{3,}")
 

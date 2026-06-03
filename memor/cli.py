@@ -2,22 +2,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import typer
-from memorable.store.sqlite_store import SqliteStore
-from memorable.retrieve.retriever import Retriever
-from memorable.types import Scope
-from memorable.ingest.claude_code import parse_transcript
+from memor.store.sqlite_store import SqliteStore
+from memor.retrieve.retriever import Retriever
+from memor.types import Scope
+from memor.ingest.claude_code import parse_transcript
 
 app = typer.Typer(no_args_is_help=True)
 
 def _embedder(fake: bool):
     if fake:
-        from memorable.embed.fake import FakeEmbedder
+        from memor.embed.fake import FakeEmbedder
         return FakeEmbedder(dim=16)
-    from memorable.embed.local import LocalEmbedder
+    from memor.embed.local import LocalEmbedder
     return LocalEmbedder()
 
 @app.command("ingest-cc")
-def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memorable.db",
+def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memor.db",
               fake: bool = False, no_filter: bool = False):
     e = _embedder(fake)
     s = SqliteStore(db, dim=e.dim)
@@ -26,7 +26,7 @@ def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memorable.
     typer.echo(f"ingested {len(arts)} chunks from {path}")
 
 @app.command("query")
-def query(text: str, project: str = typer.Option(None), db: str = "memorable.db",
+def query(text: str, project: str = typer.Option(None), db: str = "memor.db",
           k: int = 8, fake: bool = False):
     e = _embedder(fake)
     s = SqliteStore(db, dim=e.dim)
@@ -38,9 +38,9 @@ def query(text: str, project: str = typer.Option(None), db: str = "memorable.db"
                f"{sum(h.artifact.token_count for h in trace.hits)} tokens")
 
 @app.command("eval")
-def eval_cmd(cases_path: str, db: str = "memorable.db", k: int = 8, fake: bool = False):
-    from memorable.eval.dataset import EvalCase
-    from memorable.eval.runner import run_suite
+def eval_cmd(cases_path: str, db: str = "memor.db", k: int = 8, fake: bool = False):
+    from memor.eval.dataset import EvalCase
+    from memor.eval.runner import run_suite
     e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
     raw = json.loads(Path(cases_path).read_text())
     cases = [EvalCase(query=c["query"], scope_project=c["project"],
@@ -52,9 +52,9 @@ def eval_cmd(cases_path: str, db: str = "memorable.db", k: int = 8, fake: bool =
     typer.echo("(eval run persisted)")
 
 @app.command("build-cases")
-def build_cases(project: str = typer.Option(...), db: str = "memorable.db",
+def build_cases(project: str = typer.Option(...), db: str = "memor.db",
                 out: str = "cases.json", fake: bool = False):
-    from memorable.eval.dataset import build_counterfactual_cases
+    from memor.eval.dataset import build_counterfactual_cases
     e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
     rows = s.db.execute("SELECT * FROM artifacts WHERE project=? AND kind='session_chunk'", (project,)).fetchall()
     arts = [s._row_to_artifact(r) for r in rows]
@@ -64,14 +64,14 @@ def build_cases(project: str = typer.Option(...), db: str = "memorable.db",
     typer.echo(f"wrote {len(cases)} cases to {out}")
 
 @app.command("distill")
-def distill(project: str = typer.Option(...), db: str = "memorable.db",
+def distill(project: str = typer.Option(...), db: str = "memor.db",
             fake: bool = False, llm_provider: str = "anthropic", llm_model: str = "claude-sonnet-4-6"):
-    from memorable.distill.distiller import Distiller
+    from memor.distill.distiller import Distiller
     e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
     if llm_provider == "anthropic":
-        from memorable.llm.anthropic import AnthropicLLM; llm = AnthropicLLM(model=llm_model)
+        from memor.llm.anthropic import AnthropicLLM; llm = AnthropicLLM(model=llm_model)
     else:
-        from memorable.llm.openai_compat import OpenAICompatLLM
+        from memor.llm.openai_compat import OpenAICompatLLM
         import os
         llm = OpenAICompatLLM(base_url=os.environ.get("OPENAI_BASE_URL","http://localhost:11434/v1"),
                               api_key=os.environ.get("OPENAI_API_KEY",""), model=llm_model)
@@ -92,7 +92,7 @@ def distill(project: str = typer.Option(...), db: str = "memorable.db",
 
 @app.command("ingest-project")
 def ingest_project(project_dir: str, project: str = typer.Option(...),
-                   db: str = "memorable.db", fake: bool = False, no_filter: bool = False):
+                   db: str = "memor.db", fake: bool = False, no_filter: bool = False):
     """Recursively ingest all .jsonl transcripts (including subagent transcripts) from a Claude Code project directory."""
     e = _embedder(fake)
     s = SqliteStore(db, dim=e.dim)
@@ -108,8 +108,8 @@ def ingest_project(project_dir: str, project: str = typer.Option(...),
 
 @app.command("ingest-doc")
 def ingest_doc(path: str, project: str = typer.Option(...), kind: str = "note",
-               db: str = "memorable.db", fake: bool = False):
-    from memorable.ingest.documents import parse_document
+               db: str = "memor.db", fake: bool = False):
+    from memor.ingest.documents import parse_document
     e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
     arts = parse_document(Path(path), project=project, kind=kind)
     s.add_artifacts(arts, e.embed([a.text for a in arts]))
@@ -120,7 +120,7 @@ def ingest_doc(path: str, project: str = typer.Option(...), kind: str = "note",
 def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
            projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/")):
     """Run the auto-ingest daemon (foreground). Watches ~/.claude/projects/ for new transcripts."""
-    from memorable.daemon import run_daemon, CLAUDE_PROJECTS_DIR
+    from memor.daemon import run_daemon, CLAUDE_PROJECTS_DIR
     d = Path(projects_dir) if projects_dir else CLAUDE_PROJECTS_DIR
     run_daemon(poll_interval=poll_interval, projects_dir=d)
 

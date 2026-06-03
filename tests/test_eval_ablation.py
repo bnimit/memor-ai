@@ -1,7 +1,7 @@
-from memorable.store.sqlite_store import SqliteStore
-from memorable.embed.fake import FakeEmbedder
-from memorable.eval.runner import run_ablation, run_contradiction_eval
-from memorable.types import Artifact
+from memor.store.sqlite_store import SqliteStore
+from memor.embed.fake import FakeEmbedder
+from memor.eval.runner import run_ablation, run_contradiction_eval
+from memor.types import Artifact
 
 def mk(i,text,t,kind="session_chunk"): return Artifact(id=i,kind=kind,project="p",source="t",
     text=text,token_count=len(text.split()),created_at=t,meta={})

@@ -1,7 +1,7 @@
-from memorable.store.sqlite_store import SqliteStore
-from memorable.embed.fake import FakeEmbedder
-from memorable.retrieve.retriever import Retriever
-from memorable.types import Artifact, Scope
+from memor.store.sqlite_store import SqliteStore
+from memor.embed.fake import FakeEmbedder
+from memor.retrieve.retriever import Retriever
+from memor.types import Artifact, Scope
 
 def make(id, text, created, kind="session_chunk"):
     return Artifact(id=id, kind=kind, project="stablex", source="t",

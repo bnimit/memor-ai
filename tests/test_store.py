@@ -1,6 +1,6 @@
-from memorable.store.sqlite_store import SqliteStore
-from memorable.types import Artifact, Scope
-from memorable.embed.fake import FakeEmbedder
+from memor.store.sqlite_store import SqliteStore
+from memor.types import Artifact, Scope
+from memor.embed.fake import FakeEmbedder
 
 def make(id, project, text, created, kind="session_chunk"):
     return Artifact(id=id, kind=kind, project=project, source="t",

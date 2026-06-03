@@ -1,5 +1,5 @@
-from memorable.eval.dataset import build_counterfactual_cases
-from memorable.types import Artifact
+from memor.eval.dataset import build_counterfactual_cases
+from memor.types import Artifact
 
 def art(i, sid, text, t):
     return Artifact(id=i, kind="session_chunk", project="p", source="cc",

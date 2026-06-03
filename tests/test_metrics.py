@@ -1,4 +1,4 @@
-from memorable.eval.metrics import recall_at_k, ndcg_at_k
+from memor.eval.metrics import recall_at_k, ndcg_at_k
 
 def test_recall_and_ndcg():
     retrieved = ["a","b","c","d"]

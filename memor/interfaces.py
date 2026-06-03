@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Protocol, runtime_checkable
-from memorable.types import Artifact, Scope
+from memor.types import Artifact, Scope
 
 @runtime_checkable
 class Embedder(Protocol):

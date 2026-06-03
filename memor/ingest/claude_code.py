@@ -2,7 +2,7 @@ from __future__ import annotations
 import json, re
 from datetime import datetime
 from pathlib import Path
-from memorable.types import Artifact
+from memor.types import Artifact
 
 def _epoch(ts: str) -> float:
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()

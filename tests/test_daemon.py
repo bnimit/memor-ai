@@ -5,7 +5,7 @@ import json
 import time
 from pathlib import Path
 
-from memorable.daemon import (
+from memor.daemon import (
     _project_name_from_dir,
     load_state,
     save_state,
@@ -38,24 +38,24 @@ def test_project_name_passthrough():
 # -- state persistence ---------------------------------------------------------
 
 def test_load_state_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr("memorable.daemon.STATE_FILE", tmp_path / "nonexistent.json")
+    monkeypatch.setattr("memor.daemon.STATE_FILE", tmp_path / "nonexistent.json")
     assert load_state() == {}
 
 def test_save_and_load_state(tmp_path, monkeypatch):
     state_file = tmp_path / "state" / "ingested.json"
     state_dir = tmp_path / "state"
-    monkeypatch.setattr("memorable.daemon.STATE_FILE", state_file)
-    monkeypatch.setattr("memorable.daemon.STATE_DIR", state_dir)
+    monkeypatch.setattr("memor.daemon.STATE_FILE", state_file)
+    monkeypatch.setattr("memor.daemon.STATE_DIR", state_dir)
     data = {"/some/path.jsonl": 1717430000.0}
     save_state(data)
     assert state_file.exists()
-    monkeypatch.setattr("memorable.daemon.STATE_FILE", state_file)
+    monkeypatch.setattr("memor.daemon.STATE_FILE", state_file)
     assert load_state() == data
 
 def test_load_state_corrupt(tmp_path, monkeypatch):
     state_file = tmp_path / "ingested.json"
     state_file.write_text("not json{{{")
-    monkeypatch.setattr("memorable.daemon.STATE_FILE", state_file)
+    monkeypatch.setattr("memor.daemon.STATE_FILE", state_file)
     assert load_state() == {}
 
 
@@ -85,8 +85,8 @@ def test_scan_transcripts_empty(tmp_path):
 # -- ingest_file ---------------------------------------------------------------
 
 def test_ingest_file(tmp_path):
-    from memorable.embed.fake import FakeEmbedder
-    from memorable.store.sqlite_store import SqliteStore
+    from memor.embed.fake import FakeEmbedder
+    from memor.store.sqlite_store import SqliteStore
 
     db = str(tmp_path / "test.db")
     embedder = FakeEmbedder(dim=16)
@@ -105,8 +105,8 @@ def test_ingest_file(tmp_path):
 # -- run_poll_cycle ------------------------------------------------------------
 
 def test_poll_cycle_ingests_new_files(tmp_path):
-    from memorable.embed.fake import FakeEmbedder
-    from memorable.store.sqlite_store import SqliteStore
+    from memor.embed.fake import FakeEmbedder
+    from memor.store.sqlite_store import SqliteStore
 
     db = str(tmp_path / "test.db")
     embedder = FakeEmbedder(dim=16)
@@ -125,8 +125,8 @@ def test_poll_cycle_ingests_new_files(tmp_path):
     assert state[str(t)] == t.stat().st_mtime
 
 def test_poll_cycle_skips_already_ingested(tmp_path):
-    from memorable.embed.fake import FakeEmbedder
-    from memorable.store.sqlite_store import SqliteStore
+    from memor.embed.fake import FakeEmbedder
+    from memor.store.sqlite_store import SqliteStore
 
     db = str(tmp_path / "test.db")
     embedder = FakeEmbedder(dim=16)
@@ -146,8 +146,8 @@ def test_poll_cycle_skips_already_ingested(tmp_path):
     assert state_after == state
 
 def test_poll_cycle_reingests_modified_file(tmp_path):
-    from memorable.embed.fake import FakeEmbedder
-    from memorable.store.sqlite_store import SqliteStore
+    from memor.embed.fake import FakeEmbedder
+    from memor.store.sqlite_store import SqliteStore
 
     db = str(tmp_path / "test.db")
     embedder = FakeEmbedder(dim=16)
@@ -167,8 +167,8 @@ def test_poll_cycle_reingests_modified_file(tmp_path):
     assert state_after[str(t)] == t.stat().st_mtime
 
 def test_poll_cycle_handles_bad_file(tmp_path):
-    from memorable.embed.fake import FakeEmbedder
-    from memorable.store.sqlite_store import SqliteStore
+    from memor.embed.fake import FakeEmbedder
+    from memor.store.sqlite_store import SqliteStore
 
     db = str(tmp_path / "test.db")
     embedder = FakeEmbedder(dim=16)
@@ -195,15 +195,15 @@ def test_poll_cycle_handles_bad_file(tmp_path):
 def test_distilled_state_roundtrip(tmp_path, monkeypatch):
     state_file = tmp_path / "distilled.json"
     state_dir = tmp_path
-    monkeypatch.setattr("memorable.daemon.DISTILLED_FILE", state_file)
-    monkeypatch.setattr("memorable.daemon.STATE_DIR", state_dir)
+    monkeypatch.setattr("memor.daemon.DISTILLED_FILE", state_file)
+    monkeypatch.setattr("memor.daemon.STATE_DIR", state_dir)
     save_distilled_state({"sess1", "sess2"})
     assert state_file.exists()
     loaded = load_distilled_state()
     assert loaded == {"sess1", "sess2"}
 
 def test_distilled_state_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr("memorable.daemon.DISTILLED_FILE", tmp_path / "nope.json")
+    monkeypatch.setattr("memor.daemon.DISTILLED_FILE", tmp_path / "nope.json")
     assert load_distilled_state() == set()
 
 
@@ -211,9 +211,9 @@ def test_distilled_state_missing(tmp_path, monkeypatch):
 
 def test_distill_new_sessions_with_fake_llm(tmp_path):
     import json as _json
-    from memorable.embed.fake import FakeEmbedder
-    from memorable.store.sqlite_store import SqliteStore
-    from memorable.types import Artifact
+    from memor.embed.fake import FakeEmbedder
+    from memor.store.sqlite_store import SqliteStore
+    from memor.types import Artifact
 
     db = str(tmp_path / "test.db")
     embedder = FakeEmbedder(dim=16)
@@ -240,9 +240,9 @@ def test_distill_new_sessions_with_fake_llm(tmp_path):
 
 def test_distill_skips_already_distilled(tmp_path):
     import json as _json
-    from memorable.embed.fake import FakeEmbedder
-    from memorable.store.sqlite_store import SqliteStore
-    from memorable.types import Artifact
+    from memor.embed.fake import FakeEmbedder
+    from memor.store.sqlite_store import SqliteStore
+    from memor.types import Artifact
 
     db = str(tmp_path / "test.db")
     embedder = FakeEmbedder(dim=16)

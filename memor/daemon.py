@@ -7,13 +7,13 @@ import os
 import time
 from pathlib import Path
 
-from memorable.ingest.claude_code import parse_transcript
-from memorable.store.sqlite_store import SqliteStore
-from memorable.types import Scope
+from memor.ingest.claude_code import parse_transcript
+from memor.store.sqlite_store import SqliteStore
+from memor.types import Scope
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
-STATE_DIR = Path.home() / ".memorable"
-DEFAULT_DB = STATE_DIR / "memorable.db"
+STATE_DIR = Path.home() / ".memor"
+DEFAULT_DB = STATE_DIR / "memor.db"
 STATE_FILE = STATE_DIR / "ingested.json"
 DISTILLED_FILE = STATE_DIR / "distilled.json"
 POLL_INTERVAL = 30  # seconds
@@ -82,12 +82,12 @@ def _make_llm():
     """Try to create an LLM for distillation. Returns None if no API key."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if api_key:
-        from memorable.llm.anthropic import AnthropicLLM
+        from memor.llm.anthropic import AnthropicLLM
         return AnthropicLLM(model="claude-sonnet-4-6", api_key=api_key)
     api_key = os.environ.get("OPENAI_API_KEY")
     base_url = os.environ.get("OPENAI_BASE_URL", "http://localhost:11434/v1")
     if api_key:
-        from memorable.llm.openai_compat import OpenAICompatLLM
+        from memor.llm.openai_compat import OpenAICompatLLM
         return OpenAICompatLLM(base_url=base_url, api_key=api_key, model="gpt-4o-mini")
     return None
 
@@ -108,10 +108,10 @@ def distill_new_sessions(
     """Distill any sessions that haven't been distilled yet. Returns updated set.
     Uses full LLM distiller if llm is provided, otherwise falls back to extractive-only."""
     if llm:
-        from memorable.distill.distiller import Distiller
+        from memor.distill.distiller import Distiller
         d = Distiller(store, embedder, llm)
     else:
-        from memorable.distill.distiller import ExtractiveDistiller
+        from memor.distill.distiller import ExtractiveDistiller
         d = ExtractiveDistiller(store, embedder)
     rows = store.db.execute(
         "SELECT * FROM artifacts WHERE kind='session_chunk'"
@@ -188,7 +188,7 @@ def run_poll_cycle(
 
 def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_PROJECTS_DIR) -> None:
     """Run the daemon loop (foreground, blocking)."""
-    from memorable.embed.local import LocalEmbedder
+    from memor.embed.local import LocalEmbedder
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     embedder = LocalEmbedder()
@@ -198,7 +198,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
 
     llm = _make_llm()
 
-    print(f"memorable daemon started")
+    print(f"memor daemon started")
     print(f"  watching: {projects_dir}")
     print(f"  db: {DEFAULT_DB}")
     print(f"  poll interval: {poll_interval}s")

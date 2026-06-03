@@ -1,4 +1,4 @@
-from memorable.embed.fake import FakeEmbedder
+from memor.embed.fake import FakeEmbedder
 
 def test_fake_embedder_deterministic_and_dim():
     e = FakeEmbedder(dim=16)

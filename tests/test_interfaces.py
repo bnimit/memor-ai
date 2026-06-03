@@ -1,5 +1,5 @@
-from memorable.interfaces import Embedder, LLM, MemoryStore
-from memorable.embed.fake import FakeEmbedder
+from memor.interfaces import Embedder, LLM, MemoryStore
+from memor.embed.fake import FakeEmbedder
 
 def test_protocols_exist():
     assert hasattr(Embedder, "embed")

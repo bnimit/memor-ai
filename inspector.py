@@ -1,22 +1,22 @@
-"""Memorable Inspector — browse, query, and evaluate your memory store."""
+"""Memor Inspector — browse, query, and evaluate your memory store."""
 from __future__ import annotations
 import json, time
 from pathlib import Path
 import streamlit as st
-from memorable.store.sqlite_store import SqliteStore
-from memorable.retrieve.retriever import Retriever
-from memorable.types import Scope
+from memor.store.sqlite_store import SqliteStore
+from memor.retrieve.retriever import Retriever
+from memor.types import Scope
 
-st.set_page_config(page_title="Memorable Inspector", layout="wide")
+st.set_page_config(page_title="Memor Inspector", layout="wide")
 
 # --- Sidebar: DB selection ---
-st.sidebar.title("Memorable Inspector")
+st.sidebar.title("Memor Inspector")
 db_files = sorted(Path(".").glob("*.db"))
-db_path = st.sidebar.selectbox("Database", [str(f) for f in db_files] if db_files else ["memorable.db"])
+db_path = st.sidebar.selectbox("Database", [str(f) for f in db_files] if db_files else ["memor.db"])
 
 @st.cache_resource
 def load_store(path):
-    from memorable.embed.local import LocalEmbedder
+    from memor.embed.local import LocalEmbedder
     e = LocalEmbedder()
     s = SqliteStore(path, dim=e.dim)
     return s, e
@@ -146,7 +146,7 @@ with tab_eval:
         eval_rows = []
 
     if not eval_rows:
-        st.info("No eval runs yet. Run `memorable eval <cases.json> --db <this db>` to generate results.")
+        st.info("No eval runs yet. Run `memor eval <cases.json> --db <this db>` to generate results.")
     else:
         for er in eval_rows:
             config = json.loads(er["config"])
@@ -171,8 +171,8 @@ with tab_eval:
     eval_project = st.selectbox("Project", projects, key="eval_proj")
     eval_k = st.slider("k", 1, 20, 8, key="eval_k")
     if st.button("Build cases & run eval"):
-        from memorable.eval.dataset import build_counterfactual_cases, EvalCase
-        from memorable.eval.runner import run_suite
+        from memor.eval.dataset import build_counterfactual_cases, EvalCase
+        from memor.eval.runner import run_suite
         with st.spinner("Building counterfactual cases..."):
             rows_a = store.db.execute("SELECT * FROM artifacts WHERE project=? AND kind='session_chunk'",
                                       (eval_project,)).fetchall()
@@ -202,7 +202,7 @@ with tab_edges:
     st.header("Edges & Relationships")
     edge_count = store.db.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
     if edge_count == 0:
-        st.info("No edges yet. Run `memorable distill --project <project> --db <db>` to generate "
+        st.info("No edges yet. Run `memor distill --project <project> --db <db>` to generate "
                 "provenance and supersede edges from distillation.")
     else:
         by_type = store.db.execute("SELECT type, COUNT(*) FROM edges GROUP BY type").fetchall()

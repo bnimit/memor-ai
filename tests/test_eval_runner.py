@@ -1,10 +1,10 @@
-from memorable.store.sqlite_store import SqliteStore
-from memorable.embed.fake import FakeEmbedder
-from memorable.eval.dataset import EvalCase
-from memorable.eval.runner import run_case, BASELINES
+from memor.store.sqlite_store import SqliteStore
+from memor.embed.fake import FakeEmbedder
+from memor.eval.dataset import EvalCase
+from memor.eval.runner import run_case, BASELINES
 
 def test_run_case_reports_metrics_per_strategy(tmp_path):
-    from memorable.types import Artifact
+    from memor.types import Artifact
     e = FakeEmbedder(dim=16); s = SqliteStore(str(tmp_path/"m.db"), dim=16)
     def mk(i, text, t): return Artifact(id=i, kind="session_chunk", project="p",
         source="t", text=text, token_count=len(text.split()), created_at=t, meta={})

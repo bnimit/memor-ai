@@ -1,4 +1,4 @@
-"""Memorable recall skill -- retrieves relevant context for an agent."""
+"""Memor recall skill -- retrieves relevant context for an agent."""
 from __future__ import annotations
 
 import argparse
@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-DEFAULT_DB = str(Path.home() / ".memorable" / "memorable.db")
+DEFAULT_DB = str(Path.home() / ".memor" / "memor.db")
 
 
 def _format_timestamp(epoch: float) -> str:
@@ -41,7 +41,7 @@ def _format_trace(hits, latency_ms: float) -> str:
 
 
 def main():
-    p = argparse.ArgumentParser(description="Recall relevant context from Memorable")
+    p = argparse.ArgumentParser(description="Recall relevant context from Memor")
     p.add_argument("--query", required=True, help="Question or task to recall context for")
     p.add_argument("--project", required=True, help="Project name to scope retrieval")
     p.add_argument("--db", default=DEFAULT_DB, help=f"Path to memory DB (default: {DEFAULT_DB})")
@@ -53,24 +53,24 @@ def main():
     if not db_path.exists():
         print(f"ERROR: Database not found at {a.db}")
         print()
-        print("The Memorable memory database has not been created yet.")
+        print("The memor memory database has not been created yet.")
         print("Run the auto-ingest daemon to populate it:")
         print()
-        print("  memorable daemon")
+        print("  memor daemon")
         print()
         print("This will watch ~/.claude/projects/ and ingest session transcripts.")
         sys.exit(1)
 
     if a.fake:
-        from memorable.embed.fake import FakeEmbedder
+        from memor.embed.fake import FakeEmbedder
         embedder = FakeEmbedder(dim=16)
     else:
-        from memorable.embed.local import LocalEmbedder
+        from memor.embed.local import LocalEmbedder
         embedder = LocalEmbedder()
 
-    from memorable.store.sqlite_store import SqliteStore
-    from memorable.retrieve.retriever import Retriever
-    from memorable.types import Scope
+    from memor.store.sqlite_store import SqliteStore
+    from memor.retrieve.retriever import Retriever
+    from memor.types import Scope
 
     store = SqliteStore(a.db, dim=embedder.dim)
     trace = Retriever(store, embedder, k=a.k).query(a.query, Scope(project=a.project))

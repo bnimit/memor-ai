@@ -1,5 +1,5 @@
-from memorable.eval.baselines.base import ExternalBaseline
-from memorable.types import Artifact
+from memor.eval.baselines.base import ExternalBaseline
+from memor.types import Artifact
 import os
 
 
