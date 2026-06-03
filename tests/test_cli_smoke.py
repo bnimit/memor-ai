@@ -6,7 +6,7 @@ def test_cli_query_smoke(tmp_path, monkeypatch):
     db = str(tmp_path/"m.db")
     # ingest the bundled fixture transcript
     r1 = runner.invoke(app, ["ingest-cc", "tests/fixtures/sample.jsonl",
-                             "--project","stablex","--db",db,"--fake"])
+                             "--project","stablex","--db",db,"--fake","--no-filter"])
     assert r1.exit_code == 0, r1.output
     r2 = runner.invoke(app, ["query","auth refresh loop","--project","stablex","--db",db,"--fake"])
     assert r2.exit_code == 0

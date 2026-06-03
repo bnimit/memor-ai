@@ -3,7 +3,7 @@ from memorable.ingest.claude_code import parse_transcript
 
 def test_parse_transcript_yields_chunks():
     f = Path(__file__).parent / "fixtures" / "sample.jsonl"
-    arts = parse_transcript(f, project="stablex")
+    arts = parse_transcript(f, project="stablex", filter_noise=False)
     assert len(arts) == 2
     assert all(a.kind == "session_chunk" and a.project == "stablex" for a in arts)
     assert "auth refresh loop" in arts[0].text

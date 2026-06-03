@@ -1,9 +1,15 @@
 from __future__ import annotations
-import hashlib, json
+import hashlib, json, re
 from memorable.types import Artifact, Scope
 from memorable.llm.base import DISTILL_PROMPT
 
 DEDUP_SIM_THRESHOLD = 0.92
+
+def _extract_json(raw: str) -> dict:
+    # Strip markdown code fences if present
+    m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", raw, re.DOTALL)
+    text = m.group(1).strip() if m else raw.strip()
+    return json.loads(text)
 
 
 class Distiller:
@@ -15,7 +21,7 @@ class Distiller:
     ) -> list[str]:
         session_text = "\n".join(c.text for c in chunks)
         raw = self.llm.complete(DISTILL_PROMPT.format(session_text=session_text))
-        data = json.loads(raw)
+        data = _extract_json(raw)
         created = max((c.created_at for c in chunks), default=0.0)
         new_ids: list[str] = []
         for m in data.get("memories", []):

@@ -17,10 +17,11 @@ def _embedder(fake: bool):
     return LocalEmbedder()
 
 @app.command("ingest-cc")
-def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memorable.db", fake: bool = False):
+def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memorable.db",
+              fake: bool = False, no_filter: bool = False):
     e = _embedder(fake)
     s = SqliteStore(db, dim=e.dim)
-    arts = parse_transcript(Path(path), project=project)
+    arts = parse_transcript(Path(path), project=project, filter_noise=not no_filter)
     s.add_artifacts(arts, e.embed([a.text for a in arts]))
     typer.echo(f"ingested {len(arts)} chunks from {path}")
 
@@ -91,14 +92,14 @@ def distill(project: str = typer.Option(...), db: str = "memorable.db",
 
 @app.command("ingest-project")
 def ingest_project(project_dir: str, project: str = typer.Option(...),
-                   db: str = "memorable.db", fake: bool = False):
+                   db: str = "memorable.db", fake: bool = False, no_filter: bool = False):
     """Recursively ingest all .jsonl transcripts (including subagent transcripts) from a Claude Code project directory."""
     e = _embedder(fake)
     s = SqliteStore(db, dim=e.dim)
     files = sorted(Path(project_dir).rglob("*.jsonl"))
     total = 0
     for f in files:
-        arts = parse_transcript(f, project=project)
+        arts = parse_transcript(f, project=project, filter_noise=not no_filter)
         if arts:
             s.add_artifacts(arts, e.embed([a.text for a in arts]))
             total += len(arts)
