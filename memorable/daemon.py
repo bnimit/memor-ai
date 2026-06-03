@@ -105,10 +105,14 @@ def ingest_file(path: Path, project: str, store: SqliteStore, embedder) -> int:
 def distill_new_sessions(
     store: SqliteStore, embedder, llm, distilled: set[str]
 ) -> set[str]:
-    """Distill any sessions that haven't been distilled yet. Returns updated set."""
-    from memorable.distill.distiller import Distiller
-
-    d = Distiller(store, embedder, llm)
+    """Distill any sessions that haven't been distilled yet. Returns updated set.
+    Uses full LLM distiller if llm is provided, otherwise falls back to extractive-only."""
+    if llm:
+        from memorable.distill.distiller import Distiller
+        d = Distiller(store, embedder, llm)
+    else:
+        from memorable.distill.distiller import ExtractiveDistiller
+        d = ExtractiveDistiller(store, embedder)
     rows = store.db.execute(
         "SELECT * FROM artifacts WHERE kind='session_chunk'"
     ).fetchall()
@@ -173,9 +177,10 @@ def run_poll_cycle(
         except Exception as e:
             print(f"  ERROR ingesting {path.name}: {e}")
 
-    # Auto-distill new sessions if an LLM is available
-    if llm and new_ingested:
-        print("  running distillation on new sessions...")
+    # Auto-distill new sessions (LLM if available, extractive fallback otherwise)
+    if new_ingested:
+        mode = "abstractive" if llm else "extractive (LLM-free)"
+        print(f"  running {mode} distillation on new sessions...")
         distilled = distill_new_sessions(store, embedder, llm, distilled)
 
     return state, distilled
@@ -200,9 +205,9 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     print(f"  tracking {len(state)} previously ingested files")
     print(f"  {len(distilled)} sessions already distilled")
     if llm:
-        print(f"  auto-distill: ON (LLM key found)")
+        print(f"  distillation: abstractive (LLM key found — extractive pre-filter + LLM)")
     else:
-        print(f"  auto-distill: OFF (set ANTHROPIC_API_KEY or OPENAI_API_KEY to enable)")
+        print(f"  distillation: extractive only (set ANTHROPIC_API_KEY for full abstractive)")
     print()
 
     try:
@@ -212,11 +217,9 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
                 state, store, embedder, projects_dir, llm=llm, distilled=distilled
             )
             save_state(state)
-            if llm:
-                save_distilled_state(distilled)
+            save_distilled_state(distilled)
             time.sleep(poll_interval)
     except KeyboardInterrupt:
         print("\ndaemon stopped.")
         save_state(state)
-        if llm:
-            save_distilled_state(distilled)
+        save_distilled_state(distilled)
