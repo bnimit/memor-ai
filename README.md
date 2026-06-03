@@ -109,8 +109,9 @@ The point is: memor rewards you for the work you're already doing. Every convers
 
 ## Quick Start
 
+### Step 1: Install
+
 ```bash
-# Install globally via npm or bun
 npm install -g memor-ai
 # or: bun install -g memor-ai
 # or: npx memor-ai --help
@@ -118,22 +119,104 @@ npm install -g memor-ai
 # Requires Python 3.11+ (auto-detected and configured during install)
 ```
 
+### Step 2: Start the daemon
+
 ```bash
-# 1. Start the daemon — auto-ingests Claude Code transcripts
 memor daemon
+```
 
-# 2. Or bulk-ingest an existing project
-memor ingest-project ~/.claude/projects/-Users-you-your-project --project myproject
+That's it. The daemon runs in the background, watches `~/.claude/projects/` for new session transcripts, and automatically ingests and distills them. Every time you finish a Claude Code session, memor picks it up.
 
-# 3. Query past context
+> **Tip:** If you've already been using Claude Code, you probably have a backlog of sessions. Bulk-ingest them so memor has something to work with right away:
+> ```bash
+> memor ingest-project ~/.claude/projects/-Users-you-your-project --project myproject
+> ```
+
+### Step 3: Connect memor to your agent
+
+This is the important part that makes the whole thing work. **The daemon builds the memory, but your agent needs a way to read it.**
+
+Memor ships with a skill for Claude Code. To set it up, add the skill path to your project's `.claude/settings.json`:
+
+```json
+{
+  "skills": ["path/to/memor-ai/skill/SKILL.md"]
+}
+```
+
+Or, if you installed globally, find the path with:
+```bash
+npm root -g
+# → /usr/local/lib/node_modules
+# So the skill is at: /usr/local/lib/node_modules/memor-ai/skill/SKILL.md
+```
+
+Once registered, Claude Code can invoke the recall skill whenever it needs past context. You can ask it directly ("what did we decide about auth?") or it can pull context before starting related work.
+
+### How it all fits together
+
+```
+ ┌────────────────────────────────────────────────────────────────────┐
+ │                                                                    │
+ │   You code with Claude Code as usual. Nothing changes.            │
+ │                                                                    │
+ │   ┌──────────────────────────┐                                    │
+ │   │  Session ends            │                                    │
+ │   │  (.jsonl written)        │                                    │
+ │   └────────────┬─────────────┘                                    │
+ │                │                                                   │
+ │                ▼                                                   │
+ │   ┌──────────────────────────┐                                    │
+ │   │  memor daemon            │  (runs in background)              │
+ │   │  • picks up transcript   │                                    │
+ │   │  • filters noise         │                                    │
+ │   │  • embeds + stores       │                                    │
+ │   │  • distills into         │                                    │
+ │   │    compact memories      │                                    │
+ │   └────────────┬─────────────┘                                    │
+ │                │                                                   │
+ │                ▼                                                   │
+ │   ┌──────────────────────────┐                                    │
+ │   │  ~/.memor/memor.db       │  (your memory bank)                │
+ │   │  decisions, patterns,    │                                    │
+ │   │  bugfixes, architecture  │                                    │
+ │   └────────────┬─────────────┘                                    │
+ │                │                                                   │
+ │                │  Next session starts...                           │
+ │                ▼                                                   │
+ │   ┌──────────────────────────┐                                    │
+ │   │  Claude Code + skill     │                                    │
+ │   │                          │                                    │
+ │   │  "What do I need to      │                                    │
+ │   │   know about auth?"      │                                    │
+ │   │                          │                                    │
+ │   │  skill/recall.py runs    │                                    │
+ │   │  → returns 384 tokens    │  ← instead of 487,755 tokens      │
+ │   │    of relevant context   │     of full history                │
+ │   └──────────────────────────┘                                    │
+ │                                                                    │
+ │   The agent now has the context it needs without you               │
+ │   re-explaining anything or re-sending old conversations.         │
+ │                                                                    │
+ └────────────────────────────────────────────────────────────────────┘
+```
+
+### Without the skill (manual mode)
+
+If you don't want to set up the skill, you can still use memor directly from your terminal:
+
+```bash
+# Ask memor what it knows
 memor query "how does auth work" --project myproject
 
-# 4. Distill sessions into compact memories
+# Distill sessions manually
 memor distill --project myproject
 
-# 5. Launch the visual inspector
+# Browse everything in the visual inspector
 memor inspector
 ```
+
+You can copy the output and paste it into your agent's context. It's more manual, but it still saves you from digging through old sessions yourself.
 
 ---
 
@@ -341,19 +424,37 @@ memor inspector
 
 ---
 
-## Claude Code Skill Integration
+## Claude Code Skill — How It Works Under the Hood
 
-The `skill/` directory contains a recall skill for Claude Code. It lets your agent pull relevant past context mid-session:
+When the agent invokes the recall skill, here's what happens in about 11 milliseconds:
+
+1. Your query ("how does auth work?") gets embedded into a 384-dimension vector
+2. That vector is matched against every stored artifact using cosine similarity
+3. Results are filtered by project scope, so you only get context from *this* project
+4. Recent artifacts get a slight boost (configurable — default 20% recency weight)
+5. Related artifacts are pulled in via edge expansion (if a memory was derived from a session chunk, that chunk can surface too)
+6. The top results come back as a formatted context block with score breakdowns
+
+The agent reads this context block and uses it to inform its work. It might cite a specific past decision, avoid re-introducing a bug that was already fixed, or pick up where a previous session left off.
 
 ```bash
-# In your Claude Code config, point to:
-skill/SKILL.md
+# What the agent runs behind the scenes:
+python skill/recall.py --query "how does auth work" --project myproject --k 8
 
-# The agent invokes:
-python skill/recall.py --query "how does auth work" --project myproject
+# What it gets back:
+## Recalled Context (project: myproject)
+
+### 1. [memory] Use argon2 for password hashing — memory-hard, resistant to GPU attacks
+Source: session a1b2c3d4, 2026-05-28 | score: 0.847
+
+### 2. [session_chunk] The auth refresh loop bug is caused by re-issuing tokens on 401...
+Source: session e5f6g7h8, 2026-05-25 | score: 0.793
+
+---
+Trace: 8 hits, 11ms, 384 tokens recalled
 ```
 
-Output is agent-readable: numbered hits with kind tags, source attribution, score breakdowns, and a trace summary.
+384 tokens. Not 487,755. That's the difference.
 
 ---
 
