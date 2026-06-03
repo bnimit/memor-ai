@@ -33,13 +33,77 @@ Proven on real data: **99.7% token savings**, **11ms retrieval**, with an eval h
 
 ## Why
 
-Every coding agent today has amnesia. Start a new session, and all prior decisions, patterns, bugfixes, and architecture context vanishes. The workarounds are bad:
+If you've spent any time with coding agents, you know the feeling. You open a new session, and the agent has no idea what happened yesterday. It doesn't remember that you decided to use argon2 for password hashing. It doesn't know you already fixed that auth bug last Tuesday. It doesn't remember the architecture you spent three sessions designing together.
 
-- **Re-send full history** — burns tokens, blows context windows, costs real money
-- **Manual notes** — doesn't scale, gets stale, you forget to write them
-- **Hope the agent remembers** — it doesn't
+So you explain it all again. Or you paste in old conversations. Or you just hope it figures it out.
 
-Memor fixes this. It watches your coding sessions, extracts the signal, and serves it back when you need it — scoped to the project you're working on, in under 15ms, at 99.7% fewer tokens than full history replay.
+That costs real money. A typical project accumulates hundreds of thousands of tokens in session history. Resending all of that every time you start a new chat isn't just slow — it burns through your context window and your API budget.
+
+Memor is a quiet background process that watches your coding sessions, pulls out the important bits (decisions, patterns, bugfixes, architecture choices), and stores them in a local database. When you start a new session, your agent can ask memor "what do I need to know?" and get back just the relevant context — a few hundred tokens instead of half a million.
+
+---
+
+## The Honest Truth: It Gets Better Over Time
+
+We want to be upfront about something. Memor isn't magic on day one.
+
+```
+  Your first week                         A month later
+
+  "I just installed this thing.           "How did we fix the auth
+   There's nothing in the database."       refresh bug last week?"
+
+  That's normal.                           memor returns the exact decision
+  Memor learns from YOUR sessions.         in 11ms, saving you from re-reading
+  No sessions yet = nothing to recall.     487K tokens of old transcripts.
+```
+
+Here's what the journey actually looks like:
+
+**Day 1 — Empty database.** You install memor and start the daemon. It begins watching your sessions, but there's nothing to retrieve yet. That's okay. Every session you run from now on is being quietly ingested and stored.
+
+**End of week 1 — A few sessions in.** You've had maybe 5-10 coding sessions. Memor has extracted key chunks from each one. The first time you ask "how does auth work in this project?" and get a useful answer pulled from a conversation three days ago — that's when it clicks.
+
+**Week 2+ — Compounding returns.** The more you use your coding agent, the more memor knows. Decisions accumulate. Patterns emerge. Bugfixes get catalogued. What used to require re-reading old sessions or re-explaining your codebase now comes back in milliseconds.
+
+```
+  Token savings over time
+
+  100% ┤                                      ━━━━━━━━
+       │                                 ╱
+       │                            ╱
+       │                       ╱
+       │                  ╱
+       │             ╱
+       │        ╱
+    0% ┤━━━━━━━
+       └───────────────────────────────────────────────
+         Day 1        Week 1         Week 2+
+         (learning)    (useful)       (paying off)
+```
+
+### Jumpstarting your memory (skip the cold start)
+
+If you don't want to wait, you have options:
+
+**Already been using Claude Code?** You probably have session transcripts sitting in `~/.claude/projects/`. Ingest them all at once:
+
+```bash
+memor ingest-project ~/.claude/projects/-Users-you-your-project --project myproject
+```
+
+That could give you weeks or months of history immediately — no waiting required.
+
+**Have project docs?** Feed them in. Your README, architecture docs, design decisions — anything that captures how your project works:
+
+```bash
+memor ingest-doc docs/architecture.md --project myproject
+memor ingest-doc docs/decisions.md --project myproject
+```
+
+**Working on a team?** The database is a single file (`~/.memor/memor.db`). A teammate who's been running memor for a month can share their DB, and you inherit all that context instantly.
+
+The point is: memor rewards you for the work you're already doing. Every conversation with your coding agent becomes a deposit into a memory bank that makes the next conversation cheaper and smarter.
 
 ---
 
