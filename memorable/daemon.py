@@ -1,4 +1,5 @@
-"""Auto-ingest daemon: polls ~/.claude/projects/ for new/modified .jsonl transcripts."""
+"""Auto-ingest daemon: polls ~/.claude/projects/ for new/modified .jsonl transcripts,
+then auto-distills new sessions into compact memories."""
 from __future__ import annotations
 
 import json
@@ -8,12 +9,15 @@ from pathlib import Path
 
 from memorable.ingest.claude_code import parse_transcript
 from memorable.store.sqlite_store import SqliteStore
+from memorable.types import Scope
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 STATE_DIR = Path.home() / ".memorable"
 DEFAULT_DB = STATE_DIR / "memorable.db"
 STATE_FILE = STATE_DIR / "ingested.json"
+DISTILLED_FILE = STATE_DIR / "distilled.json"
 POLL_INTERVAL = 30  # seconds
+MAX_DISTILL_TOKENS = 4000  # cap text sent to LLM per session
 
 
 def _project_name_from_dir(dirname: str) -> str:
@@ -59,6 +63,35 @@ def scan_transcripts(projects_dir: Path) -> list[tuple[Path, str]]:
     return results
 
 
+def load_distilled_state() -> set[str]:
+    """Load the set of already-distilled session IDs."""
+    if DISTILLED_FILE.exists():
+        try:
+            return set(json.loads(DISTILLED_FILE.read_text()))
+        except (json.JSONDecodeError, OSError):
+            return set()
+    return set()
+
+
+def save_distilled_state(distilled: set[str]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    DISTILLED_FILE.write_text(json.dumps(sorted(distilled), indent=2))
+
+
+def _make_llm():
+    """Try to create an LLM for distillation. Returns None if no API key."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if api_key:
+        from memorable.llm.anthropic import AnthropicLLM
+        return AnthropicLLM(model="claude-sonnet-4-6", api_key=api_key)
+    api_key = os.environ.get("OPENAI_API_KEY")
+    base_url = os.environ.get("OPENAI_BASE_URL", "http://localhost:11434/v1")
+    if api_key:
+        from memorable.llm.openai_compat import OpenAICompatLLM
+        return OpenAICompatLLM(base_url=base_url, api_key=api_key, model="gpt-4o-mini")
+    return None
+
+
 def ingest_file(path: Path, project: str, store: SqliteStore, embedder) -> int:
     """Ingest a single transcript file. Returns number of chunks ingested."""
     arts = parse_transcript(path, project=project, filter_noise=True)
@@ -69,13 +102,57 @@ def ingest_file(path: Path, project: str, store: SqliteStore, embedder) -> int:
     return len(arts)
 
 
+def distill_new_sessions(
+    store: SqliteStore, embedder, llm, distilled: set[str]
+) -> set[str]:
+    """Distill any sessions that haven't been distilled yet. Returns updated set."""
+    from memorable.distill.distiller import Distiller
+
+    d = Distiller(store, embedder, llm)
+    rows = store.db.execute(
+        "SELECT * FROM artifacts WHERE kind='session_chunk'"
+    ).fetchall()
+    by_session: dict[str, list] = {}
+    for r in rows:
+        a = store._row_to_artifact(r)
+        sid = a.meta.get("session_id", "?")
+        by_session.setdefault(sid, []).append(a)
+
+    for sid, chunks in by_session.items():
+        if sid in distilled:
+            continue
+        chunks.sort(key=lambda a: a.meta.get("ord", 0))
+        total_tok = sum(c.token_count for c in chunks)
+        # Cap context sent to LLM
+        if total_tok > MAX_DISTILL_TOKENS:
+            selected = chunks[:10] + chunks[-5:]
+        else:
+            selected = chunks
+        project = chunks[0].project
+        try:
+            mem_ids = d.distill_session(sid, selected, project=project)
+            distilled.add(sid)
+            if mem_ids:
+                print(f"  distilled session {sid[:20]}... -> {len(mem_ids)} memories")
+        except Exception as e:
+            print(f"  ERROR distilling {sid[:20]}...: {e}")
+    return distilled
+
+
 def run_poll_cycle(
     state: dict[str, float],
     store: SqliteStore,
     embedder,
     projects_dir: Path = CLAUDE_PROJECTS_DIR,
-) -> dict[str, float]:
-    """Run one poll cycle. Returns updated state dict."""
+    llm=None,
+    distilled: set[str] | None = None,
+) -> tuple[dict[str, float], set[str]]:
+    """Run one poll cycle: ingest new files, then distill new sessions.
+    Returns (updated ingest state, updated distilled set)."""
+    if distilled is None:
+        distilled = set()
+
+    new_ingested = False
     transcripts = scan_transcripts(projects_dir)
     for path, project in transcripts:
         path_str = str(path)
@@ -83,19 +160,25 @@ def run_poll_cycle(
         previous_mtime = state.get(path_str)
 
         if previous_mtime is not None and current_mtime <= previous_mtime:
-            continue  # already ingested, not modified
+            continue
 
         try:
             count = ingest_file(path, project, store, embedder)
             state[path_str] = current_mtime
             if count > 0:
                 print(f"  ingested {count} chunks from {path.name} (project: {project})")
+                new_ingested = True
             else:
                 print(f"  skipped {path.name} (0 chunks after filtering)")
         except Exception as e:
             print(f"  ERROR ingesting {path.name}: {e}")
-            # Don't update state so we retry next cycle
-    return state
+
+    # Auto-distill new sessions if an LLM is available
+    if llm and new_ingested:
+        print("  running distillation on new sessions...")
+        distilled = distill_new_sessions(store, embedder, llm, distilled)
+
+    return state, distilled
 
 
 def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_PROJECTS_DIR) -> None:
@@ -106,20 +189,34 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     embedder = LocalEmbedder()
     store = SqliteStore(str(DEFAULT_DB), dim=embedder.dim)
     state = load_state()
+    distilled = load_distilled_state()
+
+    llm = _make_llm()
 
     print(f"memorable daemon started")
     print(f"  watching: {projects_dir}")
     print(f"  db: {DEFAULT_DB}")
     print(f"  poll interval: {poll_interval}s")
     print(f"  tracking {len(state)} previously ingested files")
+    print(f"  {len(distilled)} sessions already distilled")
+    if llm:
+        print(f"  auto-distill: ON (LLM key found)")
+    else:
+        print(f"  auto-distill: OFF (set ANTHROPIC_API_KEY or OPENAI_API_KEY to enable)")
     print()
 
     try:
         while True:
             print(f"[{time.strftime('%H:%M:%S')}] polling...")
-            state = run_poll_cycle(state, store, embedder, projects_dir)
+            state, distilled = run_poll_cycle(
+                state, store, embedder, projects_dir, llm=llm, distilled=distilled
+            )
             save_state(state)
+            if llm:
+                save_distilled_state(distilled)
             time.sleep(poll_interval)
     except KeyboardInterrupt:
         print("\ndaemon stopped.")
         save_state(state)
+        if llm:
+            save_distilled_state(distilled)

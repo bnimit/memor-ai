@@ -9,9 +9,12 @@ from memorable.daemon import (
     _project_name_from_dir,
     load_state,
     save_state,
+    load_distilled_state,
+    save_distilled_state,
     scan_transcripts,
     run_poll_cycle,
     ingest_file,
+    distill_new_sessions,
 )
 
 
@@ -117,7 +120,7 @@ def test_poll_cycle_ingests_new_files(tmp_path):
     )
 
     state = {}
-    state = run_poll_cycle(state, store, embedder, tmp_path / "projects")
+    state, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
     assert str(t) in state
     assert state[str(t)] == t.stat().st_mtime
 
@@ -138,7 +141,7 @@ def test_poll_cycle_skips_already_ingested(tmp_path):
 
     # Pre-populate state with current mtime
     state = {str(t): t.stat().st_mtime}
-    state_after = run_poll_cycle(state, store, embedder, tmp_path / "projects")
+    state_after, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
     # State should be unchanged (file was skipped)
     assert state_after == state
 
@@ -159,7 +162,7 @@ def test_poll_cycle_reingests_modified_file(tmp_path):
 
     # Pre-populate state with an older mtime
     state = {str(t): t.stat().st_mtime - 100}
-    state_after = run_poll_cycle(state, store, embedder, tmp_path / "projects")
+    state_after, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
     # State should now reflect the current mtime
     assert state_after[str(t)] == t.stat().st_mtime
 
@@ -181,7 +184,82 @@ def test_poll_cycle_handles_bad_file(tmp_path):
     )
 
     state = {}
-    state = run_poll_cycle(state, store, embedder, tmp_path / "projects")
+    state, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
     # Good file should be in state, bad file should not (error -> no state update)
     assert str(good) in state
     assert str(bad) not in state
+
+
+# -- distilled state -----------------------------------------------------------
+
+def test_distilled_state_roundtrip(tmp_path, monkeypatch):
+    state_file = tmp_path / "distilled.json"
+    state_dir = tmp_path
+    monkeypatch.setattr("memorable.daemon.DISTILLED_FILE", state_file)
+    monkeypatch.setattr("memorable.daemon.STATE_DIR", state_dir)
+    save_distilled_state({"sess1", "sess2"})
+    assert state_file.exists()
+    loaded = load_distilled_state()
+    assert loaded == {"sess1", "sess2"}
+
+def test_distilled_state_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr("memorable.daemon.DISTILLED_FILE", tmp_path / "nope.json")
+    assert load_distilled_state() == set()
+
+
+# -- auto-distill --------------------------------------------------------------
+
+def test_distill_new_sessions_with_fake_llm(tmp_path):
+    import json as _json
+    from memorable.embed.fake import FakeEmbedder
+    from memorable.store.sqlite_store import SqliteStore
+    from memorable.types import Artifact
+
+    db = str(tmp_path / "test.db")
+    embedder = FakeEmbedder(dim=16)
+    store = SqliteStore(db, dim=embedder.dim)
+
+    # Ingest a chunk
+    art = Artifact(id="s1:0", kind="session_chunk", project="p", source="cc",
+                   text="we decided to use argon2 for password hashing in the auth module",
+                   token_count=15, created_at=100.0,
+                   meta={"session_id": "s1", "ord": 0})
+    store.add_artifacts([art], embedder.embed([art.text]))
+
+    class FakeLLM:
+        def complete(self, prompt, *, max_tokens=1024):
+            return _json.dumps({"memories": [
+                {"type": "decision", "text": "Use argon2 for password hashing"}
+            ]})
+
+    distilled = set()
+    distilled = distill_new_sessions(store, embedder, FakeLLM(), distilled)
+    assert "s1" in distilled
+    mems = store.db.execute("SELECT COUNT(*) FROM artifacts WHERE kind='memory'").fetchone()[0]
+    assert mems == 1
+
+def test_distill_skips_already_distilled(tmp_path):
+    import json as _json
+    from memorable.embed.fake import FakeEmbedder
+    from memorable.store.sqlite_store import SqliteStore
+    from memorable.types import Artifact
+
+    db = str(tmp_path / "test.db")
+    embedder = FakeEmbedder(dim=16)
+    store = SqliteStore(db, dim=embedder.dim)
+
+    art = Artifact(id="s1:0", kind="session_chunk", project="p", source="cc",
+                   text="we decided to use argon2 for password hashing in the auth module",
+                   token_count=15, created_at=100.0,
+                   meta={"session_id": "s1", "ord": 0})
+    store.add_artifacts([art], embedder.embed([art.text]))
+
+    call_count = 0
+    class CountingLLM:
+        def complete(self, prompt, *, max_tokens=1024):
+            nonlocal call_count; call_count += 1
+            return _json.dumps({"memories": []})
+
+    distilled = {"s1"}  # already distilled
+    distill_new_sessions(store, embedder, CountingLLM(), distilled)
+    assert call_count == 0  # LLM never called
