@@ -28,6 +28,8 @@ class SqliteStore:
         CREATE INDEX IF NOT EXISTS idx_art_project ON artifacts(project, active);
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_artifacts USING vec0(
           embedding float[{self.dim}]);
+        CREATE TABLE IF NOT EXISTS eval_runs(
+          id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, config TEXT, metrics TEXT);
         """)
         self.db.commit()
 
@@ -96,3 +98,22 @@ class SqliteStore:
         self.db.execute("UPDATE artifacts SET active=0, superseded_by=? WHERE id=?",
                         (superseded_by, artifact_id))
         self.add_edge(superseded_by, artifact_id, "supersedes")
+
+    def recent(self, scope: Scope, k: int) -> list[Artifact]:
+        """Return the k most recent active artifacts matching scope, ordered by created_at DESC."""
+        rows = self.db.execute("""
+          SELECT * FROM artifacts WHERE active = 1
+            AND (? IS NULL OR project = ?)
+            AND (? IS NULL OR created_at >= ?)
+            AND (? IS NULL OR created_at <= ?)
+          ORDER BY created_at DESC LIMIT ?
+        """, (scope.project, scope.project, scope.since, scope.since,
+              scope.until, scope.until, k)).fetchall()
+        return [self._row_to_artifact(r) for r in rows]
+
+    def save_eval_run(self, config: dict, metrics: dict) -> int:
+        import time
+        cur = self.db.execute("INSERT INTO eval_runs(created_at, config, metrics) VALUES(?,?,?)",
+                              (time.time(), json.dumps(config), json.dumps(metrics)))
+        self.db.commit()
+        return cur.lastrowid

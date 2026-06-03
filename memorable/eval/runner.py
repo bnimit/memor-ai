@@ -4,7 +4,7 @@ from memorable.retrieve.retriever import Retriever
 from memorable.eval.dataset import EvalCase, CaseResult
 from memorable.eval.metrics import recall_at_k, ndcg_at_k
 
-BASELINES = ["no-memory", "naive-RAG", "memory"]
+BASELINES = ["no-memory", "last-N", "naive-RAG", "memory"]
 
 def _result(ranked_ids, hits_tokens, latency, case, k):
     return CaseResult(
@@ -18,6 +18,12 @@ def run_case(case: EvalCase, *, store, embedder, k: int = 8) -> dict[str, CaseRe
 
     # no-memory: retrieve nothing
     out["no-memory"] = _result([], 0, 0.0, case, k)
+
+    # last-N: most recent k chunks, no vector search
+    recent = store.recent(scope, k) if hasattr(store, 'recent') else []
+    out["last-N"] = _result([a.id for a in recent],
+                            sum(a.token_count for a in recent),
+                            0.0, case, k)
 
     # naive-RAG: similarity only, no edges, no distill
     naive = Retriever(store, embedder, k=k, recency_weight=0.0, edge_expand=False)
@@ -45,12 +51,14 @@ def run_suite(cases: list[EvalCase], *, store, embedder, k: int = 8) -> dict[str
     full_tokens = sum(c.baseline_full_tokens for c in cases) / n
     for strat, results in agg.items():
         mean_tokens = sum(r.tokens_sent for r in results) / n
+        latencies = sorted(r.latency_ms for r in results)
         summary[strat] = {
             "recall@k": sum(r.recall for r in results) / n,
             "ndcg@k": sum(r.ndcg for r in results) / n,
             "tokens_sent": mean_tokens,
             "token_savings_vs_full": 1.0 - (mean_tokens / full_tokens) if full_tokens else 0.0,
-            "latency_ms_p50": sorted(r.latency_ms for r in results)[len(results)//2],
+            "latency_ms_p50": latencies[len(latencies)//2],
+            "latency_ms_p95": latencies[int(len(latencies)*0.95)],
         }
     return summary
 
