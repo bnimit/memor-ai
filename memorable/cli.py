@@ -48,5 +48,17 @@ def eval_cmd(cases_path: str, db: str = "memorable.db", k: int = 8, fake: bool =
     summary = run_suite(cases, store=s, embedder=e, k=k)
     typer.echo(json.dumps(summary, indent=2))
 
+@app.command("build-cases")
+def build_cases(project: str = typer.Option(...), db: str = "memorable.db",
+                out: str = "cases.json", fake: bool = False):
+    from memorable.eval.dataset import build_counterfactual_cases
+    e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
+    rows = s.db.execute("SELECT * FROM artifacts WHERE project=? AND kind='session_chunk'", (project,)).fetchall()
+    arts = [s._row_to_artifact(r) for r in rows]
+    cases = build_counterfactual_cases(arts, project=project)
+    Path(out).write_text(json.dumps([{"query":c.query,"project":c.scope_project,
+        "relevant_ids":sorted(c.relevant_ids),"baseline_full_tokens":c.baseline_full_tokens} for c in cases], indent=2))
+    typer.echo(f"wrote {len(cases)} cases to {out}")
+
 if __name__ == "__main__":
     app()
