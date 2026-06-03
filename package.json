@@ -2,15 +2,24 @@
   "name": "memor-ai",
   "version": "0.1.0",
   "description": "Measured memory layer for coding agents — store, distill, and retrieve past session context instead of re-sending full history",
-  "keywords": ["ai", "memory", "agent", "coding", "retrieval", "claude", "llm", "memor"],
+  "keywords": [
+    "ai",
+    "memory",
+    "agent",
+    "coding",
+    "retrieval",
+    "claude",
+    "llm",
+    "memor"
+  ],
   "license": "MIT",
   "bin": {
-    "memor": "./bin/memor.mjs"
+    "memor": "bin/memor.mjs"
   },
   "files": [
     "bin/",
     "scripts/",
-    "memor/",
+    "memor/**/*.py",
     "skill/",
     "inspector.py",
     "pyproject.toml"

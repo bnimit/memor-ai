@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.pytest_cache/
+*.db
+tests/
+.claude/
+.git/
+docs/
+CONTRIBUTING.md
+SECURITY.md
+CHANGELOG.md
