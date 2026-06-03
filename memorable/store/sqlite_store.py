@@ -9,7 +9,7 @@ def _serialize(v: list[float]) -> bytes:
 class SqliteStore:
     def __init__(self, path: str, dim: int):
         self.dim = dim
-        self.db = sqlite3.connect(path)
+        self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.enable_load_extension(True)
         sqlite_vec.load(self.db)
