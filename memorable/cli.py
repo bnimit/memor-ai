@@ -89,6 +89,22 @@ def distill(project: str = typer.Option(...), db: str = "memorable.db",
     typer.echo(f"distilled {total} memories from {len(by_session)} sessions")
 
 
+@app.command("ingest-project")
+def ingest_project(project_dir: str, project: str = typer.Option(...),
+                   db: str = "memorable.db", fake: bool = False):
+    """Recursively ingest all .jsonl transcripts (including subagent transcripts) from a Claude Code project directory."""
+    e = _embedder(fake)
+    s = SqliteStore(db, dim=e.dim)
+    files = sorted(Path(project_dir).rglob("*.jsonl"))
+    total = 0
+    for f in files:
+        arts = parse_transcript(f, project=project)
+        if arts:
+            s.add_artifacts(arts, e.embed([a.text for a in arts]))
+            total += len(arts)
+            typer.echo(f"  {f.name}: {len(arts)} chunks")
+    typer.echo(f"ingested {total} chunks from {len(files)} files")
+
 @app.command("ingest-doc")
 def ingest_doc(path: str, project: str = typer.Option(...), kind: str = "note",
                db: str = "memorable.db", fake: bool = False):
