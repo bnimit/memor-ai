@@ -18,15 +18,17 @@
 Proven on real data: **99.7% token savings**, **11ms retrieval**, with an eval harness that measures every claim.
 
 ```
- ┌──────────────────────────────────────────────────────────────────┐
- │  Before memor              After memor                          │
- │                                                                  │
- │  487,755 tokens  ────►     72 - 1,384 tokens                   │
- │  (full history)            (scoped retrieval)                   │
- │                                                                  │
- │  Every new session         Only what's relevant,                │
- │  re-sends everything       distilled + ranked                   │
- └──────────────────────────────────────────────────────────────────┘
++-------------------------------+-------------------------------+
+|  Before memor                 |  After memor                  |
++-------------------------------+-------------------------------+
+|                               |                               |
+|  487,755 tokens               |  72 - 1,384 tokens            |
+|  (full history)               |  (scoped retrieval)           |
+|                               |                               |
+|  Every new session            |  Only what's relevant,        |
+|  re-sends everything          |  distilled + ranked           |
+|                               |                               |
++-------------------------------+-------------------------------+
 ```
 
 ---
