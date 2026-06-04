@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 from memor.cli import _install_hook_logic
 
@@ -12,7 +13,8 @@ def test_install_hook_creates_settings(tmp_path):
     assert len(groups) == 1
     assert groups[0]["matcher"] == ""
     assert len(groups[0]["hooks"]) == 1
-    assert groups[0]["hooks"][0]["command"] == f"python3 {hook_path}"
+    assert hook_path in groups[0]["hooks"][0]["command"]
+    assert sys.executable in groups[0]["hooks"][0]["command"]
     assert groups[0]["hooks"][0]["timeout"] == 5000
 
 

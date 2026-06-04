@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import sys
 from pathlib import Path
 import typer
 from memor.store.sqlite_store import SqliteStore
@@ -200,7 +201,8 @@ def _install_hook_logic(settings_path: Path, hook_path: str) -> None:
         data = {}
     hooks = data.setdefault("hooks", {})
     prompt_hooks = hooks.setdefault("UserPromptSubmit", [])
-    hook_cmd = {"type": "command", "command": f"python3 {hook_path}", "timeout": 5000}
+    python = sys.executable
+    hook_cmd = {"type": "command", "command": f"{python} {hook_path}", "timeout": 5000}
     entry = {"matcher": "", "hooks": [hook_cmd]}
     existing_idx = None
     for i, group in enumerate(prompt_hooks):

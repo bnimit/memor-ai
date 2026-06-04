@@ -37,7 +37,7 @@ def main():
         embedder = LocalEmbedder()
 
     from memor.recall import recall
-    threshold = 0.0 if a.fake else 0.3
+    threshold = 0.0 if a.fake else 0.05
     result = recall(a.query, a.project, a.db, embedder=embedder, k=a.k, threshold=threshold)
     print(result.formatted_context)
 
