@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memor-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "Measured memory for coding agents. Fire and forget — no API keys needed."
 readme = "README.md"
 license = "MIT"
@@ -45,6 +45,7 @@ Issues = "https://github.com/bnimit/memor-ai/issues"
 
 [project.scripts]
 memor = "memor.cli:app"
+memor-hook = "memor.hook_cli:main"
 
 [tool.setuptools.packages.find]
 include = ["memor*"]

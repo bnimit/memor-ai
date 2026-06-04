@@ -387,7 +387,7 @@ def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
     run_daemon(poll_interval=poll_interval, projects_dir=d)
 
 
-def _install_hook_logic(settings_path: Path, hook_path: str) -> None:
+def _install_hook_logic(settings_path: Path, hook_command: str) -> None:
     """Core logic for install-hook, separated for testing."""
     if settings_path.exists():
         data = json.loads(settings_path.read_text())
@@ -395,8 +395,7 @@ def _install_hook_logic(settings_path: Path, hook_path: str) -> None:
         data = {}
     hooks = data.setdefault("hooks", {})
     prompt_hooks = hooks.setdefault("UserPromptSubmit", [])
-    python = sys.executable
-    hook_cmd = {"type": "command", "command": f"{python} {hook_path}", "timeout": 5000}
+    hook_cmd = {"type": "command", "command": hook_command, "timeout": 5000}
     entry = {"matcher": "", "hooks": [hook_cmd]}
     existing_idx = None
     for i, group in enumerate(prompt_hooks):
@@ -417,10 +416,16 @@ def _install_hook_logic(settings_path: Path, hook_path: str) -> None:
 @app.command("install-hook")
 def install_hook():
     """Install the Claude Code recall hook into ~/.claude/settings.json."""
-    hook_path = str(Path(__file__).resolve().parent.parent / "bin" / "memor-hook.py")
+    import shutil
+    hook_bin = shutil.which("memor-hook")
+    if not hook_bin:
+        typer.echo("Error: 'memor-hook' not found on PATH.", err=True)
+        typer.echo("  If you installed with pipx: pipx install memor-cli", err=True)
+        typer.echo("  If developing locally: pip install -e .", err=True)
+        raise typer.Exit(1)
     settings_path = Path.home() / ".claude" / "settings.json"
-    _install_hook_logic(settings_path, hook_path)
-    typer.echo(f"Hook installed: {hook_path}")
+    _install_hook_logic(settings_path, hook_bin)
+    typer.echo(f"Hook installed: {hook_bin}")
     typer.echo(f"Settings updated: {settings_path}")
     typer.echo()
     typer.echo("Pre-downloading embedding model...")

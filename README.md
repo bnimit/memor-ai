@@ -179,7 +179,7 @@ memor/
     +-- judge.py           LLM-as-judge evaluation
     +-- embed_benchmark.py Embedding model comparison
 
-bin/memor-hook.py          Claude Code hook (thin client)
+memor/hook_cli.py          Claude Code hook entry point (thin client)
 skill/recall.py            Standalone recall script
 ```
 
