@@ -93,6 +93,35 @@ def eval_judge_cmd(project: str = typer.Option(...), db: str = "memor.db",
     typer.echo(f"Judge eval complete: mean relevance = {summary['mean_relevance']:.3f}")
 
 
+@app.command("bench-embed")
+def bench_embed(project: str = typer.Option(...), db: str = "memor.db",
+                k: int = 8, fake: bool = False):
+    """Benchmark multiple embedding models on your data. Compares recall@k, nDCG@k, and latency."""
+    from memor.eval.embed_benchmark import run_embed_benchmark, CANDIDATE_MODELS
+    from memor.eval.dataset import build_counterfactual_cases
+    e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
+    rows = s.db.execute("SELECT * FROM artifacts WHERE project=? AND kind='session_chunk'",
+                        (project,)).fetchall()
+    arts = [s._row_to_artifact(r) for r in rows]
+    cases = build_counterfactual_cases(arts, project=project)
+    if not cases:
+        typer.echo("No eval cases could be built.")
+        raise typer.Exit(1)
+    typer.echo(f"Running benchmark on {len(arts)} artifacts, {len(cases)} cases...")
+    if fake:
+        from memor.embed.fake import FakeEmbedder
+        results = run_embed_benchmark(arts, cases, model_specs=[{"name":"fake","model_name":"fake"}],
+                                      embedder_factory=lambda _: FakeEmbedder(dim=16),
+                                      db_dir=str(Path(db).parent), k=k)
+    else:
+        results = run_embed_benchmark(arts, cases, db_dir=str(Path(db).parent), k=k)
+    typer.echo(f"\n{'Model':<30} {'Dim':>5} {'Recall@k':>10} {'nDCG@k':>10} {'Embed ms':>10} {'Query ms':>10}")
+    typer.echo("-" * 80)
+    for r in results:
+        typer.echo(f"{r.model_name:<30} {r.dim:>5} {r.recall_at_k:>10.3f} {r.ndcg_at_k:>10.3f} "
+                   f"{r.embed_latency_ms:>10.1f} {r.retrieval_latency_ms:>10.1f}")
+
+
 @app.command("distill")
 def distill(project: str = typer.Option(...), db: str = "memor.db",
             fake: bool = False, llm_provider: str = "anthropic", llm_model: str = "claude-sonnet-4-6"):
