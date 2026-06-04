@@ -244,5 +244,26 @@ def install_hook():
     typer.echo("  4. Open the dashboard: memor dashboard")
 
 
+@app.command("dashboard")
+def dashboard(port: int = typer.Option(8420, help="Port to serve on"),
+              no_open: bool = typer.Option(False, help="Don't open browser"),
+              db: str = typer.Option(str(Path.home() / ".memor" / "memor.db"))):
+    """Launch the web dashboard."""
+    import uvicorn
+    from memor.dashboard.server import create_app
+    db_resolved = _db_path(db)
+    if not Path(db_resolved).exists():
+        typer.echo(f"Database not found at {db_resolved}")
+        typer.echo("Run 'memor daemon' first to create and populate the database.")
+        raise typer.Exit(1)
+    app_instance = create_app(db_resolved)
+    if not no_open:
+        import webbrowser
+        import threading
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{port}")).start()
+    typer.echo(f"Memor dashboard: http://localhost:{port}")
+    uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
+
+
 if __name__ == "__main__":
     app()
