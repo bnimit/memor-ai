@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-107%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-125%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-ai.svg)](https://pypi.org/project/memor-ai/)
 
@@ -77,11 +77,16 @@ Memor doesn't just match keywords. Each memory is scored by three signals:
 
 | Signal | Weight | How it works |
 |---|---|---|
-| **Semantic similarity** | 60% | Vector cosine distance between query and memory |
+| **Semantic similarity** | 50% | Vector cosine distance between query and memory |
 | **Recency** | 25% | Exponential decay with 14-day half-life — recent decisions rank higher |
 | **Kind weight** | 15% | Distilled memories (1.3x) rank above raw session chunks (1.0x) |
+| **Quality** | 10% | Bayesian score from implicit feedback — memories the agent actually uses rank higher |
 
 This means a relevant decision from yesterday beats a vaguely-related chunk from a month ago — even if the raw embedding similarity is similar.
+
+### Feedback Loop
+
+Memor tracks whether recalled memories actually get used by the agent. After each session, the daemon analyzes the transcript to detect if recalled content appeared in the agent's responses. Memories that consistently prove useful get quality boosts; memories never recalled in 30+ days get automatically deactivated. Near-duplicate memories are compacted into one.
 
 ---
 
@@ -120,6 +125,7 @@ memor dashboard                      Web dashboard on localhost:8420
 memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything
 memor reingest --project <name>      Re-ingest only one project
+memor forget-stale                   Deactivate memories unused for 30+ days
 memor setup-model                    Download/retry the embedding model
 memor ingest-cc <file>               Ingest a single transcript
 memor ingest-project <dir>           Bulk ingest a project directory
@@ -149,9 +155,10 @@ memor/
 +-- types.py              Core dataclasses: Artifact, Scope, Hit, RetrievalTrace
 +-- interfaces.py         Protocols: Embedder, LLM, MemoryStore
 +-- cli.py                Typer CLI entry point
-+-- daemon.py             Auto-ingest + auto-distill background watcher
++-- daemon.py             Auto-ingest + auto-distill + compaction watcher
 +-- project.py            Git-root project resolver (filesystem-aware)
 +-- recall.py             Shared recall core (used by hook + skill)
++-- feedback.py           Implicit feedback analyzer (usage detection)
 |
 +-- retrieve/
 |   +-- retriever.py      Hybrid scoring: similarity + recency + kind weight

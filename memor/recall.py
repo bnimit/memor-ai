@@ -15,6 +15,7 @@ class RecallResult:
     status: str
     status_message: str
     formatted_context: str
+    hit_ids: list[str] = None
 
 
 def _format_timestamp(epoch: float) -> str:
@@ -111,4 +112,5 @@ def recall(query: str, project: str, db_path: str, *,
     return RecallResult(
         hits_count=len(hits), top_score=top_score, tokens_injected=tokens,
         latency_ms=ms, status=status, status_message=msg,
-        formatted_context=formatted)
+        formatted_context=formatted,
+        hit_ids=[h.artifact.id for h in hits])

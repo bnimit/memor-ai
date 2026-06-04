@@ -56,7 +56,6 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
     result = recall(query, project, db_path, embedder=embedder, k=8, threshold=0.15,
                     session_id=session_id)
 
-    # Log the recall event
     if Path(db_path).exists():
         try:
             from memor.store.sqlite_store import SqliteStore
@@ -66,6 +65,8 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
                 hits_count=result.hits_count, top_score=result.top_score,
                 tokens_injected=result.tokens_injected, latency_ms=result.latency_ms,
                 status=result.status, session_id=session_id)
+            if result.hit_ids:
+                store.record_recall(result.hit_ids)
         except Exception:
             pass
 

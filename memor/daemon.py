@@ -137,6 +137,45 @@ def distill_new_sessions(
     return distilled
 
 
+COMPACT_SIM_THRESHOLD = 0.90
+
+
+def compact_memories(store: SqliteStore, embedder) -> int:
+    """Find near-duplicate active memories and deactivate the older/lower-quality one."""
+    rows = store.db.execute(
+        "SELECT * FROM artifacts WHERE kind='memory' AND active=1"
+    ).fetchall()
+    if len(rows) < 2:
+        return 0
+    memories = [store._row_to_artifact(r) for r in rows]
+    vecs = embedder.embed([m.text for m in memories])
+    deactivated = 0
+    seen = set()
+    for i in range(len(memories)):
+        if memories[i].id in seen:
+            continue
+        for j in range(i + 1, len(memories)):
+            if memories[j].id in seen:
+                continue
+            if memories[i].project != memories[j].project:
+                continue
+            dot = sum(a * b for a, b in zip(vecs[i], vecs[j]))
+            norm_i = sum(a * a for a in vecs[i]) ** 0.5
+            norm_j = sum(a * a for a in vecs[j]) ** 0.5
+            sim = dot / (norm_i * norm_j) if norm_i and norm_j else 0
+            if sim >= COMPACT_SIM_THRESHOLD:
+                qi = store.get_quality_score(memories[i].id)
+                qj = store.get_quality_score(memories[j].id)
+                if qi >= qj:
+                    store.deactivate(memories[j].id, superseded_by=memories[i].id)
+                    seen.add(memories[j].id)
+                else:
+                    store.deactivate(memories[i].id, superseded_by=memories[j].id)
+                    seen.add(memories[i].id)
+                deactivated += 1
+    return deactivated
+
+
 def run_poll_cycle(
     state: dict[str, float],
     store: SqliteStore,
@@ -183,6 +222,27 @@ def run_poll_cycle(
         mode = "abstractive" if llm else "extractive (LLM-free)"
         print(f"  running {mode} distillation on new sessions...")
         distilled = distill_new_sessions(store, embedder, llm, distilled)
+
+    # Feedback analysis: check if recalled memories were used in completed sessions
+    if new_ingested:
+        from memor.feedback import analyze_session_feedback
+        for path, project in pending:
+            session_id = path.stem
+            try:
+                used = analyze_session_feedback(store, session_id, path)
+                if used > 0:
+                    print(f"  feedback: {used} memories confirmed used in {session_id[:12]}...")
+            except Exception:
+                pass
+
+    # Compact near-duplicate memories (run occasionally, not every cycle)
+    if new_ingested:
+        try:
+            compacted = compact_memories(store, embedder)
+            if compacted > 0:
+                print(f"  compacted {compacted} near-duplicate memories")
+        except Exception:
+            pass
 
     return state, distilled
 

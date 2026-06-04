@@ -19,12 +19,14 @@ RECENCY_HALF_LIFE_DAYS = 14
 class Retriever:
     def __init__(self, store: MemoryStore, embedder: Embedder, *,
                  k: int = 8, recency_weight: float = 0.25,
-                 kind_weight: float = 0.15, edge_expand: bool = True):
+                 kind_weight: float = 0.15, quality_weight: float = 0.10,
+                 edge_expand: bool = True):
         self.store, self.embedder = store, embedder
         self.k, self.edge_expand = k, edge_expand
-        self.w_sim = 1.0 - recency_weight - kind_weight
+        self.w_sim = 1.0 - recency_weight - kind_weight - quality_weight
         self.w_rec = recency_weight
         self.w_kind = kind_weight
+        self.w_qual = quality_weight
 
     def query(self, text: str, scope: Scope) -> RetrievalTrace:
         t0 = time.perf_counter()
@@ -40,6 +42,9 @@ class Retriever:
         sim_min = min(sim_scores) if sim_scores else 0.0
         sim_range = (sim_max - sim_min) or 1.0
 
+        quality_cache = {}
+        has_quality = hasattr(self.store, 'get_quality_score')
+
         for a, sim in base:
             norm_sim = (sim - sim_min) / sim_range
 
@@ -48,10 +53,16 @@ class Retriever:
 
             kind_boost = KIND_WEIGHTS.get(a.kind, 1.0) - 1.0
 
-            score = self.w_sim * norm_sim + self.w_rec * recency + self.w_kind * kind_boost
+            if has_quality and a.id not in quality_cache:
+                quality_cache[a.id] = self.store.get_quality_score(a.id)
+            quality = quality_cache.get(a.id, 0.5)
+
+            score = (self.w_sim * norm_sim + self.w_rec * recency
+                     + self.w_kind * kind_boost + self.w_qual * quality)
             hits[a.id] = Hit(a, score, {
                 "sim": sim, "norm_sim": round(norm_sim, 3),
-                "recency": round(recency, 3), "kind": a.kind, "edge": 0.0,
+                "recency": round(recency, 3), "kind": a.kind,
+                "quality": round(quality, 3), "edge": 0.0,
             })
 
         if self.edge_expand and base:

@@ -67,6 +67,21 @@ def create_app(db_path: str | None = None) -> FastAPI:
         store = _store()
         return store.get_recent_recalls(limit=limit, project=project)
 
+    @app.get("/api/quality")
+    def quality():
+        store = _store()
+        rows = store.db.execute("""
+            SELECT q.artifact_id, q.recall_count, q.use_count, q.quality_score,
+                   a.project, a.kind, json_extract(a.meta, '$.mem_type') as mem_type,
+                   substr(a.text, 1, 100) as preview
+            FROM memory_quality q
+            JOIN artifacts a ON a.id = q.artifact_id
+            WHERE a.active = 1
+            ORDER BY q.quality_score DESC
+            LIMIT 50
+        """).fetchall()
+        return [dict(r) for r in rows]
+
     @app.get("/api/efficiency")
     def efficiency():
         store = _store()

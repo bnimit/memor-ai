@@ -35,6 +35,12 @@ class SqliteStore:
         CREATE TABLE IF NOT EXISTS eval_runs(
           id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, config TEXT, metrics TEXT);
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS memory_quality(
+          artifact_id TEXT PRIMARY KEY,
+          recall_count INTEGER DEFAULT 0,
+          use_count INTEGER DEFAULT 0,
+          last_recalled REAL,
+          quality_score REAL DEFAULT 0.5);
         CREATE TABLE IF NOT EXISTS recall_log(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           timestamp REAL, project TEXT, query_preview TEXT,
@@ -192,6 +198,66 @@ class SqliteStore:
                 "SELECT * FROM recall_log ORDER BY timestamp DESC LIMIT ?",
                 (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+    def record_recall(self, artifact_ids: list[str]) -> None:
+        import time as _time
+        now = _time.time()
+        for aid in artifact_ids:
+            self.db.execute("""
+                INSERT INTO memory_quality(artifact_id, recall_count, use_count, last_recalled, quality_score)
+                VALUES(?, 1, 0, ?, 0.5)
+                ON CONFLICT(artifact_id) DO UPDATE SET
+                  recall_count = recall_count + 1,
+                  last_recalled = ?
+            """, (aid, now, now))
+        self.db.commit()
+
+    def record_usage(self, artifact_ids: list[str]) -> None:
+        for aid in artifact_ids:
+            self.db.execute("""
+                UPDATE memory_quality SET use_count = use_count + 1 WHERE artifact_id = ?
+            """, (aid,))
+        self.db.commit()
+        self._recompute_quality(artifact_ids)
+
+    def _recompute_quality(self, artifact_ids: list[str]) -> None:
+        for aid in artifact_ids:
+            row = self.db.execute(
+                "SELECT recall_count, use_count FROM memory_quality WHERE artifact_id=?",
+                (aid,)).fetchone()
+            if row:
+                rc = row["recall_count"] or 1
+                uc = row["use_count"] or 0
+                score = (uc + 1) / (rc + 2)
+                self.db.execute(
+                    "UPDATE memory_quality SET quality_score=? WHERE artifact_id=?",
+                    (round(score, 3), aid))
+        self.db.commit()
+
+    def get_quality_score(self, artifact_id: str) -> float:
+        row = self.db.execute(
+            "SELECT quality_score FROM memory_quality WHERE artifact_id=?",
+            (artifact_id,)).fetchone()
+        return row["quality_score"] if row else 0.5
+
+    def get_stale_memories(self, days: int = 30) -> list[str]:
+        import time as _time
+        cutoff = _time.time() - (days * 86400)
+        rows = self.db.execute("""
+            SELECT a.id FROM artifacts a
+            LEFT JOIN memory_quality q ON a.id = q.artifact_id
+            WHERE a.kind = 'memory' AND a.active = 1
+              AND (q.artifact_id IS NULL OR q.last_recalled IS NULL OR q.last_recalled < ?)
+              AND a.created_at < ?
+        """, (cutoff, cutoff)).fetchall()
+        return [r["id"] for r in rows]
+
+    def deactivate_stale(self, days: int = 30) -> int:
+        ids = self.get_stale_memories(days)
+        for aid in ids:
+            self.db.execute("UPDATE artifacts SET active=0 WHERE id=?", (aid,))
+        self.db.commit()
+        return len(ids)
 
     def get_efficiency_stats(self, context_window: int = 200_000) -> dict:
         sessions = self.db.execute("""

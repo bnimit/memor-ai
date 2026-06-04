@@ -13,6 +13,19 @@ app = typer.Typer(no_args_is_help=True)
 def _db_path(db: str) -> str:
     return str(Path(db).expanduser())
 
+def _get_dim(db_path: str) -> int:
+    import sqlite3
+    try:
+        db = sqlite3.connect(db_path)
+        db.row_factory = sqlite3.Row
+        row = db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
+        db.close()
+        if row:
+            return int(row["value"])
+    except Exception:
+        pass
+    return 256
+
 def _embedder(fake: bool):
     if fake:
         from memor.embed.fake import FakeEmbedder
@@ -49,6 +62,7 @@ MAINTENANCE
   memor reingest                   Wipe DB and re-ingest everything
   memor reingest --project <name>  Re-ingest only one project
   memor distill --project <name>   Run distillation manually
+  memor forget-stale               Deactivate memories not recalled in 30 days
   memor setup-model                Download/retry the embedding model (~60MB)
 
 EVALUATION
@@ -310,6 +324,26 @@ def reingest(project: str = typer.Option(None, help="Only reingest a specific pr
             "SELECT COUNT(*) as c FROM artifacts WHERE kind='memory' AND active=1"
         ).fetchone()["c"]
         typer.echo(f"Done: {chunks} chunks, {memories} memories")
+
+
+@app.command("forget-stale")
+def forget_stale(days: int = typer.Option(30, help="Deactivate memories not recalled in this many days"),
+                 db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+                 confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation")):
+    """Deactivate memories that haven't been recalled in N days."""
+    db_path = _db_path(db)
+    if not Path(db_path).exists():
+        typer.echo("No database found.")
+        raise typer.Exit(1)
+    s = SqliteStore(db_path, dim=_get_dim(db_path))
+    stale = s.get_stale_memories(days)
+    if not stale:
+        typer.echo("No stale memories found.")
+        return
+    if not confirm:
+        typer.confirm(f"Deactivate {len(stale)} memories not recalled in {days} days?", abort=True)
+    count = s.deactivate_stale(days)
+    typer.echo(f"Deactivated {count} stale memories.")
 
 
 @app.command("daemon")
