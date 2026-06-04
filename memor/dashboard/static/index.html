@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memor Dashboard</title>
+<style>
+  /* ── Reset & custom properties ─────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:         #0f1117;
+    --surface:    #1a1d27;
+    --surface2:   #22263a;
+    --border:     #2e3245;
+    --text:       #e2e8f0;
+    --text-muted: #8892a8;
+    --accent:     #6c8eff;
+    --accent2:    #a78bfa;
+    --ok:         #34d399;
+    --warn:       #fbbf24;
+    --neutral:    #64748b;
+    --hover:      #252a40;
+    --card-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    --radius:     10px;
+    --radius-sm:  6px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  }
+
+  [data-theme="light"] {
+    --bg:         #f4f6fc;
+    --surface:    #ffffff;
+    --surface2:   #eef0f8;
+    --border:     #d4d9ef;
+    --text:       #1a1d27;
+    --text-muted: #5a6481;
+    --hover:      #eef0f8;
+    --card-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+
+  /* ── Base ────────────────────────────────────────────────────── */
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* ── Utilities ───────────────────────────────────────────────── */
+  .muted        { color: var(--text-muted); }
+  .mono         { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
+  .truncate     { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sr-only      { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+
+  /* ── Layout ──────────────────────────────────────────────────── */
+  .container    { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Header ──────────────────────────────────────────────────── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 0;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .header-inner {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .logo {
+    font-size: 18px; font-weight: 700; letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .header-right  { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .last-updated  { font-size: 12px; color: var(--text-muted); }
+
+  /* theme toggle */
+  .theme-btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); cursor: pointer; border-radius: var(--radius-sm);
+    padding: 5px 10px; font-size: 13px; transition: background 0.15s;
+  }
+  .theme-btn:hover { background: var(--hover); }
+
+  /* ── Banner ──────────────────────────────────────────────────── */
+  .banner {
+    background: linear-gradient(135deg, rgba(108,142,255,0.15), rgba(167,139,250,0.10));
+    border: 1px solid rgba(108,142,255,0.35);
+    border-radius: var(--radius); padding: 16px 20px; margin: 20px 0;
+    display: flex; align-items: flex-start; gap: 14px;
+  }
+  .banner-icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+  .banner h3   { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .banner p    { font-size: 13px; color: var(--text-muted); }
+  .banner code {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    background: var(--surface2); border-radius: 4px;
+    padding: 1px 5px; font-size: 12px;
+  }
+  #banner { display: none; }
+
+  /* ── Section title ───────────────────────────────────────────── */
+  .section-title {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 12px;
+  }
+  section { margin-top: 28px; }
+
+  /* ── Hero metric cards ────────────────────────────────────────── */
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+  }
+  .metric-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 20px;
+    box-shadow: var(--card-shadow); transition: border-color 0.15s;
+  }
+  .metric-card:hover { border-color: var(--accent); }
+  .metric-label {
+    font-size: 12px; font-weight: 500; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .metric-value {
+    font-size: 32px; font-weight: 700; letter-spacing: -1px;
+    color: var(--text); line-height: 1.2; margin: 6px 0 4px;
+  }
+  .metric-sub { font-size: 12px; color: var(--text-muted); }
+
+  /* ── Savings bars ────────────────────────────────────────────── */
+  .savings-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+  }
+  .savings-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px;
+    box-shadow: var(--card-shadow);
+  }
+  .savings-header { display: flex; justify-content: space-between; margin-bottom: 10px; }
+  .savings-project { font-weight: 600; font-size: 14px; }
+  .savings-pct {
+    font-weight: 700; font-size: 14px;
+    color: var(--ok);
+  }
+  .bar-track {
+    background: var(--surface2); border-radius: 99px; height: 6px; overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%; border-radius: 99px;
+    background: linear-gradient(90deg, var(--accent), var(--ok));
+    transition: width 0.6s ease;
+  }
+  .savings-meta {
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--text-muted); margin-top: 8px;
+  }
+
+  /* ── Tables ──────────────────────────────────────────────────── */
+  .table-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+    box-shadow: var(--card-shadow);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead { background: var(--surface2); }
+  th {
+    padding: 11px 14px; text-align: left; font-size: 12px;
+    font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    user-select: none;
+  }
+  th.sortable { cursor: pointer; }
+  th.sortable:hover { color: var(--text); }
+  th .sort-icon { display: inline-block; margin-left: 4px; opacity: 0.4; font-size: 10px; }
+  th.sort-asc  .sort-icon, th.sort-desc .sort-icon { opacity: 1; color: var(--accent); }
+  td {
+    padding: 10px 14px; border-top: 1px solid var(--border);
+    font-size: 13px; color: var(--text);
+  }
+  tr:hover td { background: var(--hover); }
+  tr.selected td { background: rgba(108,142,255,0.12); }
+
+  /* clickable project rows */
+  .projects-body tr { cursor: pointer; }
+  .projects-body tr:hover td { background: var(--hover); }
+  .projects-body tr.selected td { background: rgba(108,142,255,0.12); }
+
+  /* ── Status badges ────────────────────────────────────────────── */
+  .badge {
+    display: inline-block; border-radius: 99px; padding: 2px 8px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  }
+  .badge-ok         { background: rgba(52,211,153,0.18); color: var(--ok); }
+  .badge-extractive { background: rgba(251,191,36,0.18); color: var(--warn); }
+  .badge-no_hits    { background: rgba(100,116,139,0.2);  color: var(--neutral); }
+
+  /* ── Filter pill ─────────────────────────────────────────────── */
+  .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; min-height: 28px; }
+  .filter-pill {
+    background: rgba(108,142,255,0.15); border: 1px solid rgba(108,142,255,0.4);
+    border-radius: 99px; padding: 3px 10px; font-size: 12px; font-weight: 500;
+    color: var(--accent); display: flex; align-items: center; gap: 6px;
+  }
+  .filter-pill button {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 0;
+  }
+
+  /* ── Disclaimer note ─────────────────────────────────────────── */
+  .note {
+    font-size: 12px; color: var(--text-muted); margin-top: 12px;
+    padding: 10px 14px; background: var(--surface);
+    border-left: 3px solid var(--border); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  }
+
+  /* ── Empty state ─────────────────────────────────────────────── */
+  .empty-state {
+    text-align: center; padding: 40px 20px;
+    color: var(--text-muted); font-size: 13px;
+  }
+
+  /* ── Footer ──────────────────────────────────────────────────── */
+  footer {
+    margin-top: 40px; padding: 20px 0;
+    border-top: 1px solid var(--border);
+    text-align: center; font-size: 12px; color: var(--text-muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container header-inner">
+    <span class="logo">memor</span>
+    <span class="muted" style="font-size:12px;">context intelligence</span>
+    <div class="header-right">
+      <span class="last-updated" id="last-updated">–</span>
+      <button class="theme-btn" id="theme-toggle" title="Toggle theme">☀ Light</button>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- Onboarding banner (hidden until health check says not full) -->
+  <div id="banner" class="banner" role="alert">
+    <div class="banner-icon">💡</div>
+    <div>
+      <h3>Getting started with Memor</h3>
+      <p id="banner-msg">No artifacts ingested yet. Run <code>memor ingest &lt;path&gt;</code> to index a project, then add the Claude Code hook so recalls are logged automatically.</p>
+    </div>
+  </div>
+
+  <!-- ── Hero metrics ───────────────────────────────────────────── -->
+  <section aria-label="Hero metrics">
+    <div class="section-title">Overview</div>
+    <div class="metric-grid" id="metric-grid">
+      <div class="metric-card">
+        <div class="metric-label">Total Recalls</div>
+        <div class="metric-value" id="m-recalls">–</div>
+        <div class="metric-sub">all-time recall events</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Tokens Injected</div>
+        <div class="metric-value" id="m-tokens">–</div>
+        <div class="metric-sub">tokens selectively recalled</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Hit Rate</div>
+        <div class="metric-value" id="m-hitrate">–</div>
+        <div class="metric-sub">recalls that returned hits</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Avg Latency</div>
+        <div class="metric-value" id="m-latency">–</div>
+        <div class="metric-sub">avg recall response time</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Recall quality & efficiency ───────────────────────────── -->
+  <section aria-label="Recall quality and efficiency">
+    <div class="section-title">Recall Quality &amp; Efficiency</div>
+    <div class="savings-grid" id="savings-grid">
+      <div class="empty-state" id="savings-empty" style="display:none;">No savings data yet.</div>
+    </div>
+    <p class="note">
+      Token savings estimates how much context Memor selectively recalled vs. sending everything.
+      Relevance score measures how well the recalled context matched your query. Both matter.
+    </p>
+  </section>
+
+  <!-- ── Project breakdown ─────────────────────────────────────── -->
+  <section aria-label="Project breakdown">
+    <div class="section-title">Project Breakdown</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="sortable" data-col="project" data-type="str">Project <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-col="recalls" data-type="num">Recalls <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-col="tokens" data-type="num">Tokens <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-col="avg_score" data-type="num">Avg Score <span class="sort-icon">↕</span></th>
+            <th>OK</th>
+            <th>No Hits</th>
+            <th>Extractive</th>
+          </tr>
+        </thead>
+        <tbody id="projects-body" class="projects-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Recent recalls ────────────────────────────────────────── -->
+  <section aria-label="Recent recalls">
+    <div class="section-title">Recent Recalls</div>
+    <div class="filter-bar" id="filter-bar"></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Project</th>
+            <th>Query</th>
+            <th>Hits</th>
+            <th>Score</th>
+            <th>Tokens</th>
+            <th>Latency</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="recalls-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="container">
+    Memor Dashboard &mdash; metrics refresh every 30 s
+  </div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── theme ─────────────────────────────────────────────── */
+  const html = document.documentElement;
+  const themeBtn = document.getElementById('theme-toggle');
+  let theme = localStorage.getItem('memor-theme') || 'dark';
+
+  function applyTheme(t) {
+    html.setAttribute('data-theme', t);
+    themeBtn.textContent = t === 'dark' ? '☀ Light' : '🌙 Dark';
+    localStorage.setItem('memor-theme', t);
+  }
+  applyTheme(theme);
+  themeBtn.addEventListener('click', () => {
+    theme = theme === 'dark' ? 'light' : 'dark';
+    applyTheme(theme);
+  });
+
+  /* ── state ─────────────────────────────────────────────── */
+  let projectFilter = null;
+  let sortCol = 'recalls';
+  let sortDir = 'desc';
+  let projectsData = [];
+
+  /* ── helpers ───────────────────────────────────────────── */
+  function fmt(n) {
+    if (n == null) return '–';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return String(n);
+  }
+  function fmtPct(n) { return n == null ? '–' : n.toFixed(1) + '%'; }
+  function fmtMs(n)  { return n == null ? '–' : n.toFixed(0) + ' ms'; }
+  function fmtScore(n) { return n == null ? '–' : n.toFixed(3); }
+
+  function relativeTime(ts) {
+    if (!ts) return '–';
+    const d = new Date(typeof ts === 'number' ? ts * 1000 : ts);
+    const diff = (Date.now() - d) / 1000;
+    if (diff < 60)   return Math.round(diff) + 's ago';
+    if (diff < 3600) return Math.round(diff / 60) + 'm ago';
+    if (diff < 86400)return Math.round(diff / 3600) + 'h ago';
+    return d.toLocaleDateString();
+  }
+
+  function badge(status) {
+    const map = {
+      ok:               ['badge-ok',         'ok'],
+      extractive_only:  ['badge-extractive',  'extractive'],
+      no_hits:          ['badge-no_hits',     'no hits'],
+    };
+    const [cls, label] = map[status] || ['badge-no_hits', status];
+    return `<span class="badge ${cls}">${label}</span>`;
+  }
+
+  function el(tag, attrs, inner) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    if (inner != null) e.innerHTML = inner;
+    return e;
+  }
+
+  /* ── fetch helpers ─────────────────────────────────────── */
+  async function api(path) {
+    const r = await fetch(path);
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+  }
+
+  /* ── render summary ────────────────────────────────────── */
+  function renderSummary(d) {
+    document.getElementById('m-recalls').textContent  = fmt(d.total_recalls);
+    document.getElementById('m-tokens').textContent   = fmt(d.total_tokens);
+    document.getElementById('m-hitrate').textContent  = d.hit_rate != null ? fmtPct(d.hit_rate * 100) : '–';
+    document.getElementById('m-latency').textContent  = fmtMs(d.avg_latency_ms);
+  }
+
+  /* ── render savings ────────────────────────────────────── */
+  function renderSavings(data) {
+    const grid = document.getElementById('savings-grid');
+    const empty = document.getElementById('savings-empty');
+    // remove old cards (not the empty msg element)
+    Array.from(grid.children).forEach(c => { if (c !== empty) c.remove(); });
+    if (!data.length) { empty.style.display = ''; return; }
+    empty.style.display = 'none';
+    data.forEach(row => {
+      const pct = Math.min(Math.max(row.reduction_pct || 0, 0), 100);
+      const card = el('div', { class: 'savings-card' }, `
+        <div class="savings-header">
+          <span class="savings-project truncate" title="${esc(row.project)}">${esc(row.project)}</span>
+          <span class="savings-pct">${fmtPct(pct)} saved</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+        <div class="savings-meta">
+          <span>${fmt(row.recalled_tokens)} / ${fmt(row.full_context_tokens)} tokens</span>
+          <span>relevance ${fmtScore(row.avg_relevance)}</span>
+        </div>
+      `);
+      grid.appendChild(card);
+    });
+  }
+
+  /* ── render projects table ─────────────────────────────── */
+  function renderProjects(data) {
+    projectsData = data;
+    // apply sort
+    const sorted = [...data].sort((a, b) => {
+      let va = a[sortCol], vb = b[sortCol];
+      if (typeof va === 'string') va = va.toLowerCase(), vb = (vb||'').toLowerCase();
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    // update sort header icons
+    document.querySelectorAll('th.sortable').forEach(th => {
+      const icon = th.querySelector('.sort-icon');
+      if (th.dataset.col === sortCol) {
+        th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+        th.classList.remove(sortDir === 'asc' ? 'sort-desc' : 'sort-asc');
+        icon.textContent = sortDir === 'asc' ? '↑' : '↓';
+      } else {
+        th.classList.remove('sort-asc', 'sort-desc');
+        icon.textContent = '↕';
+      }
+    });
+
+    const tbody = document.getElementById('projects-body');
+    tbody.innerHTML = '';
+    if (!sorted.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No projects yet.</td></tr>';
+      return;
+    }
+    sorted.forEach(row => {
+      const tr = el('tr', {});
+      const isSelected = projectFilter === row.project;
+      if (isSelected) tr.classList.add('selected');
+      tr.innerHTML = `
+        <td class="truncate mono" title="${esc(row.project)}">${esc(row.project)}</td>
+        <td>${fmt(row.recalls)}</td>
+        <td>${fmt(row.tokens)}</td>
+        <td>${fmtScore(row.avg_score)}</td>
+        <td style="color:var(--ok)">${row.ok_count ?? 0}</td>
+        <td style="color:var(--neutral)">${row.no_hits_count ?? 0}</td>
+        <td style="color:var(--warn)">${row.extractive_count ?? 0}</td>
+      `;
+      tr.addEventListener('click', () => {
+        if (projectFilter === row.project) {
+          projectFilter = null;
+        } else {
+          projectFilter = row.project;
+        }
+        loadRecalls();
+        renderProjects(projectsData);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  /* ── render recalls table ──────────────────────────────── */
+  function renderRecalls(data) {
+    const bar = document.getElementById('filter-bar');
+    bar.innerHTML = '';
+    if (projectFilter) {
+      const pill = el('div', { class: 'filter-pill' },
+        `Filtered: ${esc(projectFilter)} <button title="Clear filter">×</button>`);
+      pill.querySelector('button').addEventListener('click', () => {
+        projectFilter = null;
+        loadRecalls();
+        renderProjects(projectsData);
+      });
+      bar.appendChild(pill);
+    }
+
+    const tbody = document.getElementById('recalls-body');
+    tbody.innerHTML = '';
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No recall events yet.</td></tr>';
+      return;
+    }
+    data.forEach(row => {
+      const tr = el('tr', {});
+      tr.innerHTML = `
+        <td class="mono muted" style="white-space:nowrap">${relativeTime(row.timestamp)}</td>
+        <td class="truncate mono" style="max-width:120px" title="${esc(row.project)}">${esc(row.project)}</td>
+        <td class="truncate" style="max-width:220px" title="${esc(row.query_preview)}">${esc(row.query_preview)}</td>
+        <td>${row.hits_count ?? 0}</td>
+        <td>${fmtScore(row.top_score)}</td>
+        <td>${fmt(row.tokens_injected)}</td>
+        <td class="mono">${fmtMs(row.latency_ms)}</td>
+        <td>${badge(row.status)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  /* ── render health / banner ────────────────────────────── */
+  function renderHealth(h) {
+    const banner = document.getElementById('banner');
+    const msg = document.getElementById('banner-msg');
+    const status = h.onboarding_status;
+    if (status === 'full') {
+      banner.style.display = 'none';
+    } else {
+      banner.style.display = 'flex';
+      if (status === 'no_artifacts') {
+        msg.innerHTML = 'No artifacts ingested yet. Run <code>memor ingest &lt;path&gt;</code> to index a project, then add the Claude Code hook so recalls are logged automatically.';
+      } else if (status === 'no_recalls') {
+        msg.innerHTML = 'Artifacts are indexed but no recalls yet. Add the hook: <code>memor install-hook</code> — Memor will start injecting context automatically on each Claude call.';
+      } else {
+        msg.innerHTML = `Status: <strong>${esc(status)}</strong>. Run <code>memor --help</code> for setup guidance.`;
+      }
+    }
+  }
+
+  /* ── load data ─────────────────────────────────────────── */
+  async function loadSummary()  { try { renderSummary(await api('/api/summary')); } catch(e) { console.warn('summary', e); } }
+  async function loadProjects() { try { renderProjects(await api('/api/projects')); } catch(e) { console.warn('projects', e); } }
+  async function loadSavings()  { try { renderSavings(await api('/api/savings')); } catch(e) { console.warn('savings', e); } }
+  async function loadHealth()   { try { renderHealth(await api('/api/health')); } catch(e) { console.warn('health', e); } }
+  async function loadRecalls() {
+    try {
+      const url = '/api/recalls?limit=50' + (projectFilter ? '&project=' + encodeURIComponent(projectFilter) : '');
+      renderRecalls(await api(url));
+    } catch(e) { console.warn('recalls', e); }
+  }
+
+  async function refresh() {
+    await Promise.allSettled([loadSummary(), loadProjects(), loadSavings(), loadHealth(), loadRecalls()]);
+    document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  }
+
+  /* ── sort headers ──────────────────────────────────────── */
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      if (sortCol === th.dataset.col) {
+        sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortCol = th.dataset.col;
+        sortDir = th.dataset.type === 'str' ? 'asc' : 'desc';
+      }
+      renderProjects(projectsData);
+    });
+  });
+
+  /* ── escape helper ─────────────────────────────────────── */
+  function esc(s) {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  /* ── boot ──────────────────────────────────────────────── */
+  refresh();
+  setInterval(refresh, 30000);
+})();
+</script>
+</body>
+</html>
