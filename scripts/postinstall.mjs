@@ -63,9 +63,7 @@ function main() {
   console.log("memor-ai: installing Python dependencies...");
   execFileSync(pip, ["install", "-e", ".[dev]"], { cwd: ROOT, stdio: "inherit" });
 
-  // Install sentence-transformers (local embeddings)
-  console.log("memor-ai: installing sentence-transformers for local embeddings...");
-  execFileSync(pip, ["install", "sentence-transformers>=3.0"], { cwd: ROOT, stdio: "inherit" });
+  // Embedding deps (onnxruntime, tokenizers) are in core deps — no extra install needed.
 
   // Create ~/.memor directory
   const home = process.env.HOME || process.env.USERPROFILE;
