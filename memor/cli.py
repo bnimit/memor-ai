@@ -184,5 +184,13 @@ def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
     run_daemon(poll_interval=poll_interval, projects_dir=d)
 
 
+@app.command("inspector")
+def inspector_cmd(db: str = "memor.db", fake: bool = False):
+    """Launch the TUI inspector."""
+    from memor.tui.app import MemorApp
+    tui = MemorApp(db_path=db, fake=fake)
+    tui.run()
+
+
 if __name__ == "__main__":
     app()
