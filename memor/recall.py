@@ -1,0 +1,113 @@
+from __future__ import annotations
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from memor.types import Scope
+
+
+@dataclass
+class RecallResult:
+    hits_count: int
+    top_score: float
+    tokens_injected: int
+    latency_ms: float
+    status: str
+    status_message: str
+    formatted_context: str
+
+
+def _format_timestamp(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d")
+
+
+def _detect_status(store, project: str, hits_count: int) -> str:
+    if hits_count > 0:
+        llm_mems = store.db.execute("""
+            SELECT COUNT(*) as c FROM artifacts
+            WHERE kind='memory' AND project=? AND active=1
+              AND json_extract(meta, '$.mem_type') IN ('decision','lesson','snippet','bugfix')
+        """, (project,)).fetchone()["c"]
+        if llm_mems > 0:
+            return "ok"
+        return "extractive_only"
+    return "no_hits"
+
+
+def _status_message(status: str, project: str, hits_count: int,
+                    tokens: int, top_score: float) -> str:
+    if status == "ok":
+        return f"Memor: recalled {hits_count} memories ({tokens} tokens, {top_score:.2f} top score)"
+    if status == "extractive_only":
+        return (f"Memor: recalled {hits_count} memories "
+                f"(extractive only — set ANTHROPIC_API_KEY for richer distillation)")
+    if status == "no_hits":
+        return f'Memor: no relevant memories for project "{project}" yet'
+    if status == "empty_db":
+        return 'Memor: memory store is empty — run "memor daemon" to start ingesting sessions'
+    if status == "no_embedder":
+        return "Memor: inactive — set OPENAI_API_KEY or pip install memor-ai[local] for memory recall"
+    return f"Memor: status={status}"
+
+
+def recall(query: str, project: str, db_path: str, *,
+           embedder=None, k: int = 8, threshold: float = 0.3) -> RecallResult:
+    t0 = time.perf_counter()
+
+    if not Path(db_path).exists():
+        ms = (time.perf_counter() - t0) * 1000
+        return RecallResult(
+            hits_count=0, top_score=0.0, tokens_injected=0,
+            latency_ms=ms, status="empty_db",
+            status_message=_status_message("empty_db", project, 0, 0, 0.0),
+            formatted_context="")
+
+    from memor.store.sqlite_store import SqliteStore
+    from memor.retrieve.retriever import Retriever
+
+    store = SqliteStore(db_path, dim=embedder.dim)
+    retriever = Retriever(store, embedder, k=k)
+    trace = retriever.query(query, Scope(project=project))
+
+    # threshold <= 0 means "no filter" — accept all retriever hits
+    if threshold > 0.0:
+        hits = [h for h in trace.hits if h.score >= threshold]
+    else:
+        hits = list(trace.hits)
+    top_score = hits[0].score if hits else 0.0
+    tokens = sum(h.artifact.token_count for h in hits)
+
+    if not hits:
+        status = "no_hits"
+    else:
+        status = _detect_status(store, project, len(hits))
+
+    msg = _status_message(status, project, len(hits), tokens, top_score)
+
+    lines = []
+    if hits:
+        lines.append(f"## Recalled Memories (project: {project})")
+        lines.append("")
+        for i, h in enumerate(hits, 1):
+            a = h.artifact
+            kind_tag = a.meta.get("mem_type", a.kind)
+            text = a.text if len(a.text) <= 600 else a.text[:600] + "..."
+            source_parts = []
+            sid = a.meta.get("session_id")
+            if sid:
+                source_parts.append(f"session {sid[:8]}")
+            source_parts.append(_format_timestamp(a.created_at))
+            source = ", ".join(source_parts)
+            lines.append(f"### {i}. [{kind_tag}] {text}")
+            lines.append(f"Source: {source} | score: {h.score:.3f}")
+            lines.append("")
+
+    lines.append("---")
+    lines.append(msg)
+    formatted = "\n".join(lines)
+
+    ms = (time.perf_counter() - t0) * 1000
+    return RecallResult(
+        hits_count=len(hits), top_score=top_score, tokens_injected=tokens,
+        latency_ms=ms, status=status, status_message=msg,
+        formatted_context=formatted)
