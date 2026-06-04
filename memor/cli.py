@@ -205,5 +205,44 @@ def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
     run_daemon(poll_interval=poll_interval, projects_dir=d)
 
 
+def _install_hook_logic(settings_path: Path, hook_path: str) -> None:
+    """Core logic for install-hook, separated for testing."""
+    if settings_path.exists():
+        data = json.loads(settings_path.read_text())
+    else:
+        data = {}
+    hooks = data.setdefault("hooks", {})
+    prompt_hooks = hooks.setdefault("UserPromptSubmit", [])
+    entry = {"type": "command", "command": f"python3 {hook_path}", "timeout": 5000}
+    existing_idx = None
+    for i, h in enumerate(prompt_hooks):
+        if "memor-hook" in h.get("command", ""):
+            existing_idx = i
+            break
+    if existing_idx is not None:
+        prompt_hooks[existing_idx] = entry
+    else:
+        prompt_hooks.append(entry)
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(data, indent=2))
+
+
+@app.command("install-hook")
+def install_hook():
+    """Install the Claude Code recall hook into ~/.claude/settings.json."""
+    hook_path = str(Path(__file__).resolve().parent.parent / "bin" / "memor-hook.py")
+    settings_path = Path.home() / ".claude" / "settings.json"
+    _install_hook_logic(settings_path, hook_path)
+    typer.echo(f"Hook installed: {hook_path}")
+    typer.echo(f"Settings updated: {settings_path}")
+    typer.echo()
+    typer.echo("Next steps:")
+    typer.echo("  1. Start the daemon: memor daemon")
+    typer.echo("     (First run ingests existing sessions — takes ~2-5 minutes)")
+    typer.echo("  2. Extractive distillation runs automatically (no API key needed)")
+    typer.echo("  3. For richer memories, set ANTHROPIC_API_KEY")
+    typer.echo("  4. Open the dashboard: memor dashboard")
+
+
 if __name__ == "__main__":
     app()
