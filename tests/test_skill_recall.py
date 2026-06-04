@@ -17,13 +17,12 @@ def test_recall_script_outputs_context_block(tmp_path):
         capture_output=True, text=True, check=True,
     )
     output = out.stdout
-    # Should have the formatted header
-    assert "## Recalled Context (project: stablex)" in output
+    # Should have the formatted header (new format from memor.recall.recall())
+    assert "## Recalled Memories (project: stablex)" in output
     # Should have at least one numbered hit
     assert "### 1." in output
-    # Should have a trace line
-    assert "Trace:" in output
-    assert "hits" in output
+    # Should have the Memor status line
+    assert "Memor:" in output
     # Content should reference auth
     assert "auth" in output.lower()
 

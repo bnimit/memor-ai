@@ -3,41 +3,9 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
 from pathlib import Path
 
 DEFAULT_DB = str(Path.home() / ".memor" / "memor.db")
-
-
-def _format_timestamp(epoch: float) -> str:
-    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d")
-
-
-def _format_hits(hits, project: str) -> str:
-    """Format hits into an agent-readable context block."""
-    lines = [f"## Recalled Context (project: {project})", ""]
-    for i, h in enumerate(hits, 1):
-        a = h.artifact
-        kind_tag = a.kind
-        # Truncate very long texts to keep output focused
-        text = a.text if len(a.text) <= 600 else a.text[:600] + "..."
-        source_parts = []
-        session_id = a.meta.get("session_id")
-        if session_id:
-            source_parts.append(f"session {session_id[:8]}")
-        source_parts.append(_format_timestamp(a.created_at))
-        source = ", ".join(source_parts)
-
-        lines.append(f"### {i}. [{kind_tag}] {text}")
-        lines.append(f"Source: {source} | score: {h.score:.3f}")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def _format_trace(hits, latency_ms: float) -> str:
-    """Format a one-line trace summary."""
-    total_tokens = sum(h.artifact.token_count for h in hits)
-    return f"Trace: {len(hits)} hits, {latency_ms:.0f}ms, {total_tokens} tokens recalled"
 
 
 def main():
@@ -72,28 +40,18 @@ def main():
             base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
             embedder = APIEmbedder(base_url=base_url, api_key=api_key)
         else:
-            from memor.embed.local import LocalEmbedder
-            embedder = LocalEmbedder()
+            try:
+                from memor.embed.local import LocalEmbedder
+                embedder = LocalEmbedder()
+            except ImportError:
+                print("ERROR: No embedder available.")
+                print("Set OPENAI_API_KEY or pip install memor-ai[local]")
+                sys.exit(1)
 
-    from memor.store.sqlite_store import SqliteStore
-    from memor.retrieve.retriever import Retriever
-    from memor.types import Scope
-
-    store = SqliteStore(a.db, dim=embedder.dim)
-    trace = Retriever(store, embedder, k=a.k).query(a.query, Scope(project=a.project))
-
-    if not trace.hits:
-        print(f"## Recalled Context (project: {a.project})")
-        print()
-        print("No relevant context found. The memory store may be empty for this project,")
-        print("or the query did not match any stored artifacts.")
-        print()
-        print(f"---\nTrace: 0 hits, {trace.latency_ms:.0f}ms")
-        sys.exit(0)
-
-    print(_format_hits(trace.hits, a.project))
-    print("---")
-    print(_format_trace(trace.hits, trace.latency_ms))
+    from memor.recall import recall
+    threshold = 0.0 if a.fake else 0.3
+    result = recall(a.query, a.project, a.db, embedder=embedder, k=a.k, threshold=threshold)
+    print(result.formatted_context)
 
 
 if __name__ == "__main__":
