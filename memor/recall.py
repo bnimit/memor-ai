@@ -47,7 +47,7 @@ def _status_message(status: str, project: str, hits_count: int,
     if status == "empty_db":
         return 'Memor: memory store is empty — run "memor daemon" to start ingesting sessions'
     if status == "no_embedder":
-        return "Memor: inactive — set OPENAI_API_KEY or pip install memor-ai[local] for memory recall"
+        return "Memor: inactive — run 'memor setup-model' to download the embedding model"
     return f"Memor: status={status}"
 
 

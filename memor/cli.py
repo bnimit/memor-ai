@@ -71,8 +71,8 @@ EVALUATION
   memor bench-embed --project <name> Compare embedding models
 
 CONFIGURATION
-  ANTHROPIC_API_KEY     Optional — enables richer abstractive distillation
-  Everything else works locally with zero API keys.
+  Everything works locally with zero API keys.
+  No configuration needed — just install, hook, and run the daemon.
 
 EXAMPLES
   memor install-hook && memor daemon    # one-time setup
@@ -402,9 +402,8 @@ def install_hook():
     typer.echo()
     typer.echo("Next steps:")
     typer.echo("  1. Start the daemon: memor daemon")
-    typer.echo("  2. Everything works locally — no API keys needed for search")
-    typer.echo("  3. Optional: set ANTHROPIC_API_KEY for richer abstractive distillation")
-    typer.echo("  4. Open the dashboard: memor dashboard")
+    typer.echo("  2. Open the dashboard: memor dashboard")
+    typer.echo("  Everything works locally — no API keys needed.")
 
 
 @app.command("dashboard")

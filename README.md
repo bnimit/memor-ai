@@ -22,9 +22,10 @@ Memor watches your coding sessions, extracts decisions and patterns, and recalls
 ## Quick Start
 
 ```bash
-pip install memor-ai
+# Install globally (recommended)
+pipx install memor-ai
 
-# Install the Claude Code hook + download embedding model
+# Install the Claude Code hook + download embedding model (~60MB)
 memor install-hook
 
 # Start the background daemon
@@ -37,6 +38,8 @@ That's it. Every Claude Code prompt now gets automatic context recall. Open the 
 memor dashboard
 # Opens http://localhost:8420
 ```
+
+> **Alternative install:** `pip install memor-ai` works too — just make sure `~/.local/bin` is on your PATH so the `memor` command is available.
 
 ---
 
@@ -52,7 +55,7 @@ memor dashboard
   Embed query locally (model2vec, ~2ms)
       |
       v
-  Hybrid scoring: similarity + recency + kind weight
+  Hybrid scoring: similarity + recency + kind weight + quality
       |
       v
   Inject relevant context into prompt
@@ -64,16 +67,16 @@ memor dashboard
 
 **Two background processes:**
 
-1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs extractive distillation. All local.
+1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback, compacts duplicates. All local.
 2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms.
 
-**No API keys required.** Embeddings run locally via [model2vec](https://github.com/MinishLab/model2vec) (potion-base-8M, 256-dim). Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Optional: set `ANTHROPIC_API_KEY` for richer abstractive distillation.
+**No API keys required.** Embeddings run locally via [model2vec](https://github.com/MinishLab/model2vec) (potion-base-8M, 256-dim). Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
 
 ---
 
 ## Hybrid Scoring
 
-Memor doesn't just match keywords. Each memory is scored by three signals:
+Memor doesn't just match keywords. Each memory is scored by four signals:
 
 | Signal | Weight | How it works |
 |---|---|---|
@@ -97,7 +100,7 @@ Memor tracks whether recalled memories actually get used by the agent. After eac
 | `session_chunk` | Daemon auto-ingest | Filtered turns from Claude Code transcripts |
 | `memory` | Extractive distillation | Key decisions, patterns, bugfixes per session |
 
-The daemon runs a signal filter that keeps decisions, bugfixes, lessons, and code rationale while skipping noise (tool calls, file listings, boilerplate).
+Memories are automatically classified as `decision`, `bugfix`, `lesson`, `snippet`, or generic `extract` based on content patterns. The daemon runs a signal filter that keeps decisions, bugfixes, lessons, and code rationale while skipping noise (tool calls, file listings, boilerplate).
 
 ---
 
@@ -132,19 +135,8 @@ memor ingest-project <dir>           Bulk ingest a project directory
 memor ingest-doc <file>              Ingest a markdown document
 memor distill --project <name>       Run distillation manually
 memor eval <cases.json>              Run eval suite
-memor eval-judge --project <name>    LLM-as-judge evaluation
 memor bench-embed --project <name>   Compare embedding models
 ```
-
----
-
-## Configuration
-
-| Variable | Purpose | Required |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | Abstractive distillation (richer memories) | Optional |
-
-Without any API key, everything works — embeddings are local, distillation uses the extractive (free) path. The API key upgrades distillation quality but isn't needed.
 
 ---
 
@@ -161,7 +153,7 @@ memor/
 +-- feedback.py           Implicit feedback analyzer (usage detection)
 |
 +-- retrieve/
-|   +-- retriever.py      Hybrid scoring: similarity + recency + kind weight
+|   +-- retriever.py      Hybrid scoring: similarity + recency + kind + quality
 |
 +-- store/
 |   +-- sqlite_store.py   SQLite + sqlite-vec (WAL mode, dimension safety)
@@ -176,7 +168,7 @@ memor/
 |   +-- static/index.html Self-contained dashboard (no CDN deps)
 |
 +-- distill/
-|   +-- extractive.py     TF-IDF + clustering (free, local)
+|   +-- extractive.py     TF-IDF + clustering + auto-classification
 |   +-- distiller.py      Extractive + optional LLM abstractive
 |
 +-- eval/
@@ -196,9 +188,9 @@ skill/recall.py            Standalone recall script
 git clone https://github.com/bnimit/memor-ai.git
 cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,anthropic]"
+pip install -e ".[dev]"
 
-pytest  # 107 tests
+pytest  # 125 tests
 ```
 
 ---
