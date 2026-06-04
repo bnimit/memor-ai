@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json, sqlite3, struct
+from pathlib import Path
 import sqlite_vec
 from memor.types import Artifact, Scope
 
@@ -9,6 +10,7 @@ def _serialize(v: list[float]) -> bytes:
 class SqliteStore:
     def __init__(self, path: str, dim: int):
         self.dim = dim
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.enable_load_extension(True)
