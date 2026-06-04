@@ -28,12 +28,38 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/summary")
     def summary():
         store = _store()
-        return store.get_recall_stats()
+        recall_stats = store.get_recall_stats()
+        ingestion = {}
+        for row in store.db.execute(
+            "SELECT kind, COUNT(*) as c, SUM(token_count) as tokens "
+            "FROM artifacts WHERE active=1 GROUP BY kind"
+        ).fetchall():
+            ingestion[row["kind"]] = {"count": row["c"], "tokens": row["tokens"] or 0}
+        project_count = store.db.execute(
+            "SELECT COUNT(DISTINCT project) as c FROM artifacts"
+        ).fetchone()["c"]
+        recall_stats["ingestion"] = ingestion
+        recall_stats["project_count"] = project_count
+        return recall_stats
 
     @app.get("/api/projects")
     def projects():
         store = _store()
-        return store.get_project_stats()
+        recall_stats = store.get_project_stats()
+        if recall_stats:
+            return recall_stats
+        rows = store.db.execute("""
+            SELECT project,
+                   COUNT(*) as artifacts,
+                   SUM(CASE WHEN kind='session_chunk' THEN 1 ELSE 0 END) as chunks,
+                   SUM(CASE WHEN kind='memory' THEN 1 ELSE 0 END) as memories,
+                   SUM(token_count) as total_tokens,
+                   MAX(created_at) as last_activity
+            FROM artifacts WHERE active=1
+            GROUP BY project
+            ORDER BY artifacts DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
 
     @app.get("/api/recalls")
     def recalls(limit: int = Query(50, ge=1, le=500),

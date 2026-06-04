@@ -257,27 +257,27 @@
 
   <!-- ── Hero metrics ───────────────────────────────────────────── -->
   <section aria-label="Hero metrics">
-    <div class="section-title">Overview</div>
+    <div class="section-title">Memory Bank</div>
     <div class="metric-grid" id="metric-grid">
+      <div class="metric-card">
+        <div class="metric-label">Session Chunks</div>
+        <div class="metric-value" id="m-chunks">–</div>
+        <div class="metric-sub">ingested from transcripts</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Memories</div>
+        <div class="metric-value" id="m-memories">–</div>
+        <div class="metric-sub">distilled insights</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Projects</div>
+        <div class="metric-value" id="m-projects">–</div>
+        <div class="metric-sub">tracked projects</div>
+      </div>
       <div class="metric-card">
         <div class="metric-label">Total Recalls</div>
         <div class="metric-value" id="m-recalls">–</div>
-        <div class="metric-sub">all-time recall events</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Tokens Injected</div>
-        <div class="metric-value" id="m-tokens">–</div>
-        <div class="metric-sub">tokens selectively recalled</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Hit Rate</div>
-        <div class="metric-value" id="m-hitrate">–</div>
-        <div class="metric-sub">recalls that returned hits</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Avg Latency</div>
-        <div class="metric-value" id="m-latency">–</div>
-        <div class="metric-sub">avg recall response time</div>
+        <div class="metric-sub" id="m-recalls-sub">hook recall events</div>
       </div>
     </div>
   </section>
@@ -302,12 +302,12 @@
         <thead>
           <tr>
             <th class="sortable" data-col="project" data-type="str">Project <span class="sort-icon">↕</span></th>
-            <th class="sortable" data-col="recalls" data-type="num">Recalls <span class="sort-icon">↕</span></th>
-            <th class="sortable" data-col="tokens" data-type="num">Tokens <span class="sort-icon">↕</span></th>
-            <th class="sortable" data-col="avg_score" data-type="num">Avg Score <span class="sort-icon">↕</span></th>
-            <th>OK</th>
-            <th>No Hits</th>
-            <th>Extractive</th>
+            <th class="sortable" data-col="artifacts" data-type="num"><span id="th-col1">Chunks</span> <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-col="memories" data-type="num"><span id="th-col2">Memories</span> <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-col="total_tokens" data-type="num"><span id="th-col3">Tokens</span> <span class="sort-icon">↕</span></th>
+            <th id="th-col4">Status</th>
+            <th id="th-col5"></th>
+            <th id="th-col6"></th>
           </tr>
         </thead>
         <tbody id="projects-body" class="projects-body"></tbody>
@@ -368,7 +368,7 @@
 
   /* ── state ─────────────────────────────────────────────── */
   let projectFilter = null;
-  let sortCol = 'recalls';
+  let sortCol = 'artifacts';
   let sortDir = 'desc';
   let projectsData = [];
 
@@ -419,10 +419,17 @@
 
   /* ── render summary ────────────────────────────────────── */
   function renderSummary(d) {
-    document.getElementById('m-recalls').textContent  = fmt(d.total_recalls);
-    document.getElementById('m-tokens').textContent   = fmt(d.total_tokens);
-    document.getElementById('m-hitrate').textContent  = d.hit_rate != null ? fmtPct(d.hit_rate * 100) : '–';
-    document.getElementById('m-latency').textContent  = fmtMs(d.avg_latency_ms);
+    const ing = d.ingestion || {};
+    const chunks = (ing.session_chunk || {}).count || 0;
+    const memories = (ing.memory || {}).count || 0;
+    document.getElementById('m-chunks').textContent   = fmt(chunks);
+    document.getElementById('m-memories').textContent  = fmt(memories);
+    document.getElementById('m-projects').textContent  = fmt(d.project_count || 0);
+    document.getElementById('m-recalls').textContent   = fmt(d.total_recalls);
+    if (d.total_recalls > 0) {
+      document.getElementById('m-recalls-sub').textContent =
+        fmtPct(d.hit_rate * 100) + ' hit rate · ' + fmtMs(d.avg_latency_ms) + ' avg';
+    }
   }
 
   /* ── render savings ────────────────────────────────────── */
@@ -481,19 +488,44 @@
       tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No projects yet.</td></tr>';
       return;
     }
+    const isRecallMode = sorted.length > 0 && sorted[0].recalls !== undefined;
+    if (isRecallMode) {
+      document.getElementById('th-col1').textContent = 'Recalls';
+      document.getElementById('th-col2').textContent = 'Tokens';
+      document.getElementById('th-col3').textContent = 'Avg Score';
+      document.getElementById('th-col4').textContent = 'OK';
+      document.getElementById('th-col5').textContent = 'No Hits';
+      document.getElementById('th-col6').textContent = 'Extractive';
+    }
+
     sorted.forEach(row => {
       const tr = el('tr', {});
       const isSelected = projectFilter === row.project;
       if (isSelected) tr.classList.add('selected');
-      tr.innerHTML = `
-        <td class="truncate mono" title="${esc(row.project)}">${esc(row.project)}</td>
-        <td>${fmt(row.recalls)}</td>
-        <td>${fmt(row.tokens)}</td>
-        <td>${fmtScore(row.avg_score)}</td>
-        <td style="color:var(--ok)">${row.ok_count ?? 0}</td>
-        <td style="color:var(--neutral)">${row.no_hits_count ?? 0}</td>
-        <td style="color:var(--warn)">${row.extractive_count ?? 0}</td>
-      `;
+      if (isRecallMode) {
+        tr.innerHTML = `
+          <td class="truncate mono" title="${esc(row.project)}">${esc(row.project)}</td>
+          <td>${fmt(row.recalls)}</td>
+          <td>${fmt(row.tokens)}</td>
+          <td>${fmtScore(row.avg_score)}</td>
+          <td style="color:var(--ok)">${row.ok_count ?? 0}</td>
+          <td style="color:var(--neutral)">${row.no_hits_count ?? 0}</td>
+          <td style="color:var(--warn)">${row.extractive_count ?? 0}</td>
+        `;
+      } else {
+        const hasMemories = (row.memories || 0) > 0;
+        const status = hasMemories ? 'extractive' : 'ingested';
+        const statusColor = hasMemories ? 'var(--ok)' : 'var(--warn)';
+        tr.innerHTML = `
+          <td class="truncate mono" title="${esc(row.project)}">${esc(row.project)}</td>
+          <td>${fmt(row.chunks || 0)}</td>
+          <td>${fmt(row.memories || 0)}</td>
+          <td>${fmt(row.total_tokens || 0)}</td>
+          <td style="color:${statusColor}">${status}</td>
+          <td></td>
+          <td></td>
+        `;
+      }
       tr.addEventListener('click', () => {
         if (projectFilter === row.project) {
           projectFilter = null;
