@@ -24,12 +24,12 @@ def test_project_name_simple():
     assert _project_name_from_dir("-Users-nimit-Documents-Projects-plirin") == "plirin"
 
 def test_project_name_nested():
-    assert _project_name_from_dir("-Users-nimit-Documents-Eukarya-reearth-flow") == "flow"
+    assert _project_name_from_dir("-Users-nimit-Documents-Eukarya-reearth-flow") == "reearth-flow"
 
 def test_project_name_worktree():
     assert _project_name_from_dir(
         "-Users-nimit-Documents-Eukarya-ygo--claude-worktrees-musing-haibt-701a57"
-    ) == "701a57"
+    ) == "ygo"
 
 def test_project_name_passthrough():
     assert _project_name_from_dir("simple") == "simple"

@@ -25,6 +25,69 @@ def _auto_embedder():
     from memor.embed.local import LocalEmbedder
     return LocalEmbedder()
 
+HELP_TEXT = """\
+memor — measured memory for coding agents
+
+GETTING STARTED
+  memor install-hook     Install the Claude Code recall hook + download model
+  memor daemon           Start the background watcher (ingests + distills)
+  memor dashboard        Open the web dashboard at localhost:8420
+
+QUERYING
+  memor query <text>     Search memories from the command line
+    --project <name>     Scope to a specific project
+    --k <n>              Number of results (default: 8)
+
+INGESTION
+  memor ingest-cc <file>           Ingest a single transcript
+  memor ingest-project <dir>       Bulk ingest a project's transcripts
+    --project <name>               Project name (required)
+  memor ingest-doc <file>          Ingest a markdown document
+    --project <name>               Project name (required)
+
+MAINTENANCE
+  memor reingest                   Wipe DB and re-ingest everything
+  memor reingest --project <name>  Re-ingest only one project
+  memor distill --project <name>   Run distillation manually
+  memor setup-model                Download/retry the embedding model (~60MB)
+
+EVALUATION
+  memor eval <cases.json>          Run eval suite
+  memor eval-judge --project <name>  LLM-as-judge evaluation
+  memor bench-embed --project <name> Compare embedding models
+
+CONFIGURATION
+  ANTHROPIC_API_KEY     Optional — enables richer abstractive distillation
+  Everything else works locally with zero API keys.
+
+EXAMPLES
+  memor install-hook && memor daemon    # one-time setup
+  memor query "auth flow" --project my-app
+  memor reingest --project my-app -y    # refresh one project
+  memor dashboard                       # see stats at localhost:8420
+"""
+
+
+@app.command("help")
+def help_cmd():
+    """Print the memor manual."""
+    typer.echo(HELP_TEXT)
+
+
+@app.command("setup-model")
+def setup_model():
+    """Download the embedding model (~60MB). Re-run to retry a failed download."""
+    typer.echo("Downloading embedding model...")
+    try:
+        from memor.embed.local import LocalEmbedder
+        embedder = LocalEmbedder()
+        typer.echo(f"Model ready: potion-base-8M (dim={embedder.dim})")
+    except Exception as e:
+        typer.echo(f"Download failed: {e}")
+        typer.echo("Check your internet connection and try again: memor setup-model")
+        raise typer.Exit(1)
+
+
 @app.command("ingest-cc")
 def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memor.db",
               fake: bool = False, no_filter: bool = False):
@@ -184,6 +247,71 @@ def ingest_doc(path: str, project: str = typer.Option(...), kind: str = "note",
     typer.echo(f"ingested {len(arts)} chunks from {path}")
 
 
+@app.command("reingest")
+def reingest(project: str = typer.Option(None, help="Only reingest a specific project"),
+             projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/"),
+             confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation")):
+    """Re-ingest transcripts. Without --project, wipes the entire DB and starts fresh.
+    With --project, only clears and re-ingests that project's data."""
+    from memor.daemon import (
+        CLAUDE_PROJECTS_DIR, DEFAULT_DB, STATE_FILE, DISTILLED_FILE,
+        run_poll_cycle, scan_transcripts, ingest_file, _make_embedder,
+        save_state, save_distilled_state, load_state, load_distilled_state,
+    )
+    d = Path(projects_dir) if projects_dir else CLAUDE_PROJECTS_DIR
+
+    if project:
+        if not confirm:
+            typer.confirm(
+                f'This will clear all data for project "{project}" and re-ingest. Continue?',
+                abort=True)
+        db_path = str(DEFAULT_DB)
+        if not DEFAULT_DB.exists():
+            typer.echo("No database found. Run 'memor daemon' first.")
+            raise typer.Exit(1)
+        embedder = _make_embedder()
+        store = SqliteStore(db_path, dim=embedder.dim)
+        deleted = store.db.execute(
+            "DELETE FROM artifacts WHERE project=?", (project,)).rowcount
+        store.db.commit()
+        typer.echo(f"  cleared {deleted} artifacts for project '{project}'")
+        state = load_state()
+        transcripts = scan_transcripts(d)
+        count = 0
+        for path, proj_name in transcripts:
+            if proj_name == project:
+                n = ingest_file(path, proj_name, store, embedder)
+                state[str(path)] = path.stat().st_mtime
+                count += n
+        save_state(state)
+        distilled = load_distilled_state()
+        distilled -= {sid for sid in distilled if True}
+        save_distilled_state(distilled)
+        typer.echo(f"Done: re-ingested {count} chunks for project '{project}'")
+    else:
+        if not confirm:
+            typer.confirm(
+                f"This will delete {DEFAULT_DB} and re-ingest all transcripts. Continue?",
+                abort=True)
+        for f in [DEFAULT_DB, STATE_FILE, DISTILLED_FILE]:
+            if f.exists():
+                f.unlink()
+                typer.echo(f"  deleted {f}")
+        embedder = _make_embedder()
+        store = SqliteStore(str(DEFAULT_DB), dim=embedder.dim)
+        typer.echo(f"Re-ingesting from {d}...")
+        state, distilled = run_poll_cycle({}, store, embedder, d)
+        save_state(state)
+        save_distilled_state(distilled)
+        chunks = store.db.execute(
+            "SELECT COUNT(*) as c FROM artifacts WHERE kind='session_chunk' AND active=1"
+        ).fetchone()["c"]
+        memories = store.db.execute(
+            "SELECT COUNT(*) as c FROM artifacts WHERE kind='memory' AND active=1"
+        ).fetchone()["c"]
+        typer.echo(f"Done: {chunks} chunks, {memories} memories")
+
+
 @app.command("daemon")
 def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
            projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/")):
@@ -229,9 +357,17 @@ def install_hook():
     typer.echo(f"Hook installed: {hook_path}")
     typer.echo(f"Settings updated: {settings_path}")
     typer.echo()
+    typer.echo("Pre-downloading embedding model...")
+    try:
+        from memor.embed.local import LocalEmbedder
+        embedder = LocalEmbedder()
+        typer.echo(f"  model ready (dim={embedder.dim})")
+    except Exception as e:
+        typer.echo(f"  model download failed: {e}")
+        typer.echo("  retry later with: memor setup-model")
+    typer.echo()
     typer.echo("Next steps:")
     typer.echo("  1. Start the daemon: memor daemon")
-    typer.echo("     (First run downloads embedding model ~60MB + ingests sessions)")
     typer.echo("  2. Everything works locally — no API keys needed for search")
     typer.echo("  3. Optional: set ANTHROPIC_API_KEY for richer abstractive distillation")
     typer.echo("  4. Open the dashboard: memor dashboard")

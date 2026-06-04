@@ -22,15 +22,9 @@ MAX_DISTILL_TOKENS = 4000  # cap text sent to LLM per session
 
 def _project_name_from_dir(dirname: str) -> str:
     """Derive a clean project name from a Claude projects directory name.
-
-    Claude stores projects as e.g. '-Users-nimit-Documents-Projects-plirin'.
-    We extract the last path component as the project name.
-    """
-    # The dirname is a path encoded with dashes replacing slashes
-    # e.g. '-Users-nimit-Documents-Projects-plirin' -> 'plirin'
-    parts = dirname.strip("-").split("-")
-    # Return the last non-empty part
-    return parts[-1] if parts else dirname
+    Uses the smart filesystem-aware resolver that handles dashes in dir names."""
+    from memor.project import resolve_project_from_claude_dir
+    return resolve_project_from_claude_dir(dirname)
 
 
 def load_state() -> dict[str, float]:
