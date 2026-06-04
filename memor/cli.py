@@ -200,11 +200,15 @@ def _install_hook_logic(settings_path: Path, hook_path: str) -> None:
         data = {}
     hooks = data.setdefault("hooks", {})
     prompt_hooks = hooks.setdefault("UserPromptSubmit", [])
-    entry = {"type": "command", "command": f"python3 {hook_path}", "timeout": 5000}
+    hook_cmd = {"type": "command", "command": f"python3 {hook_path}", "timeout": 5000}
+    entry = {"matcher": "", "hooks": [hook_cmd]}
     existing_idx = None
-    for i, h in enumerate(prompt_hooks):
-        if "memor-hook" in h.get("command", ""):
-            existing_idx = i
+    for i, group in enumerate(prompt_hooks):
+        for h in group.get("hooks", []):
+            if "memor-hook" in h.get("command", ""):
+                existing_idx = i
+                break
+        if existing_idx is not None:
             break
     if existing_idx is not None:
         prompt_hooks[existing_idx] = entry
