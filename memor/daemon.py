@@ -158,24 +158,31 @@ def run_poll_cycle(
 
     new_ingested = False
     transcripts = scan_transcripts(projects_dir)
-    for path, project in transcripts:
+
+    # Pre-filter to only files that are new or modified
+    pending = [
+        (path, project)
+        for path, project in transcripts
+        if not (state.get(str(path)) is not None and path.stat().st_mtime <= state[str(path)])
+    ]
+
+    bulk = len(pending) > 10
+    total_pending = len(pending)
+
+    for idx, (path, project) in enumerate(pending):
         path_str = str(path)
         current_mtime = path.stat().st_mtime
-        previous_mtime = state.get(path_str)
-
-        if previous_mtime is not None and current_mtime <= previous_mtime:
-            continue
-
+        progress_prefix = f"[{idx + 1}/{total_pending}] " if bulk else ""
         try:
             count = ingest_file(path, project, store, embedder)
             state[path_str] = current_mtime
             if count > 0:
-                print(f"  ingested {count} chunks from {path.name} (project: {project})")
+                print(f"  {progress_prefix}ingested {count} chunks from {path.name} (project: {project})")
                 new_ingested = True
             else:
-                print(f"  skipped {path.name} (0 chunks after filtering)")
+                print(f"  {progress_prefix}skipped {path.name} (0 chunks after filtering)")
         except Exception as e:
-            print(f"  ERROR ingesting {path.name}: {e}")
+            print(f"  {progress_prefix}ERROR ingesting {path.name}: {e}")
 
     # Auto-distill new sessions (LLM if available, extractive fallback otherwise)
     if new_ingested:
