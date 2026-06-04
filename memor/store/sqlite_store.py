@@ -193,6 +193,62 @@ class SqliteStore:
                 (limit,)).fetchall()
         return [dict(r) for r in rows]
 
+    def get_efficiency_stats(self, context_window: int = 200_000) -> dict:
+        sessions = self.db.execute("""
+            SELECT session_id,
+                   COUNT(*) as prompts,
+                   SUM(tokens_injected) as total_injected,
+                   SUM(CASE WHEN hits_count > 0 THEN 1 ELSE 0 END) as prompts_with_hits,
+                   AVG(CASE WHEN hits_count > 0 THEN top_score END) as avg_quality,
+                   MIN(timestamp) as first_recall,
+                   MAX(timestamp) as last_recall
+            FROM recall_log
+            WHERE session_id != ''
+            GROUP BY session_id
+            ORDER BY last_recall DESC
+            LIMIT 50
+        """).fetchall()
+        session_list = []
+        for s in sessions:
+            injected = s["total_injected"] or 0
+            prompts = s["prompts"] or 1
+            precision = (s["prompts_with_hits"] or 0) / prompts
+            overhead_pct = round(injected / context_window * 100, 2)
+            session_list.append({
+                "session_id": s["session_id"],
+                "prompts": prompts,
+                "tokens_injected": injected,
+                "overhead_pct": overhead_pct,
+                "precision": round(precision, 3),
+                "avg_quality": round(s["avg_quality"] or 0, 3),
+                "first_recall": s["first_recall"],
+                "last_recall": s["last_recall"],
+            })
+
+        totals = self.db.execute("""
+            SELECT COUNT(*) as total_recalls,
+                   SUM(tokens_injected) as total_injected,
+                   SUM(CASE WHEN hits_count > 0 THEN 1 ELSE 0 END) as with_hits,
+                   AVG(CASE WHEN hits_count > 0 THEN top_score END) as avg_quality,
+                   COUNT(DISTINCT session_id) as session_count
+            FROM recall_log WHERE session_id != ''
+        """).fetchone()
+        total_recalls = totals["total_recalls"] or 0
+        total_injected = totals["total_injected"] or 0
+        session_count = totals["session_count"] or 1
+        avg_per_session = round(total_injected / session_count) if session_count else 0
+        return {
+            "context_window": context_window,
+            "total_sessions": totals["session_count"] or 0,
+            "total_recalls": total_recalls,
+            "total_tokens_injected": total_injected,
+            "avg_tokens_per_session": avg_per_session,
+            "avg_overhead_pct": round(avg_per_session / context_window * 100, 2),
+            "precision": round((totals["with_hits"] or 0) / total_recalls, 3) if total_recalls else 0,
+            "avg_quality": round(totals["avg_quality"] or 0, 3),
+            "sessions": session_list,
+        }
+
     def get_onboarding_status(self) -> str:
         chunks = self.db.execute(
             "SELECT COUNT(*) as c FROM artifacts WHERE kind='session_chunk' AND active=1"

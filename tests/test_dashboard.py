@@ -82,6 +82,38 @@ def test_savings_endpoint(tmp_path):
     assert isinstance(data, list)
 
 
+def test_efficiency_endpoint(tmp_path):
+    from fastapi.testclient import TestClient
+    app = _make_app(tmp_path)
+    client = TestClient(app)
+    r = client.get("/api/efficiency")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total_sessions"] == 2
+    assert data["total_recalls"] == 2
+    assert data["total_tokens_injected"] == 120
+    assert data["precision"] == 0.5
+    assert len(data["sessions"]) == 2
+    s1 = next(s for s in data["sessions"] if s["session_id"] == "sess1")
+    assert s1["tokens_injected"] == 120
+    assert s1["precision"] == 1.0
+
+
+def test_efficiency_empty_db(tmp_path):
+    from fastapi.testclient import TestClient
+    db_path = str(tmp_path / "eff_empty.db")
+    SqliteStore(db_path, dim=16)
+    from memor.dashboard.server import create_app
+    app = create_app(db_path)
+    client = TestClient(app)
+    r = client.get("/api/efficiency")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total_sessions"] == 0
+    assert data["precision"] == 0
+    assert data["sessions"] == []
+
+
 def test_empty_db(tmp_path):
     from fastapi.testclient import TestClient
     db_path = str(tmp_path / "empty.db")

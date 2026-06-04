@@ -282,15 +282,51 @@
     </div>
   </section>
 
-  <!-- ── Recall quality & efficiency ───────────────────────────── -->
-  <section aria-label="Recall quality and efficiency">
-    <div class="section-title">Recall Quality &amp; Efficiency</div>
-    <div class="savings-grid" id="savings-grid">
-      <div class="empty-state" id="savings-empty" style="display:none;">No savings data yet.</div>
+  <!-- ── Context efficiency ──────────────────────────────────────── -->
+  <section aria-label="Context efficiency">
+    <div class="section-title">Context Efficiency</div>
+    <div class="metric-grid" id="efficiency-metrics">
+      <div class="metric-card">
+        <div class="metric-label">Context Overhead</div>
+        <div class="metric-value" id="e-overhead">–</div>
+        <div class="metric-sub">avg % of context window used by Memor per session</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Recall Precision</div>
+        <div class="metric-value" id="e-precision">–</div>
+        <div class="metric-sub">% of prompts that got relevant context</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Avg Quality</div>
+        <div class="metric-value" id="e-quality">–</div>
+        <div class="metric-sub">mean relevance score when hits found</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Sessions Tracked</div>
+        <div class="metric-value" id="e-sessions">–</div>
+        <div class="metric-sub" id="e-sessions-sub">with recall data</div>
+      </div>
+    </div>
+    <div class="table-wrap" style="margin-top: 14px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Session</th>
+            <th>Prompts</th>
+            <th>Tokens Injected</th>
+            <th>Overhead %</th>
+            <th>Precision</th>
+            <th>Quality</th>
+            <th>Last Active</th>
+          </tr>
+        </thead>
+        <tbody id="efficiency-body"></tbody>
+      </table>
     </div>
     <p class="note">
-      Token savings estimates how much context Memor selectively recalled vs. sending everything.
-      Relevance score measures how well the recalled context matched your query. Both matter.
+      Overhead = total tokens Memor injected as a % of the 200K context window. Lower is better.
+      Precision = % of prompts where relevant memories were found. Quality = avg similarity score.
+      Good efficiency means low overhead with high precision — Memor adds value without bloating context.
     </p>
   </section>
 
@@ -432,28 +468,38 @@
     }
   }
 
-  /* ── render savings ────────────────────────────────────── */
-  function renderSavings(data) {
-    const grid = document.getElementById('savings-grid');
-    const empty = document.getElementById('savings-empty');
-    // remove old cards (not the empty msg element)
-    Array.from(grid.children).forEach(c => { if (c !== empty) c.remove(); });
-    if (!data.length) { empty.style.display = ''; return; }
-    empty.style.display = 'none';
-    data.forEach(row => {
-      const pct = Math.min(Math.max(row.reduction_pct || 0, 0), 100);
-      const card = el('div', { class: 'savings-card' }, `
-        <div class="savings-header">
-          <span class="savings-project truncate" title="${esc(row.project)}">${esc(row.project)}</span>
-          <span class="savings-pct">${fmtPct(pct)} saved</span>
-        </div>
-        <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
-        <div class="savings-meta">
-          <span>${fmt(row.recalled_tokens)} / ${fmt(row.full_context_tokens)} tokens</span>
-          <span>relevance ${fmtScore(row.avg_relevance)}</span>
-        </div>
-      `);
-      grid.appendChild(card);
+  /* ── render efficiency ──────────────────────────────────── */
+  function renderEfficiency(data) {
+    document.getElementById('e-overhead').textContent = data.avg_overhead_pct + '%';
+    document.getElementById('e-precision').textContent = fmtPct(data.precision * 100);
+    document.getElementById('e-quality').textContent = fmtScore(data.avg_quality);
+    document.getElementById('e-sessions').textContent = fmt(data.total_sessions);
+    if (data.total_sessions > 0) {
+      document.getElementById('e-sessions-sub').textContent =
+        fmt(data.total_tokens_injected) + ' total tokens injected';
+    }
+
+    const tbody = document.getElementById('efficiency-body');
+    tbody.innerHTML = '';
+    if (!data.sessions || !data.sessions.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No session data yet.</td></tr>';
+      return;
+    }
+    data.sessions.forEach(s => {
+      const overheadColor = s.overhead_pct < 2 ? 'var(--ok)' : s.overhead_pct < 5 ? 'var(--warn)' : 'var(--text)';
+      const precColor = s.precision > 0.7 ? 'var(--ok)' : s.precision > 0.3 ? 'var(--warn)' : 'var(--neutral)';
+      const shortId = s.session_id.length > 12 ? s.session_id.slice(0, 8) + '…' : s.session_id;
+      const tr = el('tr', {});
+      tr.innerHTML = `
+        <td class="mono truncate" style="max-width:120px" title="${esc(s.session_id)}">${esc(shortId)}</td>
+        <td>${s.prompts}</td>
+        <td>${fmt(s.tokens_injected)}</td>
+        <td style="color:${overheadColor}">${s.overhead_pct}%</td>
+        <td style="color:${precColor}">${fmtPct(s.precision * 100)}</td>
+        <td>${fmtScore(s.avg_quality)}</td>
+        <td class="mono muted">${relativeTime(s.last_recall)}</td>
+      `;
+      tbody.appendChild(tr);
     });
   }
 
@@ -598,7 +644,7 @@
   /* ── load data ─────────────────────────────────────────── */
   async function loadSummary()  { try { renderSummary(await api('/api/summary')); } catch(e) { console.warn('summary', e); } }
   async function loadProjects() { try { renderProjects(await api('/api/projects')); } catch(e) { console.warn('projects', e); } }
-  async function loadSavings()  { try { renderSavings(await api('/api/savings')); } catch(e) { console.warn('savings', e); } }
+  async function loadEfficiency() { try { renderEfficiency(await api('/api/efficiency')); } catch(e) { console.warn('efficiency', e); } }
   async function loadHealth()   { try { renderHealth(await api('/api/health')); } catch(e) { console.warn('health', e); } }
   async function loadRecalls() {
     try {
@@ -608,7 +654,7 @@
   }
 
   async function refresh() {
-    await Promise.allSettled([loadSummary(), loadProjects(), loadSavings(), loadHealth(), loadRecalls()]);
+    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadHealth(), loadRecalls()]);
     document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
   }
 

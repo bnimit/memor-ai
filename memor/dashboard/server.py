@@ -67,6 +67,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
         store = _store()
         return store.get_recent_recalls(limit=limit, project=project)
 
+    @app.get("/api/efficiency")
+    def efficiency():
+        store = _store()
+        return store.get_efficiency_stats()
+
     @app.get("/api/savings")
     def savings():
         store = _store()
