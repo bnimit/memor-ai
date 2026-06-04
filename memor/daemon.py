@@ -194,21 +194,9 @@ def run_poll_cycle(
 
 
 def _make_embedder():
-    """Pick the best available embedder: API if key exists, local ONNX as fallback."""
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if api_key:
-        from memor.embed.api import APIEmbedder
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        return APIEmbedder(base_url=base_url, api_key=api_key)
-    try:
-        from memor.embed.local import LocalEmbedder
-        return LocalEmbedder()
-    except ImportError:
-        raise SystemExit(
-            "No embedder available. Either:\n"
-            "  1. Set OPENAI_API_KEY for API embeddings (recommended)\n"
-            "  2. pip install memor-ai[local] for offline ONNX embeddings"
-        )
+    """Local ONNX embedder by default. No API key needed for search."""
+    from memor.embed.local import LocalEmbedder
+    return LocalEmbedder()
 
 
 def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_PROJECTS_DIR) -> None:
@@ -224,13 +212,14 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     print(f"memor daemon started")
     print(f"  watching: {projects_dir}")
     print(f"  db: {DEFAULT_DB}")
+    print(f"  embeddings: local model2vec (dim={embedder.dim})")
     print(f"  poll interval: {poll_interval}s")
     print(f"  tracking {len(state)} previously ingested files")
     print(f"  {len(distilled)} sessions already distilled")
     if llm:
-        print(f"  distillation: abstractive (LLM key found — extractive pre-filter + LLM)")
+        print(f"  distillation: abstractive (ANTHROPIC_API_KEY found)")
     else:
-        print(f"  distillation: extractive only (set ANTHROPIC_API_KEY for full abstractive)")
+        print(f"  distillation: extractive only (set ANTHROPIC_API_KEY for abstractive)")
     print()
 
     try:

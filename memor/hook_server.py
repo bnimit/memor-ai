@@ -22,18 +22,9 @@ def _get_embedder():
     global _embedder
     if _embedder is not None:
         return _embedder
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if api_key:
-        from memor.embed.api import APIEmbedder
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        _embedder = APIEmbedder(base_url=base_url, api_key=api_key)
-        return _embedder
-    try:
-        from memor.embed.local import LocalEmbedder
-        _embedder = LocalEmbedder()
-        return _embedder
-    except ImportError:
-        return None
+    from memor.embed.local import LocalEmbedder
+    _embedder = LocalEmbedder()
+    return _embedder
 
 
 def handle_request(req: dict, *, db_path: str = DEFAULT_DB,

@@ -10,10 +10,11 @@ dependencies = [
   "tiktoken>=0.7",
   "fastapi>=0.111",
   "uvicorn>=0.30",
+  "model2vec>=0.8",
 ]
 
 [project.optional-dependencies]
-local = ["onnxruntime>=1.17", "tokenizers>=0.19", "huggingface-hub>=0.23"]
+api-embed = ["openai>=1.0"]
 anthropic = ["anthropic>=0.40"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 

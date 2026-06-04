@@ -20,22 +20,9 @@ def _embedder(fake: bool):
 
 
 def _auto_embedder():
-    """Pick the best available embedder: API if key exists, local ONNX as fallback."""
-    import os
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if api_key:
-        from memor.embed.api import APIEmbedder
-        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        return APIEmbedder(base_url=base_url, api_key=api_key)
-    try:
-        from memor.embed.local import LocalEmbedder
-        return LocalEmbedder()
-    except ImportError:
-        raise SystemExit(
-            "No embedder available. Either:\n"
-            "  1. Set OPENAI_API_KEY for API embeddings (recommended)\n"
-            "  2. pip install memor-ai[local] for offline ONNX embeddings"
-        )
+    """Local ONNX embedder by default. No API key needed for search."""
+    from memor.embed.local import LocalEmbedder
+    return LocalEmbedder()
 
 @app.command("ingest-cc")
 def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memor.db",
@@ -238,9 +225,9 @@ def install_hook():
     typer.echo()
     typer.echo("Next steps:")
     typer.echo("  1. Start the daemon: memor daemon")
-    typer.echo("     (First run ingests existing sessions — takes ~2-5 minutes)")
-    typer.echo("  2. Extractive distillation runs automatically (no API key needed)")
-    typer.echo("  3. For richer memories, set ANTHROPIC_API_KEY")
+    typer.echo("     (First run downloads embedding model ~60MB + ingests sessions)")
+    typer.echo("  2. Everything works locally — no API keys needed for search")
+    typer.echo("  3. Optional: set ANTHROPIC_API_KEY for richer abstractive distillation")
     typer.echo("  4. Open the dashboard: memor dashboard")
 
 

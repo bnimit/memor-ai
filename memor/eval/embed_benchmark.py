@@ -7,9 +7,9 @@ from memor.eval.dataset import EvalCase
 from memor.types import Artifact
 
 CANDIDATE_MODELS = [
-    {"name": "bge-small-en-v1.5", "model_name": "BAAI/bge-small-en-v1.5"},
-    {"name": "all-MiniLM-L6-v2", "model_name": "sentence-transformers/all-MiniLM-L6-v2"},
-    {"name": "nomic-embed-text-v1.5", "model_name": "nomic-ai/nomic-embed-text-v1.5"},
+    {"name": "potion-base-8M", "model_name": "minishlab/potion-base-8M"},
+    {"name": "potion-base-32M", "model_name": "minishlab/potion-base-32M"},
+    {"name": "potion-code-16M", "model_name": "minishlab/potion-code-16M"},
 ]
 
 

@@ -33,20 +33,8 @@ def main():
         from memor.embed.fake import FakeEmbedder
         embedder = FakeEmbedder(dim=16)
     else:
-        import os
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if api_key:
-            from memor.embed.api import APIEmbedder
-            base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-            embedder = APIEmbedder(base_url=base_url, api_key=api_key)
-        else:
-            try:
-                from memor.embed.local import LocalEmbedder
-                embedder = LocalEmbedder()
-            except ImportError:
-                print("ERROR: No embedder available.")
-                print("Set OPENAI_API_KEY or pip install memor-ai[local]")
-                sys.exit(1)
+        from memor.embed.local import LocalEmbedder
+        embedder = LocalEmbedder()
 
     from memor.recall import recall
     threshold = 0.0 if a.fake else 0.3
