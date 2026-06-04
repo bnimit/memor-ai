@@ -87,7 +87,7 @@ class SqliteStore:
             AND (? IS NULL OR a.created_at >= ?)
             AND (? IS NULL OR a.created_at <= ?)
           ORDER BY v.distance ASC
-        """, (_serialize(vector), max(k*5, k),
+        """, (_serialize(vector), max(k*20, 200),
               scope.project, scope.project,
               scope.since, scope.since,
               scope.until, scope.until)).fetchall()

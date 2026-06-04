@@ -58,7 +58,7 @@ def scan_transcripts(projects_dir: Path) -> list[tuple[Path, str]]:
         if not project_dir.is_dir():
             continue
         project_name = _project_name_from_dir(project_dir.name)
-        for jsonl_file in sorted(project_dir.glob("*.jsonl")):
+        for jsonl_file in sorted(project_dir.rglob("*.jsonl")):
             results.append((jsonl_file, project_name))
     return results
 
