@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * memor CLI — thin wrapper that delegates to the Python CLI.
- * Handles venv discovery, the `inspector` shortcut, and `setup` re-run.
+ * Handles venv discovery and `setup` re-run.
  */
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -13,7 +13,6 @@ const ROOT = join(__dirname, "..");
 const isWindows = process.platform === "win32";
 const VENV_BIN = join(ROOT, ".venv", isWindows ? "Scripts" : "bin");
 const PYTHON = join(VENV_BIN, isWindows ? "python.exe" : "python3");
-const STREAMLIT = join(VENV_BIN, "streamlit");
 
 function ensureSetup() {
   if (!existsSync(PYTHON)) {
@@ -41,21 +40,7 @@ function main() {
 
   ensureSetup();
 
-  // `memor inspector` — launch the Streamlit UI
-  if (command === "inspector") {
-    const port = args[1] || "8501";
-    console.log(`memor-ai: launching inspector at http://localhost:${port}`);
-    const child = spawn(STREAMLIT, ["run", join(ROOT, "inspector.py"),
-      "--server.port", port, "--server.headless", "true"], {
-      cwd: ROOT,
-      stdio: "inherit",
-      env: { ...process.env, PATH: `${VENV_BIN}:${process.env.PATH}` },
-    });
-    child.on("exit", (code) => process.exit(code || 0));
-    return;
-  }
-
-  // Everything else → delegate to the Python CLI
+  // Everything else (including `inspector`) → delegate to the Python CLI
   const child = spawn(PYTHON, ["-m", "memor.cli", ...args], {
     cwd: process.cwd(),
     stdio: "inherit",
