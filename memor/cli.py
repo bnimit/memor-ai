@@ -205,16 +205,5 @@ def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
     run_daemon(poll_interval=poll_interval, projects_dir=d)
 
 
-@app.command("inspector")
-def inspector_cmd(db: str = "memor.db", fake: bool = False):
-    """Launch the TUI inspector."""
-    from memor.tui.app import MemorApp
-    typer.echo("Loading embedder and database...")
-    e = _embedder(fake)
-    s = SqliteStore(_db_path(db), dim=e.dim)
-    tui = MemorApp(db_path=db, store=s, embedder=e)
-    tui.run()
-
-
 if __name__ == "__main__":
     app()
