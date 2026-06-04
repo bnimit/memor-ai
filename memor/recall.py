@@ -40,8 +40,7 @@ def _status_message(status: str, project: str, hits_count: int,
     if status == "ok":
         return f"Memor: recalled {hits_count} memories ({tokens} tokens, {top_score:.2f} top score)"
     if status == "extractive_only":
-        return (f"Memor: recalled {hits_count} memories "
-                f"(extractive only — set ANTHROPIC_API_KEY for richer distillation)")
+        return f"Memor: recalled {hits_count} memories ({tokens} tokens, {top_score:.2f} top score)"
     if status == "no_hits":
         return f'Memor: no relevant memories for project "{project}" yet'
     if status == "empty_db":

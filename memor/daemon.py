@@ -263,17 +263,19 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
 
     llm = _make_llm()
 
-    print(f"memor daemon started")
-    print(f"  watching: {projects_dir}")
-    print(f"  db: {DEFAULT_DB}")
-    print(f"  embeddings: local model2vec (dim={embedder.dim})")
+    print(r"""
+                                                _
+ _ __ ___   ___ _ __ ___   ___  _ __       __ _(_)
+| '_ ` _ \ / _ \ '_ ` _ \ / _ \| '__|____ / _` | |
+| | | | | |  __/ | | | | | (_) | | |_____| (_| | |
+|_| |_| |_|\___|_| |_| |_|\___/|_|        \__,_|_|
+""")
+    print(f"  watching:      {projects_dir}")
+    print(f"  db:            {DEFAULT_DB}")
+    print(f"  embeddings:    local model2vec (dim={embedder.dim})")
     print(f"  poll interval: {poll_interval}s")
-    print(f"  tracking {len(state)} previously ingested files")
-    print(f"  {len(distilled)} sessions already distilled")
-    if llm:
-        print(f"  distillation: abstractive (ANTHROPIC_API_KEY found)")
-    else:
-        print(f"  distillation: extractive only (set ANTHROPIC_API_KEY for abstractive)")
+    print(f"  tracking:      {len(state)} ingested files, {len(distilled)} sessions distilled")
+    print(f"  distillation:  {'abstractive' if llm else 'extractive'}")
     print()
 
     try:
