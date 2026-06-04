@@ -166,8 +166,8 @@ Once registered, Claude Code can invoke the recall skill whenever it needs past 
 |   |  Session ends              |                                   |
 |   |  (.jsonl written)          |                                   |
 |   +-------------+--------------+                                   |
-|                 |                                                   |
-|                 v                                                   |
+|                 |                                                  |
+|                 v                                                  |
 |   +----------------------------+                                   |
 |   |  memor daemon              |  (runs in background)             |
 |   |  - picks up transcript     |                                   |
@@ -176,16 +176,16 @@ Once registered, Claude Code can invoke the recall skill whenever it needs past 
 |   |  - distills into           |                                   |
 |   |    compact memories        |                                   |
 |   +-------------+--------------+                                   |
-|                 |                                                   |
-|                 v                                                   |
+|                 |                                                  |
+|                 v                                                  |
 |   +----------------------------+                                   |
 |   |  ~/.memor/memor.db         |  (your memory bank)               |
 |   |  decisions, patterns,      |                                   |
 |   |  bugfixes, architecture    |                                   |
 |   +-------------+--------------+                                   |
-|                 |                                                   |
-|                 |  Next session starts...                           |
-|                 v                                                   |
+|                 |                                                  |
+|                 |  Next session starts...                          |
+|                 v                                                  |
 |   +----------------------------+                                   |
 |   |  Claude Code + skill       |                                   |
 |   |                            |                                   |
@@ -243,7 +243,7 @@ You can copy the output and paste it into your agent's context. It's more manual
                           |    TF-IDF + clustering           |
                           |    315K tokens --> 56K tokens    |
                           |                                  |
-                          |  Step 2: Abstractive (LLM)      |
+                          |  Step 2: Abstractive (LLM)       |
                           |    56K tokens --> 1.6K tokens    |
                           |    typed memories with dedup     |
                           +----------------+-----------------+
