@@ -8,6 +8,14 @@ from memor.tui.screens.eval_screen import EvalScreen
 from memor.tui.screens.edges import EdgesScreen
 
 
+def _init_embedder(fake: bool):
+    if fake:
+        from memor.embed.fake import FakeEmbedder
+        return FakeEmbedder(dim=16)
+    from memor.embed.local import LocalEmbedder
+    return LocalEmbedder()
+
+
 class MemorApp(App):
     CSS = """
     Screen { layout: vertical; }
@@ -22,29 +30,10 @@ class MemorApp(App):
         ("4", "tab_edges", "Edges"),
     ]
 
-    def __init__(self, db_path: str, fake: bool = False, **kwargs):
+    def __init__(self, db_path: str, fake: bool = False, *, store=None, embedder=None, **kwargs):
         super().__init__(**kwargs)
-        self.db_path = db_path
-        self.fake = fake
-        self._store = None
-        self._embedder = None
-
-    @property
-    def store(self) -> SqliteStore:
-        if self._store is None:
-            self._store = SqliteStore(self.db_path, dim=self.embedder.dim)
-        return self._store
-
-    @property
-    def embedder(self):
-        if self._embedder is None:
-            if self.fake:
-                from memor.embed.fake import FakeEmbedder
-                self._embedder = FakeEmbedder(dim=16)
-            else:
-                from memor.embed.local import LocalEmbedder
-                self._embedder = LocalEmbedder()
-        return self._embedder
+        self.embedder = embedder or _init_embedder(fake)
+        self.store = store or SqliteStore(db_path, dim=self.embedder.dim)
 
     def compose(self) -> ComposeResult:
         yield Header()

@@ -20,7 +20,7 @@ def app_fixture(tmp_path):
                  meta={"session_id": "s1", "mem_type": "decision"}),
     ]
     s.add_artifacts(arts, e.embed([a.text for a in arts]))
-    return MemorApp(db_path=db_path, fake=True)
+    return MemorApp(db_path=db_path, store=s, embedder=e)
 
 
 @pytest.mark.asyncio
