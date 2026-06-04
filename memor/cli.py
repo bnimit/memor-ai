@@ -63,6 +63,36 @@ def build_cases(project: str = typer.Option(...), db: str = "memor.db",
         "relevant_ids":sorted(c.relevant_ids),"baseline_full_tokens":c.baseline_full_tokens} for c in cases], indent=2))
     typer.echo(f"wrote {len(cases)} cases to {out}")
 
+@app.command("eval-judge")
+def eval_judge_cmd(project: str = typer.Option(...), db: str = "memor.db",
+                   k: int = 8, fake: bool = False,
+                   llm_provider: str = "anthropic", llm_model: str = "claude-sonnet-4-6",
+                   holdout: int = 2):
+    """Run LLM-as-judge eval: measures whether recalled context is actually useful."""
+    from memor.eval.judge import build_judge_cases, run_judge_suite
+    e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
+    rows = s.db.execute("SELECT * FROM artifacts WHERE project=? AND kind='session_chunk'",
+                        (project,)).fetchall()
+    arts = [s._row_to_artifact(r) for r in rows]
+    cases = build_judge_cases(arts, project=project, holdout_turns=holdout)
+    if not cases:
+        typer.echo("No judge cases could be built — need at least 2 sessions with >= 4 turns each.")
+        raise typer.Exit(1)
+    typer.echo(f"Built {len(cases)} judge cases. Running evaluation...")
+    if llm_provider == "anthropic":
+        from memor.llm.anthropic import AnthropicLLM
+        llm = AnthropicLLM(model=llm_model)
+    else:
+        from memor.llm.openai_compat import OpenAICompatLLM
+        import os
+        llm = OpenAICompatLLM(base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:11434/v1"),
+                              api_key=os.environ.get("OPENAI_API_KEY", ""), model=llm_model)
+    summary = run_judge_suite(cases, store=s, embedder=e, llm=llm, k=k)
+    typer.echo(json.dumps(summary, indent=2))
+    s.save_eval_run({"type": "judge", "k": k, "project": project, "holdout": holdout}, summary)
+    typer.echo(f"Judge eval complete: mean relevance = {summary['mean_relevance']:.3f}")
+
+
 @app.command("distill")
 def distill(project: str = typer.Option(...), db: str = "memor.db",
             fake: bool = False, llm_provider: str = "anthropic", llm_model: str = "claude-sonnet-4-6"):
