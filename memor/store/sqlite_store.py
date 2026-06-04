@@ -12,11 +12,13 @@ class SqliteStore:
         self.dim = dim
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db.execute("PRAGMA journal_mode=WAL")
         self.db.row_factory = sqlite3.Row
         self.db.enable_load_extension(True)
         sqlite_vec.load(self.db)
         self.db.enable_load_extension(False)
         self._init_schema()
+        self._check_dim(dim)
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -32,8 +34,25 @@ class SqliteStore:
           embedding float[{self.dim}]);
         CREATE TABLE IF NOT EXISTS eval_runs(
           id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, config TEXT, metrics TEXT);
+        CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS recall_log(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp REAL, project TEXT, query_preview TEXT,
+          hits_count INTEGER, top_score REAL, tokens_injected INTEGER,
+          latency_ms REAL, status TEXT, session_id TEXT);
         """)
         self.db.commit()
+
+    def _check_dim(self, dim: int):
+        row = self.db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
+        if row is None:
+            self.db.execute("INSERT INTO meta(key, value) VALUES('dim', ?)", (str(dim),))
+            self.db.commit()
+        elif int(row["value"]) != dim:
+            raise SystemExit(
+                f"Embedding dimension mismatch: database was created with dim={row['value']} "
+                f"but current embedder has dim={dim}. Use the same embedder or re-ingest."
+            )
 
     def add_artifacts(self, artifacts: list[Artifact], vectors: list[list[float]]) -> None:
         cur = self.db.cursor()
@@ -119,3 +138,77 @@ class SqliteStore:
                               (time.time(), json.dumps(config), json.dumps(metrics)))
         self.db.commit()
         return cur.lastrowid
+
+    def log_recall(self, project: str, query_preview: str, hits_count: int,
+                   top_score: float, tokens_injected: int, latency_ms: float,
+                   status: str, session_id: str = "") -> None:
+        import time as _time
+        self.db.execute(
+            "INSERT INTO recall_log(timestamp,project,query_preview,hits_count,"
+            "top_score,tokens_injected,latency_ms,status,session_id) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (_time.time(), project, query_preview[:100], hits_count, top_score,
+             tokens_injected, latency_ms, status, session_id))
+        self.db.commit()
+
+    def get_recall_stats(self) -> dict:
+        r = self.db.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(tokens_injected) as tokens,
+                   AVG(latency_ms) as avg_latency,
+                   SUM(CASE WHEN hits_count > 0 THEN 1 ELSE 0 END) as with_hits
+            FROM recall_log
+        """).fetchone()
+        total = r["total"] or 0
+        return {
+            "total_recalls": total,
+            "total_tokens": r["tokens"] or 0,
+            "avg_latency_ms": round(r["avg_latency"] or 0, 1),
+            "hit_rate": round((r["with_hits"] or 0) / total, 3) if total > 0 else 0,
+        }
+
+    def get_project_stats(self) -> list[dict]:
+        rows = self.db.execute("""
+            SELECT project,
+                   COUNT(*) as recalls,
+                   SUM(tokens_injected) as tokens,
+                   AVG(CASE WHEN hits_count > 0 THEN top_score END) as avg_score,
+                   SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END) as ok_count,
+                   SUM(CASE WHEN status='no_hits' THEN 1 ELSE 0 END) as no_hits_count,
+                   SUM(CASE WHEN status='extractive_only' THEN 1 ELSE 0 END) as extractive_count
+            FROM recall_log
+            GROUP BY project
+            ORDER BY recalls DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_recent_recalls(self, limit: int = 50, project: str | None = None) -> list[dict]:
+        if project:
+            rows = self.db.execute(
+                "SELECT * FROM recall_log WHERE project=? ORDER BY timestamp DESC LIMIT ?",
+                (project, limit)).fetchall()
+        else:
+            rows = self.db.execute(
+                "SELECT * FROM recall_log ORDER BY timestamp DESC LIMIT ?",
+                (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_onboarding_status(self) -> str:
+        chunks = self.db.execute(
+            "SELECT COUNT(*) as c FROM artifacts WHERE kind='session_chunk' AND active=1"
+        ).fetchone()["c"]
+        if chunks == 0:
+            return "no_data"
+        mems = self.db.execute(
+            "SELECT COUNT(*) as c FROM artifacts WHERE kind='memory' AND active=1"
+        ).fetchone()["c"]
+        if mems == 0:
+            return "ingesting"
+        llm_mems = self.db.execute("""
+            SELECT COUNT(*) as c FROM artifacts
+            WHERE kind='memory' AND active=1
+              AND json_extract(meta, '$.mem_type') IN ('decision','lesson','snippet','bugfix')
+        """).fetchone()["c"]
+        if llm_mems > 0:
+            return "full"
+        return "extractive"
