@@ -3,6 +3,7 @@ import json, re
 from datetime import datetime
 from pathlib import Path
 from memor.types import Artifact
+from memor.tokencount import count_tokens
 
 def _epoch(ts: str) -> float:
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
@@ -47,7 +48,7 @@ def parse_transcript(path: Path, project: str, *, filter_noise: bool = True) -> 
         text = _text_of(msg).strip()
         if not text:
             continue
-        token_count = max(1, len(text) // 4)
+        token_count = max(1, count_tokens(text))
         if filter_noise and _is_noise(text, token_count):
             continue
         arts.append(Artifact(

@@ -3,6 +3,7 @@ import hashlib, json, re
 from memor.types import Artifact, Scope
 from memor.llm.base import DISTILL_PROMPT
 from memor.distill.extractive import extract_key_chunks
+from memor.tokencount import count_tokens
 
 DEDUP_SIM_THRESHOLD = 0.92
 
@@ -22,7 +23,7 @@ def _store_memory(store, embedder, text: str, mem_type: str, session_id: str,
         return None
     art = Artifact(
         id=mid, kind="memory", project=project, source="distill",
-        text=text, token_count=max(1, len(text) // 4), created_at=created,
+        text=text, token_count=max(1, count_tokens(text)), created_at=created,
         meta={"mem_type": mem_type, "session_id": session_id},
     )
     store.add_artifacts([art], [vec])
