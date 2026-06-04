@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "memor-ai"
+name = "memor-cli"
 version = "0.1.0"
 description = "Measured memory for coding agents. Fire and forget — no API keys needed."
 readme = "README.md"

@@ -11,7 +11,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-153%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
-[![PyPI](https://img.shields.io/pypi/v/memor-ai.svg)](https://pypi.org/project/memor-ai/)
+[![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
 **Automatic background memory for Claude Code.** Fire and forget — no API keys needed.
 
@@ -23,7 +23,7 @@ Memor watches your coding sessions, extracts decisions and patterns, and recalls
 
 ```bash
 # Install globally (recommended)
-pipx install memor-ai
+pipx install memor-cli
 
 # Install the Claude Code hook + download embedding model (~60MB)
 memor install-hook
@@ -39,7 +39,7 @@ memor dashboard
 # Opens http://localhost:8420
 ```
 
-> **Alternative install:** `pip install memor-ai` works too — just make sure `~/.local/bin` is on your PATH so the `memor` command is available.
+> **Alternative install:** `pip install memor-cli` works too — just make sure `~/.local/bin` is on your PATH so the `memor` command is available.
 
 ---
 
