@@ -65,8 +65,15 @@ def main():
         from memor.embed.fake import FakeEmbedder
         embedder = FakeEmbedder(dim=16)
     else:
-        from memor.embed.local import LocalEmbedder
-        embedder = LocalEmbedder()
+        import os
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            from memor.embed.api import APIEmbedder
+            base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+            embedder = APIEmbedder(base_url=base_url, api_key=api_key)
+        else:
+            from memor.embed.local import LocalEmbedder
+            embedder = LocalEmbedder()
 
     from memor.store.sqlite_store import SqliteStore
     from memor.retrieve.retriever import Retriever

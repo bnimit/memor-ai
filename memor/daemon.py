@@ -186,12 +186,28 @@ def run_poll_cycle(
     return state, distilled
 
 
+def _make_embedder():
+    """Pick the best available embedder: API if key exists, local ONNX as fallback."""
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if api_key:
+        from memor.embed.api import APIEmbedder
+        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        return APIEmbedder(base_url=base_url, api_key=api_key)
+    try:
+        from memor.embed.local import LocalEmbedder
+        return LocalEmbedder()
+    except ImportError:
+        raise SystemExit(
+            "No embedder available. Either:\n"
+            "  1. Set OPENAI_API_KEY for API embeddings (recommended)\n"
+            "  2. pip install memor-ai[local] for offline ONNX embeddings"
+        )
+
+
 def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_PROJECTS_DIR) -> None:
     """Run the daemon loop (foreground, blocking)."""
-    from memor.embed.local import LocalEmbedder
-
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    embedder = LocalEmbedder()
+    embedder = _make_embedder()
     store = SqliteStore(str(DEFAULT_DB), dim=embedder.dim)
     state = load_state()
     distilled = load_distilled_state()
