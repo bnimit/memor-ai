@@ -63,6 +63,8 @@ MAINTENANCE
   memor reingest --project <name>  Re-ingest only one project
   memor distill --project <name>   Run distillation manually
   memor forget-stale               Deactivate memories not recalled in 30 days
+  memor scan                       Audit DB for leaked secrets
+  memor scan --purge               Redact secrets in place
   memor setup-model                Download/retry the embedding model (~60MB)
 
 EVALUATION
@@ -344,6 +346,36 @@ def forget_stale(days: int = typer.Option(30, help="Deactivate memories not reca
         typer.confirm(f"Deactivate {len(stale)} memories not recalled in {days} days?", abort=True)
     count = s.deactivate_stale(days)
     typer.echo(f"Deactivated {count} stale memories.")
+
+
+@app.command("scan")
+def scan(db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+         purge: bool = typer.Option(False, "--purge", help="Redact secrets in place"),
+         confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation")):
+    """Scan the memory DB for secrets (API keys, tokens, connection strings)."""
+    from memor.redact import scan_artifacts, purge_secrets_from_db
+    db_path = _db_path(db)
+    if not Path(db_path).exists():
+        typer.echo("No database found.")
+        raise typer.Exit(1)
+    s = SqliteStore(db_path, dim=_get_dim(db_path))
+    findings = scan_artifacts(s)
+    if not findings:
+        typer.echo("No secrets detected in the memory store.")
+        return
+    typer.echo(f"Found potential secrets in {len(findings)} artifacts:")
+    for f in findings[:20]:
+        types = ", ".join(name for name, _ in f["secrets"])
+        typer.echo(f"  [{f['kind']}] {f['artifact_id'][:30]} ({f['project']}) — {types}")
+    if len(findings) > 20:
+        typer.echo(f"  ... and {len(findings) - 20} more")
+    if purge:
+        if not confirm:
+            typer.confirm(f"Redact secrets in {len(findings)} artifacts?", abort=True)
+        count = purge_secrets_from_db(s)
+        typer.echo(f"Redacted secrets in {count} artifacts.")
+    else:
+        typer.echo("Run with --purge to redact these secrets in place.")
 
 
 @app.command("daemon")

@@ -6,6 +6,12 @@ from memor.distill.extractive import extract_key_chunks
 from memor.tokencount import count_tokens
 
 DEDUP_SIM_THRESHOLD = 0.92
+SUPERSEDE_SIM_THRESHOLD = 0.80
+
+_REPLACEMENT_RE = re.compile(
+    r"(instead of|no longer|switched from|ripped out|replaced .+ with|"
+    r"deprecated|migrated from|removed .+ in favor|moved away from|"
+    r"changed .+ to|swapped .+ for|dropped .+ for)", re.I)
 
 def _extract_json(raw: str) -> dict:
     m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", raw, re.DOTALL)
@@ -15,12 +21,27 @@ def _extract_json(raw: str) -> dict:
 
 def _store_memory(store, embedder, text: str, mem_type: str, session_id: str,
                   project: str, created: float, source_chunks: list[Artifact]) -> str | None:
-    """Store a single memory with dedup check and provenance edges. Returns id or None if deduped."""
+    """Store a single memory with dedup/supersession check and provenance edges."""
     mid = f"mem:{session_id}:{hashlib.sha1(text.encode()).hexdigest()[:8]}"
     vec = embedder.embed([text])[0]
     existing = store.search(vec, Scope(project=project, kinds=["memory"]), k=1)
-    if existing and existing[0][1] >= DEDUP_SIM_THRESHOLD:
-        return None
+    if existing:
+        old_art, sim = existing[0]
+        if sim >= DEDUP_SIM_THRESHOLD:
+            return None
+        if (sim >= SUPERSEDE_SIM_THRESHOLD
+                and created > old_art.created_at
+                and _REPLACEMENT_RE.search(text)):
+            art = Artifact(
+                id=mid, kind="memory", project=project, source="distill",
+                text=text, token_count=max(1, count_tokens(text)), created_at=created,
+                meta={"mem_type": mem_type, "session_id": session_id},
+            )
+            store.add_artifacts([art], [vec])
+            store.deactivate(old_art.id, superseded_by=mid)
+            for c in source_chunks:
+                store.add_edge(mid, c.id, "derived_from")
+            return mid
     art = Artifact(
         id=mid, kind="memory", project=project, source="distill",
         text=text, token_count=max(1, count_tokens(text)), created_at=created,

@@ -166,12 +166,13 @@ def compact_memories(store: SqliteStore, embedder) -> int:
             if sim >= COMPACT_SIM_THRESHOLD:
                 qi = store.get_quality_score(memories[i].id)
                 qj = store.get_quality_score(memories[j].id)
-                if qi >= qj:
-                    store.deactivate(memories[j].id, superseded_by=memories[i].id)
-                    seen.add(memories[j].id)
+                if qi != qj:
+                    loser = j if qi > qj else i
                 else:
-                    store.deactivate(memories[i].id, superseded_by=memories[j].id)
-                    seen.add(memories[i].id)
+                    loser = i if memories[j].created_at > memories[i].created_at else j
+                winner = j if loser == i else i
+                store.deactivate(memories[loser].id, superseded_by=memories[winner].id)
+                seen.add(memories[loser].id)
                 deactivated += 1
     return deactivated
 

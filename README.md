@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-125%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-153%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-ai.svg)](https://pypi.org/project/memor-ai/)
 
@@ -129,6 +129,8 @@ memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything
 memor reingest --project <name>      Re-ingest only one project
 memor forget-stale                   Deactivate memories unused for 30+ days
+memor scan                           Audit DB for leaked secrets
+memor scan --purge                   Redact secrets in place
 memor setup-model                    Download/retry the embedding model
 memor ingest-cc <file>               Ingest a single transcript
 memor ingest-project <dir>           Bulk ingest a project directory
@@ -150,6 +152,7 @@ memor/
 +-- daemon.py             Auto-ingest + auto-distill + compaction watcher
 +-- project.py            Git-root project resolver (filesystem-aware)
 +-- recall.py             Shared recall core (used by hook + skill)
++-- redact.py             Secret detection and redaction at ingest
 +-- feedback.py           Implicit feedback analyzer (usage detection)
 |
 +-- retrieve/
@@ -182,6 +185,39 @@ skill/recall.py            Standalone recall script
 
 ---
 
+## Security
+
+**Nothing leaves your machine.** In the default configuration:
+
+- **No telemetry, no analytics, no phone-home.** Zero outbound network calls.
+- **Embeddings run locally** via model2vec ONNX (one-time model download from HuggingFace — no user data sent).
+- **Hook transport is a Unix socket** (`~/.memor/hook.sock`), not a network port.
+- **Dashboard binds localhost only.**
+
+The only optional network paths are the LLM-based abstractive distiller (requires explicitly setting `ANTHROPIC_API_KEY`) and the API embedding backend — both off by default.
+
+### Secret redaction
+
+Memor automatically redacts secrets **at ingest**, before anything is embedded or stored:
+
+- API keys (AWS `AKIA...`, OpenAI `sk-...`, Anthropic `sk-ant-...`, GitHub `ghp_...`, Stripe, Slack)
+- JWTs, PEM private key blocks
+- Connection strings (`postgres://`, `mongodb://`, `redis://`, etc.)
+- `.env`-style assignments (`DB_PASSWORD=...`, `API_KEY=...`)
+- High-entropy tokens (Shannon entropy > 4.0, length > 20)
+
+Redacted content is replaced with `[REDACTED]` in place, preserving surrounding context. To audit and clean an existing database: `memor scan` (audit) or `memor scan --purge` (redact in place).
+
+### Contradiction handling
+
+When a new memory contradicts an older one in the same project (detected via replacement cues like "switched from X to Y", "no longer", "ripped out"), the older memory is automatically deactivated. This prevents stale decisions from being recalled and misleading the agent.
+
+### Local storage
+
+The memory database (`~/.memor/memor.db`) is stored as plaintext SQLite on disk. For at-rest protection, we recommend enabling OS-level full-disk encryption (FileVault on macOS, LUKS on Linux) which covers all local files with zero performance overhead.
+
+---
+
 ## Development
 
 ```bash
@@ -190,7 +226,7 @@ cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest  # 125 tests
+pytest  # 153 tests
 ```
 
 ---

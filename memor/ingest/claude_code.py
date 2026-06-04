@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from memor.types import Artifact
 from memor.tokencount import count_tokens
+from memor.redact import redact_text
 
 def _epoch(ts: str) -> float:
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
@@ -110,6 +111,9 @@ def parse_transcript(path: Path, project: str, *, filter_noise: bool = True) -> 
             continue
         text = _strip_system_reminders(text).strip()
         if not text:
+            continue
+        text, _ = redact_text(text)
+        if not text.strip():
             continue
         # Deduplicate by MD5 hash within session
         text_hash = hashlib.md5(text.encode()).hexdigest()
