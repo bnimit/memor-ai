@@ -53,7 +53,8 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
             }
         }
 
-    result = recall(query, project, db_path, embedder=embedder, k=8, threshold=0.15)
+    result = recall(query, project, db_path, embedder=embedder, k=8, threshold=0.15,
+                    session_id=session_id)
 
     # Log the recall event
     if Path(db_path).exists():

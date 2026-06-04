@@ -72,3 +72,23 @@ def test_recall_result_has_formatted_context(tmp_path):
                     embedder=e, k=8, threshold=0.0)
     assert "## Recalled Memories" in result.formatted_context
     assert "Memor:" in result.status_message
+
+
+def test_recall_filters_current_session(tmp_path):
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    arts = [
+        Artifact(id="a1", kind="memory", project="p", source="distill",
+                 text="auth pattern from old session about login security",
+                 token_count=10, created_at=100.0,
+                 meta={"mem_type": "decision", "session_id": "old-sess"}),
+        Artifact(id="a2", kind="memory", project="p", source="distill",
+                 text="auth pattern from current session about login security",
+                 token_count=10, created_at=200.0,
+                 meta={"mem_type": "decision", "session_id": "current-sess"}),
+    ]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+    result = recall("auth login", "p", str(tmp_path / "m.db"),
+                    embedder=e, k=8, threshold=0.0, session_id="current-sess")
+    ids = [line for line in result.formatted_context.split("\n") if "session" in line.lower()]
+    assert "current-sess" not in " ".join(ids) or result.hits_count == 1

@@ -10,6 +10,30 @@ import hashlib, math, re
 from collections import Counter
 from memor.types import Artifact
 
+_DECISION_RE = re.compile(
+    r"(we decided|the approach is|instead of|switched to|chose .+ over|"
+    r"trade-?off|architecture:|design decision)", re.I)
+_BUGFIX_RE = re.compile(
+    r"(the fix is|root cause|the bug was|the issue was|caused by|"
+    r"the problem is|this fails because|the error occurs)", re.I)
+_LESSON_RE = re.compile(
+    r"(always use|never use|never do|important:|note:|pattern:|"
+    r"best practice|lesson learned|rule of thumb|should always|should never)", re.I)
+_SNIPPET_RE = re.compile(r"```")
+
+
+def classify_chunk(text: str) -> str:
+    """Classify a chunk into a memory type based on content patterns."""
+    if _BUGFIX_RE.search(text):
+        return "bugfix"
+    if _DECISION_RE.search(text):
+        return "decision"
+    if _LESSON_RE.search(text):
+        return "lesson"
+    if _SNIPPET_RE.search(text) and len(text) > 200:
+        return "snippet"
+    return "extract"
+
 MIN_CHUNK_TOKENS = 15
 MAX_EXTRACTS = 12
 

@@ -40,7 +40,7 @@ _SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.D
 
 MIN_SIGNAL_TOKENS = 8
 MIN_FILLER_TOKENS = 30
-MIN_USER_TOKENS = 8
+MIN_USER_TOKENS = 6
 MIN_CODE_TOKENS = 40
 MIN_LONG_TOKENS = 100
 

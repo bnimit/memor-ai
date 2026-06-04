@@ -1,5 +1,5 @@
 """Tests for extractive (LLM-free) distillation."""
-from memor.distill.extractive import extract_key_chunks, _tfidf_scores, _heuristic_score
+from memor.distill.extractive import extract_key_chunks, _tfidf_scores, _heuristic_score, classify_chunk
 from memor.distill.distiller import ExtractiveDistiller
 from memor.embed.fake import FakeEmbedder
 from memor.store.sqlite_store import SqliteStore
@@ -70,6 +70,25 @@ def test_extract_preserves_temporal_order():
     assert ords == sorted(ords)
 
 
+def test_classify_chunk_decision():
+    assert classify_chunk("we decided to use argon2 for password hashing") == "decision"
+    assert classify_chunk("the approach is to use a connection pool") == "decision"
+
+def test_classify_chunk_bugfix():
+    assert classify_chunk("the fix is to add a retry counter") == "bugfix"
+    assert classify_chunk("root cause was a race condition in the token refresh") == "bugfix"
+
+def test_classify_chunk_lesson():
+    assert classify_chunk("always use parameterized queries to prevent SQL injection") == "lesson"
+    assert classify_chunk("never use eval() on user input") == "lesson"
+
+def test_classify_chunk_snippet():
+    assert classify_chunk("here is the implementation:\n```python\ndef foo():\n    pass\n```\n" + "x" * 200) == "snippet"
+
+def test_classify_chunk_extract_fallback():
+    assert classify_chunk("the module handles authentication for the web app") == "extract"
+
+
 def test_extractive_distiller_stores_memories(tmp_path):
     e = FakeEmbedder(dim=16)
     s = SqliteStore(str(tmp_path / "m.db"), dim=16)
@@ -87,3 +106,21 @@ def test_extractive_distiller_stores_memories(tmp_path):
     assert mems >= 1
     edges = s.db.execute("SELECT COUNT(*) FROM edges WHERE type='derived_from'").fetchone()[0]
     assert edges >= 1
+
+
+def test_extractive_distiller_classifies_types(tmp_path):
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    chunks = [
+        _chunk(0, "the fix is to add a maximum retry of 3 attempts with exponential "
+                  "backoff between each attempt to prevent the infinite loop", tok=150),
+    ]
+    s.add_artifacts(chunks, e.embed([c.text for c in chunks]))
+    d = ExtractiveDistiller(s, e)
+    d.distill_session("s1", chunks, project="p")
+    row = s.db.execute(
+        "SELECT meta FROM artifacts WHERE kind='memory' LIMIT 1"
+    ).fetchone()
+    import json
+    meta = json.loads(row["meta"])
+    assert meta["mem_type"] == "bugfix"

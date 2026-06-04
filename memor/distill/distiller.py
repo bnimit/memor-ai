@@ -78,11 +78,13 @@ class ExtractiveDistiller:
     def distill_session(
         self, session_id: str, chunks: list[Artifact], project: str
     ) -> list[str]:
+        from memor.distill.extractive import classify_chunk
         key_chunks = extract_key_chunks(chunks, self.embedder)
         created = max((c.created_at for c in chunks), default=0.0)
         new_ids: list[str] = []
         for c in key_chunks:
-            mid = _store_memory(self.store, self.embedder, c.text, "extract",
+            mem_type = classify_chunk(c.text)
+            mid = _store_memory(self.store, self.embedder, c.text, mem_type,
                                 session_id, project, created, [c])
             if mid is not None:
                 new_ids.append(mid)

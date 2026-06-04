@@ -51,7 +51,8 @@ def _status_message(status: str, project: str, hits_count: int,
 
 
 def recall(query: str, project: str, db_path: str, *,
-           embedder=None, k: int = 8, threshold: float = 0.3) -> RecallResult:
+           embedder=None, k: int = 8, threshold: float = 0.3,
+           session_id: str = "") -> RecallResult:
     t0 = time.perf_counter()
 
     if not Path(db_path).exists():
@@ -69,11 +70,11 @@ def recall(query: str, project: str, db_path: str, *,
     retriever = Retriever(store, embedder, k=k)
     trace = retriever.query(query, Scope(project=project))
 
-    # threshold <= 0 means "no filter" — accept all retriever hits
+    hits = list(trace.hits)
+    if session_id:
+        hits = [h for h in hits if h.artifact.meta.get("session_id") != session_id]
     if threshold > 0.0:
-        hits = [h for h in trace.hits if h.score >= threshold]
-    else:
-        hits = list(trace.hits)
+        hits = [h for h in hits if h.score >= threshold]
     top_score = hits[0].score if hits else 0.0
     tokens = sum(h.artifact.token_count for h in hits)
 
