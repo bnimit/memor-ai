@@ -9,6 +9,9 @@ from memor.ingest.claude_code import parse_transcript
 
 app = typer.Typer(no_args_is_help=True)
 
+def _db_path(db: str) -> str:
+    return str(Path(db).expanduser())
+
 def _embedder(fake: bool):
     if fake:
         from memor.embed.fake import FakeEmbedder
@@ -20,7 +23,7 @@ def _embedder(fake: bool):
 def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memor.db",
               fake: bool = False, no_filter: bool = False):
     e = _embedder(fake)
-    s = SqliteStore(db, dim=e.dim)
+    s = SqliteStore(_db_path(db), dim=e.dim)
     arts = parse_transcript(Path(path), project=project, filter_noise=not no_filter)
     s.add_artifacts(arts, e.embed([a.text for a in arts]))
     typer.echo(f"ingested {len(arts)} chunks from {path}")
@@ -29,7 +32,7 @@ def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memor.db",
 def query(text: str, project: str = typer.Option(None), db: str = "memor.db",
           k: int = 8, fake: bool = False):
     e = _embedder(fake)
-    s = SqliteStore(db, dim=e.dim)
+    s = SqliteStore(_db_path(db), dim=e.dim)
     r = Retriever(s, e, k=k)
     trace = r.query(text, Scope(project=project))
     for h in trace.hits:
@@ -41,7 +44,7 @@ def query(text: str, project: str = typer.Option(None), db: str = "memor.db",
 def eval_cmd(cases_path: str, db: str = "memor.db", k: int = 8, fake: bool = False):
     from memor.eval.dataset import EvalCase
     from memor.eval.runner import run_suite
-    e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
+    e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
     raw = json.loads(Path(cases_path).read_text())
     cases = [EvalCase(query=c["query"], scope_project=c["project"],
                       relevant_ids=set(c["relevant_ids"]),
@@ -55,7 +58,7 @@ def eval_cmd(cases_path: str, db: str = "memor.db", k: int = 8, fake: bool = Fal
 def build_cases(project: str = typer.Option(...), db: str = "memor.db",
                 out: str = "cases.json", fake: bool = False):
     from memor.eval.dataset import build_counterfactual_cases
-    e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
+    e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
     rows = s.db.execute("SELECT * FROM artifacts WHERE project=? AND kind='session_chunk'", (project,)).fetchall()
     arts = [s._row_to_artifact(r) for r in rows]
     cases = build_counterfactual_cases(arts, project=project)
@@ -70,7 +73,7 @@ def eval_judge_cmd(project: str = typer.Option(...), db: str = "memor.db",
                    holdout: int = 2):
     """Run LLM-as-judge eval: measures whether recalled context is actually useful."""
     from memor.eval.judge import build_judge_cases, run_judge_suite
-    e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
+    e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
     rows = s.db.execute("SELECT * FROM artifacts WHERE project=? AND kind='session_chunk'",
                         (project,)).fetchall()
     arts = [s._row_to_artifact(r) for r in rows]
@@ -99,7 +102,7 @@ def bench_embed(project: str = typer.Option(...), db: str = "memor.db",
     """Benchmark multiple embedding models on your data. Compares recall@k, nDCG@k, and latency."""
     from memor.eval.embed_benchmark import run_embed_benchmark, CANDIDATE_MODELS
     from memor.eval.dataset import build_counterfactual_cases
-    e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
+    e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
     rows = s.db.execute("SELECT * FROM artifacts WHERE project=? AND kind='session_chunk'",
                         (project,)).fetchall()
     arts = [s._row_to_artifact(r) for r in rows]
@@ -126,7 +129,7 @@ def bench_embed(project: str = typer.Option(...), db: str = "memor.db",
 def distill(project: str = typer.Option(...), db: str = "memor.db",
             fake: bool = False, llm_provider: str = "anthropic", llm_model: str = "claude-sonnet-4-6"):
     from memor.distill.distiller import Distiller
-    e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
+    e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
     if llm_provider == "anthropic":
         from memor.llm.anthropic import AnthropicLLM; llm = AnthropicLLM(model=llm_model)
     else:
@@ -154,7 +157,7 @@ def ingest_project(project_dir: str, project: str = typer.Option(...),
                    db: str = "memor.db", fake: bool = False, no_filter: bool = False):
     """Recursively ingest all .jsonl transcripts (including subagent transcripts) from a Claude Code project directory."""
     e = _embedder(fake)
-    s = SqliteStore(db, dim=e.dim)
+    s = SqliteStore(_db_path(db), dim=e.dim)
     files = sorted(Path(project_dir).rglob("*.jsonl"))
     total = 0
     for f in files:
@@ -169,7 +172,7 @@ def ingest_project(project_dir: str, project: str = typer.Option(...),
 def ingest_doc(path: str, project: str = typer.Option(...), kind: str = "note",
                db: str = "memor.db", fake: bool = False):
     from memor.ingest.documents import parse_document
-    e = _embedder(fake); s = SqliteStore(db, dim=e.dim)
+    e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
     arts = parse_document(Path(path), project=project, kind=kind)
     s.add_artifacts(arts, e.embed([a.text for a in arts]))
     typer.echo(f"ingested {len(arts)} chunks from {path}")
@@ -190,7 +193,7 @@ def inspector_cmd(db: str = "memor.db", fake: bool = False):
     from memor.tui.app import MemorApp
     typer.echo("Loading embedder and database...")
     e = _embedder(fake)
-    s = SqliteStore(db, dim=e.dim)
+    s = SqliteStore(_db_path(db), dim=e.dim)
     tui = MemorApp(db_path=db, store=s, embedder=e)
     tui.run()
 
