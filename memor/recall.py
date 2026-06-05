@@ -47,11 +47,16 @@ def _status_message(status: str, project: str, hits_count: int,
         return 'Memor: memory store is empty — run "memor daemon" to start ingesting sessions'
     if status == "no_embedder":
         return "Memor: inactive — run 'memor setup-model' to download the embedding model"
+    if status == "skipped_trivial":
+        return "Memor: skipped — trivial prompt"
     return f"Memor: status={status}"
 
 
+DEFAULT_MAX_TOKENS = 1500
+
 def recall(query: str, project: str, db_path: str, *,
            embedder=None, k: int = 8, threshold: float = 0.3,
+           max_tokens: int = DEFAULT_MAX_TOKENS,
            session_id: str = "") -> RecallResult:
     t0 = time.perf_counter()
 
@@ -75,6 +80,15 @@ def recall(query: str, project: str, db_path: str, *,
         hits = [h for h in hits if h.artifact.meta.get("session_id") != session_id]
     if threshold > 0.0:
         hits = [h for h in hits if h.score >= threshold]
+    if max_tokens > 0:
+        budget_hits = []
+        running = 0
+        for h in hits:
+            if running + h.artifact.token_count > max_tokens and budget_hits:
+                break
+            budget_hits.append(h)
+            running += h.artifact.token_count
+        hits = budget_hits
     top_score = hits[0].score if hits else 0.0
     tokens = sum(h.artifact.token_count for h in hits)
 

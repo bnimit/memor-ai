@@ -11,6 +11,13 @@ SOCK_PATH = Path.home() / ".memor" / "hook.sock"
 PID_PATH = Path.home() / ".memor" / "hook.pid"
 DEFAULT_DB = str(Path.home() / ".memor" / "memor.db")
 IDLE_TIMEOUT_S = 600
+MIN_QUERY_TOKENS = 10
+_TRIVIAL_PATTERNS = frozenset({
+    "yes", "no", "ok", "okay", "sure", "thanks", "thank you", "ty",
+    "looks good", "lgtm", "continue", "go ahead", "do it", "proceed",
+    "correct", "right", "yep", "yup", "nope", "agreed", "sounds good",
+    "perfect", "great", "nice", "cool", "done", "got it", "k",
+})
 
 _embedder = None
 _last_activity = 0.0
@@ -53,8 +60,31 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
             }
         }
 
+    query_stripped = query.strip().rstrip("?!.,").strip().lower()
+    query_word_count = len(query.split())
+    if query_word_count < MIN_QUERY_TOKENS and query_stripped in _TRIVIAL_PATTERNS:
+        msg = "Memor: skipped — trivial prompt"
+        if Path(db_path).exists():
+            try:
+                from memor.store.sqlite_store import SqliteStore
+                store = SqliteStore(db_path, dim=embedder.dim)
+                store.log_recall(
+                    project=project, query_preview=query[:100],
+                    hits_count=0, top_score=0.0,
+                    tokens_injected=0, latency_ms=0.0,
+                    status="skipped_trivial", session_id=session_id)
+            except Exception:
+                pass
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": f"---\n{msg}",
+            }
+        }
+
+    max_tokens = int(os.environ.get("MEMOR_MAX_TOKENS", "1500"))
     result = recall(query, project, db_path, embedder=embedder, k=8, threshold=0.15,
-                    session_id=session_id)
+                    max_tokens=max_tokens, session_id=session_id)
 
     if Path(db_path).exists():
         try:
