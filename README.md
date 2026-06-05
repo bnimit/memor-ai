@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-153%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-155%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -28,7 +28,10 @@ pipx install memor-cli
 # Install the Claude Code hook + download embedding model (~60MB)
 memor install-hook
 
-# Start the background daemon
+# Start as a background service (macOS/Linux)
+memor service install
+
+# Or run in the foreground
 memor daemon
 ```
 
@@ -67,7 +70,7 @@ memor dashboard
 
 **Two background processes:**
 
-1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback, compacts duplicates. All local.
+1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback, compacts duplicates, tracks session-level token usage. All local.
 2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms.
 
 **No API keys required.** Embeddings run locally via [model2vec](https://github.com/MinishLab/model2vec) (potion-base-8M, 256-dim). Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
@@ -110,10 +113,11 @@ Memories are automatically classified as `decision`, `bugfix`, `lesson`, `snippe
 memor dashboard
 ```
 
-Shows:
-- **Memory bank** — session chunks, distilled memories, projects tracked
-- **Context efficiency** — overhead %, recall precision, quality scores per session
-- **Per-project breakdown** — which projects have the most context
+Dark fintech-inspired UI showing:
+- **Hero metrics** — total memories, recall count, avg latency, precision — with sparkline bars
+- **Daily recall activity** — stacked bar chart of hits vs misses over time
+- **Session efficiency** — real token savings measured from API usage data (avg tokens/turn with vs without recall)
+- **Per-project breakdown** — artifact counts, token totals, last activity
 - **Recent recalls** — every hook event with scores, latency, and status
 
 ---
@@ -125,6 +129,11 @@ memor help                           Print the full manual
 memor install-hook                   Install Claude Code hook + download model
 memor daemon                         Auto-ingest + distill (background watcher)
 memor dashboard                      Web dashboard on localhost:8420
+memor version                        Print installed version
+memor service install                Run daemon as background service (launchd/systemd)
+memor service stop                   Stop the background service
+memor service uninstall              Remove the background service
+memor service status                 Check if the service is running
 memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything
 memor reingest --project <name>      Re-ingest only one project
@@ -166,6 +175,7 @@ memor/
 |   +-- api.py            OpenAI-compatible embedding API (optional)
 |   +-- fake.py           Deterministic SHA-256 embedder (tests)
 |
++-- service.py            Background service management (launchd/systemd)
 +-- dashboard/
 |   +-- server.py         FastAPI dashboard backend
 |   +-- static/index.html Self-contained dashboard (no CDN deps)
