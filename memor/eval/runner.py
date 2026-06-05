@@ -72,7 +72,8 @@ def run_ablation(*, query, project, relevant_ids, store, embedder, k=8):
                      "ndcg@k": ndcg_at_k(ids, relevant_ids, k)}
     return out
 
-def run_contradiction_eval(*, query, project, stale_id, current_id, store, embedder, k=8):
-    r = Retriever(store, embedder, k=k, edge_expand=True)
+def run_contradiction_eval(*, query, project, stale_id, current_id, store, embedder,
+                           k=8, min_similarity=0.0):
+    r = Retriever(store, embedder, k=k, edge_expand=True, min_similarity=min_similarity)
     ids = [h.artifact.id for h in r.query(query, Scope(project=project)).hits]
     return (current_id in ids) and (stale_id not in ids)

@@ -88,10 +88,14 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
         max_tokens = max(0, int(os.environ.get("MEMOR_MAX_TOKENS", "1500")))
     except (ValueError, TypeError):
         max_tokens = 1500
+    try:
+        min_similarity = float(os.environ.get("MEMOR_MIN_SIMILARITY", "0.0"))
+    except (ValueError, TypeError):
+        min_similarity = 0.0
     already_injected = _session_injected.get(session_id, set()) if session_id else set()
     result = recall(query, project, db_path, embedder=embedder, k=8, threshold=0.15,
-                    max_tokens=max_tokens, exclude_ids=already_injected or None,
-                    session_id=session_id)
+                    max_tokens=max_tokens, min_similarity=min_similarity,
+                    exclude_ids=already_injected or None, session_id=session_id)
 
     if session_id and result.hit_ids:
         _session_injected.setdefault(session_id, set()).update(result.hit_ids)

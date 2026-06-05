@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, sqlite3, struct
+import json, re, sqlite3, struct
 from pathlib import Path
 import sqlite_vec
 from memor.types import Artifact, Scope, SessionUsage
@@ -19,6 +19,7 @@ class SqliteStore:
         self.db.enable_load_extension(False)
         self._init_schema()
         self._check_dim(dim)
+        self._migrate_fts()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -32,6 +33,8 @@ class SqliteStore:
         CREATE INDEX IF NOT EXISTS idx_art_project ON artifacts(project, active);
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_artifacts USING vec0(
           embedding float[{self.dim}]);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_artifacts USING fts5(
+          id UNINDEXED, text, tokenize='porter unicode61');
         CREATE TABLE IF NOT EXISTS eval_runs(
           id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL, config TEXT, metrics TEXT);
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
@@ -74,6 +77,18 @@ class SqliteStore:
                 f"but current embedder has dim={dim}. Use the same embedder or re-ingest."
             )
 
+    def _migrate_fts(self):
+        """One-time backfill of the FTS index for databases created before
+        lexical search existed. Runs only when artifacts exist but the index is
+        empty, so it's a no-op on every subsequent open."""
+        has_artifacts = self.db.execute("SELECT 1 FROM artifacts LIMIT 1").fetchone()
+        if not has_artifacts:
+            return
+        has_fts = self.db.execute("SELECT 1 FROM fts_artifacts LIMIT 1").fetchone()
+        if has_fts:
+            return
+        self.rebuild_fts()
+
     def add_artifacts(self, artifacts: list[Artifact], vectors: list[list[float]]) -> None:
         cur = self.db.cursor()
         for a, v in zip(artifacts, vectors):
@@ -84,6 +99,8 @@ class SqliteStore:
             rowid = cur.execute("SELECT rowid FROM artifacts WHERE id=?", (a.id,)).fetchone()[0]
             cur.execute("INSERT OR REPLACE INTO vec_artifacts(rowid, embedding) VALUES(?,?)",
                         (rowid, _serialize(v)))
+            cur.execute("DELETE FROM fts_artifacts WHERE id=?", (a.id,))
+            cur.execute("INSERT INTO fts_artifacts(id, text) VALUES(?,?)", (a.id, a.text))
         self.db.commit()
 
     def add_edge(self, src_id: str, dst_id: str, type: str) -> None:
@@ -117,6 +134,43 @@ class SqliteStore:
                 continue
             sim = 1.0 - float(r["distance"])
             out.append((self._row_to_artifact(r), sim))
+        return out
+
+    def rebuild_fts(self) -> int:
+        """Backfill the FTS index from the artifacts table. Idempotent — used to
+        index databases created before lexical search existed. Returns the row
+        count indexed."""
+        cur = self.db.cursor()
+        cur.execute("DELETE FROM fts_artifacts")
+        cur.execute("INSERT INTO fts_artifacts(id, text) SELECT id, text FROM artifacts")
+        n = self.db.execute("SELECT COUNT(*) AS c FROM fts_artifacts").fetchone()["c"]
+        self.db.commit()
+        return n
+
+    def search_lexical(self, query: str, scope: Scope, k: int) -> list[tuple[Artifact, float]]:
+        """Lexical BM25 search over artifact text via FTS5. Returns
+        (artifact, bm25_score) ordered best-first (lower bm25 = better match).
+        Terms are OR-combined so partial matches still surface — the dense
+        channel handles semantics, this channel recovers exact terms."""
+        terms = re.findall(r"[A-Za-z0-9_]+", query.lower())
+        if not terms:
+            return []
+        match = " OR ".join(terms)
+        rows = self.db.execute(f"""
+          SELECT a.*, bm25(fts_artifacts) AS bm25_rank
+          FROM fts_artifacts f JOIN artifacts a ON a.id = f.id
+          WHERE fts_artifacts MATCH ? AND a.active = 1
+            AND (? IS NULL OR a.project = ?)
+            AND (? IS NULL OR a.created_at >= ?)
+            AND (? IS NULL OR a.created_at <= ?)
+          ORDER BY bm25_rank ASC LIMIT ?
+        """, (match, scope.project, scope.project,
+              scope.since, scope.since, scope.until, scope.until, k)).fetchall()
+        out = []
+        for r in rows:
+            if scope.kinds is not None and r["kind"] not in scope.kinds:
+                continue
+            out.append((self._row_to_artifact(r), float(r["bm25_rank"])))
         return out
 
     def neighbors(self, ids: list[str], types: list[str], hops: int = 1) -> list[Artifact]:

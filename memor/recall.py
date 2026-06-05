@@ -64,9 +64,13 @@ def _injected_token_count(artifact) -> int:
     return max(1, count_tokens(artifact.text[:_TEXT_TRUNCATE_LEN]))
 
 
+DEFAULT_MIN_SIMILARITY = 0.0
+
+
 def recall(query: str, project: str, db_path: str, *,
            embedder=None, k: int = 8, threshold: float = 0.3,
            max_tokens: int = DEFAULT_MAX_TOKENS,
+           min_similarity: float = DEFAULT_MIN_SIMILARITY,
            exclude_ids: set[str] | None = None,
            session_id: str = "") -> RecallResult:
     t0 = time.perf_counter()
@@ -83,7 +87,7 @@ def recall(query: str, project: str, db_path: str, *,
     from memor.retrieve.retriever import Retriever
 
     store = SqliteStore(db_path, dim=embedder.dim)
-    retriever = Retriever(store, embedder, k=k)
+    retriever = Retriever(store, embedder, k=k, min_similarity=min_similarity)
     trace = retriever.query(query, Scope(project=project))
 
     hits = list(trace.hits)

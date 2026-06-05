@@ -24,7 +24,7 @@ def _seed_store(tmp_path, project="testproj"):
 def test_recall_returns_hits(tmp_path):
     s, e = _seed_store(tmp_path)
     result = recall("password hashing", "testproj", str(tmp_path / "m.db"),
-                    embedder=e, k=8, threshold=0.0)
+                    embedder=e, k=8, threshold=0.0, min_similarity=-2.0)
     assert isinstance(result, RecallResult)
     assert result.hits_count > 0
     assert result.status == "ok"
@@ -62,14 +62,14 @@ def test_recall_extractive_only_status(tmp_path):
                    meta={"mem_type": "extract", "session_id": "s1"})
     s.add_artifacts([art], e.embed([art.text]))
     result = recall("authentication", "p", str(tmp_path / "m.db"),
-                    embedder=e, k=8, threshold=0.0)
+                    embedder=e, k=8, threshold=0.0, min_similarity=-2.0)
     assert result.status == "extractive_only"
 
 
 def test_recall_result_has_formatted_context(tmp_path):
     s, e = _seed_store(tmp_path)
     result = recall("password hashing", "testproj", str(tmp_path / "m.db"),
-                    embedder=e, k=8, threshold=0.0)
+                    embedder=e, k=8, threshold=0.0, min_similarity=-2.0)
     assert "## Recalled Memories" in result.formatted_context
     assert "Memor:" in result.status_message
 
@@ -94,7 +94,7 @@ def test_recall_max_tokens_cap(tmp_path):
 def test_recall_max_tokens_zero_disables_cap(tmp_path):
     s, e = _seed_store(tmp_path)
     result = recall("password hashing", "testproj", str(tmp_path / "m.db"),
-                    embedder=e, k=8, threshold=0.0, max_tokens=0)
+                    embedder=e, k=8, threshold=0.0, max_tokens=0, min_similarity=-2.0)
     assert result.hits_count > 0
 
 
@@ -146,9 +146,9 @@ def test_recall_exclude_ids(tmp_path):
     ]
     s.add_artifacts(arts, e.embed([a.text for a in arts]))
     result_all = recall("auth login", "p", str(tmp_path / "m.db"),
-                        embedder=e, k=8, threshold=0.0)
+                        embedder=e, k=8, threshold=0.0, min_similarity=-2.0)
     result_excluded = recall("auth login", "p", str(tmp_path / "m.db"),
                              embedder=e, k=8, threshold=0.0,
-                             exclude_ids={"a1"})
+                             exclude_ids={"a1"}, min_similarity=-2.0)
     assert result_all.hits_count > result_excluded.hits_count
     assert "a1" not in (result_excluded.hit_ids or [])
