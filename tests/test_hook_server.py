@@ -1,4 +1,4 @@
-from memor.hook_server import handle_request, IDLE_TIMEOUT_S, _TRIVIAL_PATTERNS, MIN_QUERY_TOKENS
+from memor.hook_server import handle_request, IDLE_TIMEOUT_S, _TRIVIAL_PATTERNS, MIN_QUERY_WORDS
 from memor.embed.fake import FakeEmbedder
 from memor.store.sqlite_store import SqliteStore
 from memor.types import Artifact

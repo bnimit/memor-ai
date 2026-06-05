@@ -11,7 +11,7 @@ SOCK_PATH = Path.home() / ".memor" / "hook.sock"
 PID_PATH = Path.home() / ".memor" / "hook.pid"
 DEFAULT_DB = str(Path.home() / ".memor" / "memor.db")
 IDLE_TIMEOUT_S = 600
-MIN_QUERY_TOKENS = 10
+MIN_QUERY_WORDS = 10
 _TRIVIAL_PATTERNS = frozenset({
     "yes", "no", "ok", "okay", "sure", "thanks", "thank you", "ty",
     "looks good", "lgtm", "continue", "go ahead", "do it", "proceed",
@@ -62,7 +62,7 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
 
     query_stripped = query.strip().rstrip("?!.,").strip().lower()
     query_word_count = len(query.split())
-    if query_word_count < MIN_QUERY_TOKENS and query_stripped in _TRIVIAL_PATTERNS:
+    if query_word_count < MIN_QUERY_WORDS and query_stripped in _TRIVIAL_PATTERNS:
         msg = "Memor: skipped — trivial prompt"
         if Path(db_path).exists():
             try:
@@ -82,7 +82,10 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
             }
         }
 
-    max_tokens = int(os.environ.get("MEMOR_MAX_TOKENS", "1500"))
+    try:
+        max_tokens = max(0, int(os.environ.get("MEMOR_MAX_TOKENS", "1500")))
+    except (ValueError, TypeError):
+        max_tokens = 1500
     result = recall(query, project, db_path, embedder=embedder, k=8, threshold=0.15,
                     max_tokens=max_tokens, session_id=session_id)
 
