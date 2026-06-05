@@ -21,6 +21,10 @@ def test_contradiction_eval_prefers_new(tmp_path):
     s.add_artifacts([mk("old","use bcrypt",10,kind="memory")], e.embed(["use bcrypt"]))
     s.add_artifacts([mk("new","use argon2",20,kind="memory")], e.embed(["use argon2"]))
     s.deactivate("old", superseded_by="new")
+    # This eval isolates supersession (stale suppressed, current preferred), not
+    # the relevance gate — disable the gate so the synthetic embedder's weak
+    # cosines don't interfere.
     ok = run_contradiction_eval(query="hashing algorithm", project="p",
-                                stale_id="old", current_id="new", store=s, embedder=e, k=5)
+                                stale_id="old", current_id="new", store=s, embedder=e,
+                                k=5, min_similarity=-2.0)
     assert ok is True   # returns current, suppresses stale
