@@ -74,6 +74,43 @@ def test_recall_result_has_formatted_context(tmp_path):
     assert "Memor:" in result.status_message
 
 
+def test_recall_max_tokens_cap(tmp_path):
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    arts = [
+        Artifact(id=f"a{i}", kind="memory", project="p", source="distill",
+                 text=f"memory number {i} about auth patterns and security decisions " * 5,
+                 token_count=200, created_at=100.0 + i,
+                 meta={"mem_type": "decision", "session_id": f"s{i}"})
+        for i in range(5)
+    ]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+    result = recall("auth", "p", str(tmp_path / "m.db"),
+                    embedder=e, k=8, threshold=0.0, max_tokens=500)
+    assert result.tokens_injected <= 500
+    assert result.hits_count < 5
+
+
+def test_recall_max_tokens_zero_disables_cap(tmp_path):
+    s, e = _seed_store(tmp_path)
+    result = recall("password hashing", "testproj", str(tmp_path / "m.db"),
+                    embedder=e, k=8, threshold=0.0, max_tokens=0)
+    assert result.hits_count > 0
+
+
+def test_recall_max_tokens_always_includes_first_hit(tmp_path):
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    art = Artifact(id="big", kind="memory", project="p", source="distill",
+                   text="a very large memory " * 100,
+                   token_count=2000, created_at=100.0,
+                   meta={"mem_type": "decision", "session_id": "s1"})
+    s.add_artifacts([art], e.embed([art.text]))
+    result = recall("large memory", "p", str(tmp_path / "m.db"),
+                    embedder=e, k=8, threshold=0.0, max_tokens=500)
+    assert result.hits_count == 1
+
+
 def test_recall_filters_current_session(tmp_path):
     e = FakeEmbedder(dim=16)
     s = SqliteStore(str(tmp_path / "m.db"), dim=16)

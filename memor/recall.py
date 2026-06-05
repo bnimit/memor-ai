@@ -47,11 +47,26 @@ def _status_message(status: str, project: str, hits_count: int,
         return 'Memor: memory store is empty — run "memor daemon" to start ingesting sessions'
     if status == "no_embedder":
         return "Memor: inactive — run 'memor setup-model' to download the embedding model"
+    if status == "skipped_trivial":
+        return "Memor: skipped — trivial prompt"
     return f"Memor: status={status}"
+
+
+DEFAULT_MAX_TOKENS = 1500
+_TEXT_TRUNCATE_LEN = 600
+
+
+def _injected_token_count(artifact) -> int:
+    """Token cost of the text actually injected (after 600-char truncation)."""
+    if len(artifact.text) <= _TEXT_TRUNCATE_LEN:
+        return artifact.token_count
+    from memor.tokencount import count_tokens
+    return max(1, count_tokens(artifact.text[:_TEXT_TRUNCATE_LEN]))
 
 
 def recall(query: str, project: str, db_path: str, *,
            embedder=None, k: int = 8, threshold: float = 0.3,
+           max_tokens: int = DEFAULT_MAX_TOKENS,
            session_id: str = "") -> RecallResult:
     t0 = time.perf_counter()
 
@@ -75,8 +90,18 @@ def recall(query: str, project: str, db_path: str, *,
         hits = [h for h in hits if h.artifact.meta.get("session_id") != session_id]
     if threshold > 0.0:
         hits = [h for h in hits if h.score >= threshold]
+    if max_tokens > 0:
+        budget_hits = []
+        running = 0
+        for h in hits:
+            cost = _injected_token_count(h.artifact)
+            if running + cost > max_tokens and budget_hits:
+                break
+            budget_hits.append(h)
+            running += cost
+        hits = budget_hits
     top_score = hits[0].score if hits else 0.0
-    tokens = sum(h.artifact.token_count for h in hits)
+    tokens = sum(_injected_token_count(h.artifact) for h in hits)
 
     if not hits:
         status = "no_hits"
@@ -92,7 +117,7 @@ def recall(query: str, project: str, db_path: str, *,
         for i, h in enumerate(hits, 1):
             a = h.artifact
             kind_tag = a.meta.get("mem_type", a.kind)
-            text = a.text if len(a.text) <= 600 else a.text[:600] + "..."
+            text = a.text if len(a.text) <= _TEXT_TRUNCATE_LEN else a.text[:_TEXT_TRUNCATE_LEN] + "..."
             source_parts = []
             sid = a.meta.get("session_id")
             if sid:
