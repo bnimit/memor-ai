@@ -410,9 +410,9 @@
             <div class="side-stat-sub" id="e-avg-input-sub">across all sessions</div>
           </div>
           <div class="side-stat">
-            <div class="side-stat-label">Recall Precision</div>
-            <div class="side-stat-value" id="e-precision">&ndash;</div>
-            <div class="side-stat-sub">% of prompts with relevant context</div>
+            <div class="side-stat-label">Recall Coverage</div>
+            <div class="side-stat-value" id="e-coverage">&ndash;</div>
+            <div class="side-stat-sub">% of prompts where context was injected</div>
           </div>
           <div class="side-stat">
             <div class="side-stat-label">Avg Latency</div>
@@ -581,7 +581,7 @@
 
   /* ── Efficiency ────────────────────────────────────────── */
   function renderEfficiency(data) {
-    document.getElementById('e-precision').textContent = fmtPct(data.precision * 100);
+    document.getElementById('e-coverage').textContent = fmtPct(data.coverage * 100);
   }
 
   function renderSessionEfficiency(data) {

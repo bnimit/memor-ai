@@ -67,6 +67,7 @@ def _injected_token_count(artifact) -> int:
 def recall(query: str, project: str, db_path: str, *,
            embedder=None, k: int = 8, threshold: float = 0.3,
            max_tokens: int = DEFAULT_MAX_TOKENS,
+           exclude_ids: set[str] | None = None,
            session_id: str = "") -> RecallResult:
     t0 = time.perf_counter()
 
@@ -88,6 +89,8 @@ def recall(query: str, project: str, db_path: str, *,
     hits = list(trace.hits)
     if session_id:
         hits = [h for h in hits if h.artifact.meta.get("session_id") != session_id]
+    if exclude_ids:
+        hits = [h for h in hits if h.artifact.id not in exclude_ids]
     if threshold > 0.0:
         hits = [h for h in hits if h.score >= threshold]
     if max_tokens > 0:
