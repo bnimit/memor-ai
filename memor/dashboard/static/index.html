@@ -399,16 +399,20 @@
         <div class="chart-header">
           <div class="chart-title">Efficiency</div>
         </div>
+        <div id="efficiency-gain-banner" style="display:none;background:var(--ok-dim);border:1px solid rgba(61,214,140,0.2);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px;">
+          <div style="font-size:22px;font-weight:700;color:var(--ok);letter-spacing:-0.5px;" id="eg-value">&ndash;</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;" id="eg-desc">fewer input tokens/turn with active recall</div>
+        </div>
         <div class="side-stats" id="efficiency-side">
+          <div class="side-stat">
+            <div class="side-stat-label">Avg Tokens / Turn</div>
+            <div class="side-stat-value" id="e-avg-input">&ndash;</div>
+            <div class="side-stat-sub" id="e-avg-input-sub">across all sessions</div>
+          </div>
           <div class="side-stat">
             <div class="side-stat-label">Recall Precision</div>
             <div class="side-stat-value" id="e-precision">&ndash;</div>
             <div class="side-stat-sub">% of prompts with relevant context</div>
-          </div>
-          <div class="side-stat">
-            <div class="side-stat-label">Avg Quality</div>
-            <div class="side-stat-value" id="e-quality">&ndash;</div>
-            <div class="side-stat-sub">mean similarity score</div>
           </div>
           <div class="side-stat">
             <div class="side-stat-label">Avg Latency</div>
@@ -416,9 +420,9 @@
             <div class="side-stat-sub">recall pipeline speed</div>
           </div>
           <div class="side-stat">
-            <div class="side-stat-label">Hit Rate</div>
-            <div class="side-stat-value" id="e-hitrate">&ndash;</div>
-            <div class="side-stat-sub">recalls that returned results</div>
+            <div class="side-stat-label">Sessions Tracked</div>
+            <div class="side-stat-value" id="e-sessions">&ndash;</div>
+            <div class="side-stat-sub" id="e-sessions-sub">with token data</div>
           </div>
         </div>
       </div>
@@ -572,14 +576,51 @@
         fmtPct(d.hit_rate * 100) + ' hit rate · ' + fmtMs(d.avg_latency_ms) + ' avg';
     }
 
-    document.getElementById('e-hitrate').textContent = d.total_recalls > 0 ? fmtPct(d.hit_rate * 100) : '–';
     document.getElementById('e-latency').textContent = d.total_recalls > 0 ? fmtMs(d.avg_latency_ms) : '–';
   }
 
   /* ── Efficiency ────────────────────────────────────────── */
   function renderEfficiency(data) {
     document.getElementById('e-precision').textContent = fmtPct(data.precision * 100);
-    document.getElementById('e-quality').textContent = fmtScore(data.avg_quality);
+  }
+
+  function renderSessionEfficiency(data) {
+    if (!data || data.total_sessions === 0) return;
+
+    document.getElementById('e-avg-input').textContent = fmt(data.avg_input_per_turn);
+    document.getElementById('e-sessions').textContent = fmt(data.total_sessions);
+
+    if (data.sessions_with_recall > 0 && data.sessions_without_recall > 0) {
+      document.getElementById('e-avg-input-sub').textContent =
+        fmt(data.avg_input_per_turn_with_recall) + ' with recall · ' +
+        fmt(data.avg_input_per_turn_without_recall) + ' without';
+      document.getElementById('e-sessions-sub').textContent =
+        data.sessions_with_recall + ' with recall · ' + data.sessions_without_recall + ' without';
+    }
+
+    var banner = document.getElementById('efficiency-gain-banner');
+    if (data.efficiency_gain_pct > 0 && data.sessions_with_recall >= 3 && data.sessions_without_recall >= 3) {
+      document.getElementById('eg-value').textContent = data.efficiency_gain_pct + '% fewer';
+      document.getElementById('eg-desc').textContent = 'input tokens/turn with active recall vs. without';
+      banner.style.display = 'block';
+    } else if (data.efficiency_gain_pct < 0 && data.sessions_with_recall >= 3) {
+      document.getElementById('eg-value').textContent = Math.abs(data.efficiency_gain_pct) + '% more';
+      document.getElementById('eg-value').style.color = 'var(--warn)';
+      document.getElementById('eg-desc').textContent = 'input tokens/turn with recall — investigating...';
+      banner.style.display = 'block';
+      banner.style.background = 'var(--warn-dim)';
+      banner.style.borderColor = 'rgba(232,147,32,0.2)';
+    }
+
+    if (data.avg_tool_calls_with_recall > 0 || data.avg_tool_calls_without_recall > 0) {
+      var toolDiff = data.avg_tool_calls_without_recall - data.avg_tool_calls_with_recall;
+      if (toolDiff > 0 && data.sessions_with_recall >= 3) {
+        var toolPct = Math.round((toolDiff / data.avg_tool_calls_without_recall) * 100);
+        if (toolPct > 5) {
+          document.getElementById('eg-desc').textContent += ' · ' + toolPct + '% fewer tool calls';
+        }
+      }
+    }
   }
 
   /* ── Trend chart ───────────────────────────────────────── */
@@ -744,6 +785,7 @@
   async function loadSummary()    { try { renderSummary(await api('/api/summary')); } catch(e) { console.warn('summary',e); } }
   async function loadProjects()   { try { renderProjects(await api('/api/projects')); } catch(e) { console.warn('projects',e); } }
   async function loadEfficiency() { try { renderEfficiency(await api('/api/efficiency')); } catch(e) { console.warn('efficiency',e); } }
+  async function loadSessionEfficiency() { try { renderSessionEfficiency(await api('/api/session-efficiency')); } catch(e) { console.warn('session-efficiency',e); } }
   async function loadHealth()     { try { renderHealth(await api('/api/health')); } catch(e) { console.warn('health',e); } }
   async function loadTrend()      { try { renderTrend(await api('/api/recall-trend?days=30')); } catch(e) { console.warn('trend',e); } }
   async function loadRecalls() {
@@ -754,7 +796,7 @@
   }
 
   async function refresh() {
-    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadHealth(), loadTrend(), loadRecalls()]);
+    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls()]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 
     renderMiniBars('mb-chunks', null);
