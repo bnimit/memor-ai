@@ -21,6 +21,7 @@ _TRIVIAL_PATTERNS = frozenset({
 
 _embedder = None
 _last_activity = 0.0
+_session_injected: dict[str, set[str]] = {}
 
 _UNSET = object()  # sentinel for "auto-discover embedder"
 
@@ -86,8 +87,13 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
         max_tokens = max(0, int(os.environ.get("MEMOR_MAX_TOKENS", "1500")))
     except (ValueError, TypeError):
         max_tokens = 1500
+    already_injected = _session_injected.get(session_id, set()) if session_id else set()
     result = recall(query, project, db_path, embedder=embedder, k=8, threshold=0.15,
-                    max_tokens=max_tokens, session_id=session_id)
+                    max_tokens=max_tokens, exclude_ids=already_injected or None,
+                    session_id=session_id)
+
+    if session_id and result.hit_ids:
+        _session_injected.setdefault(session_id, set()).update(result.hit_ids)
 
     if Path(db_path).exists():
         try:

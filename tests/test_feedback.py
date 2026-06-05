@@ -106,6 +106,20 @@ def test_text_was_not_used():
     assert not _text_was_used(memory, assistant)
 
 
+def test_text_was_used_partial_overlap():
+    from memor.feedback import _text_was_used
+    memory = "the root cause was a race condition in the token refresh logic causing stale sessions"
+    assistant = ["found a race condition in the token refresh that was causing intermittent failures"]
+    assert _text_was_used(memory, assistant)
+
+
+def test_text_was_used_short_memory():
+    from memor.feedback import _text_was_used
+    memory = "use argon2"
+    assistant = ["we use argon2 for everything"]
+    assert not _text_was_used(memory, assistant)
+
+
 def test_compact_memories(tmp_path):
     from memor.daemon import compact_memories
     s, e, _ = _make_store(tmp_path)

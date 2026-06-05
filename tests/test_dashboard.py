@@ -92,11 +92,11 @@ def test_efficiency_endpoint(tmp_path):
     assert data["total_sessions"] == 2
     assert data["total_recalls"] == 2
     assert data["total_tokens_injected"] == 120
-    assert data["precision"] == 0.5
+    assert data["coverage"] == 0.5
     assert len(data["sessions"]) == 2
     s1 = next(s for s in data["sessions"] if s["session_id"] == "sess1")
     assert s1["tokens_injected"] == 120
-    assert s1["precision"] == 1.0
+    assert s1["coverage"] == 1.0
 
 
 def test_efficiency_empty_db(tmp_path):
@@ -110,7 +110,7 @@ def test_efficiency_empty_db(tmp_path):
     assert r.status_code == 200
     data = r.json()
     assert data["total_sessions"] == 0
-    assert data["precision"] == 0
+    assert data["coverage"] == 0
     assert data["sessions"] == []
 
 

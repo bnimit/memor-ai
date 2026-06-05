@@ -8,7 +8,9 @@ import json
 from pathlib import Path
 from memor.store.sqlite_store import SqliteStore
 
-MIN_OVERLAP_TOKENS = 5
+_NGRAM_SIZE = 3
+_MIN_WORDS = 4
+_MATCH_RATIO = 0.10
 
 
 def _extract_assistant_texts(transcript_path: Path) -> list[str]:
@@ -36,44 +38,44 @@ def _extract_assistant_texts(transcript_path: Path) -> list[str]:
 
 def _text_was_used(memory_text: str, assistant_texts: list[str]) -> bool:
     words = memory_text.lower().split()
-    if len(words) < MIN_OVERLAP_TOKENS:
+    if len(words) < _MIN_WORDS:
         return False
-    key_phrases = []
-    for i in range(0, len(words) - 4):
-        key_phrases.append(" ".join(words[i:i+5]))
-    if not key_phrases:
+    ngrams = []
+    for i in range(len(words) - _NGRAM_SIZE + 1):
+        ngrams.append(" ".join(words[i:i + _NGRAM_SIZE]))
+    if not ngrams:
         return False
     matches = 0
-    for phrase in key_phrases:
+    for phrase in ngrams:
         for text in assistant_texts:
             if phrase in text:
                 matches += 1
                 break
-    return matches >= max(2, len(key_phrases) // 5)
+    return matches >= max(1, int(len(ngrams) * _MATCH_RATIO))
 
 
 def analyze_session_feedback(
     store: SqliteStore, session_id: str, transcript_path: Path
 ) -> int:
-    recalls = store.db.execute(
-        "SELECT * FROM recall_log WHERE session_id=? AND hits_count > 0",
-        (session_id,)
-    ).fetchall()
-    if not recalls:
-        return 0
-
     recalled_ids = set()
-    for r in recalls:
-        log_id = r["id"]
-        rl_time = r["timestamp"]
-        nearby = store.db.execute("""
-            SELECT q.artifact_id FROM memory_quality q
-            JOIN artifacts a ON a.id = q.artifact_id
-            WHERE q.last_recalled BETWEEN ? - 2 AND ? + 2
-              AND a.active = 1
-        """, (rl_time, rl_time)).fetchall()
-        for row in nearby:
-            recalled_ids.add(row["artifact_id"])
+    rows = store.db.execute("""
+        SELECT artifact_id FROM memory_quality
+        WHERE artifact_id IN (
+            SELECT id FROM artifacts WHERE active = 1
+        )
+        AND EXISTS (
+            SELECT 1 FROM recall_log
+            WHERE session_id = ? AND hits_count > 0
+        )
+        AND last_recalled >= (
+            SELECT MIN(timestamp) FROM recall_log WHERE session_id = ?
+        )
+        AND last_recalled <= (
+            SELECT MAX(timestamp) FROM recall_log WHERE session_id = ?
+        ) + 5
+    """, (session_id, session_id, session_id)).fetchall()
+    for row in rows:
+        recalled_ids.add(row["artifact_id"])
 
     if not recalled_ids:
         return 0

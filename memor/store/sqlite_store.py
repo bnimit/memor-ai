@@ -292,14 +292,14 @@ class SqliteStore:
         for s in sessions:
             injected = s["total_injected"] or 0
             prompts = s["prompts"] or 1
-            precision = (s["prompts_with_hits"] or 0) / prompts
+            coverage = (s["prompts_with_hits"] or 0) / prompts
             overhead_pct = round(injected / context_window * 100, 2)
             session_list.append({
                 "session_id": s["session_id"],
                 "prompts": prompts,
                 "tokens_injected": injected,
                 "overhead_pct": overhead_pct,
-                "precision": round(precision, 3),
+                "coverage": round(coverage, 3),
                 "avg_quality": round(s["avg_quality"] or 0, 3),
                 "first_recall": s["first_recall"],
                 "last_recall": s["last_recall"],
@@ -324,7 +324,7 @@ class SqliteStore:
             "total_tokens_injected": total_injected,
             "avg_tokens_per_session": avg_per_session,
             "avg_overhead_pct": round(avg_per_session / context_window * 100, 2),
-            "precision": round((totals["with_hits"] or 0) / total_recalls, 3) if total_recalls else 0,
+            "coverage": round((totals["with_hits"] or 0) / total_recalls, 3) if total_recalls else 0,
             "avg_quality": round(totals["avg_quality"] or 0, 3),
             "sessions": session_list,
         }

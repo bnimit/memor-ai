@@ -74,6 +74,17 @@ def test_handle_request_does_not_skip_real_query(tmp_path):
     assert "skipped" not in ctx.lower()
 
 
+def test_session_injected_tracking(tmp_path):
+    import memor.hook_server as hs
+    hs._session_injected.clear()
+    hs._session_injected.setdefault("sess-a", set()).add("m1")
+    hs._session_injected.setdefault("sess-a", set()).add("m2")
+    assert "m1" in hs._session_injected["sess-a"]
+    assert "m2" in hs._session_injected["sess-a"]
+    assert "sess-b" not in hs._session_injected
+    hs._session_injected.clear()
+
+
 def test_trivial_patterns_are_lowercase():
     for p in _TRIVIAL_PATTERNS:
         assert p == p.lower(), f"Pattern '{p}' should be lowercase"

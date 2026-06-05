@@ -129,3 +129,26 @@ def test_recall_filters_current_session(tmp_path):
                     embedder=e, k=8, threshold=0.0, session_id="current-sess")
     ids = [line for line in result.formatted_context.split("\n") if "session" in line.lower()]
     assert "current-sess" not in " ".join(ids) or result.hits_count == 1
+
+
+def test_recall_exclude_ids(tmp_path):
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    arts = [
+        Artifact(id="a1", kind="memory", project="p", source="distill",
+                 text="auth pattern about login security and password hashing",
+                 token_count=10, created_at=100.0,
+                 meta={"mem_type": "decision", "session_id": "s1"}),
+        Artifact(id="a2", kind="memory", project="p", source="distill",
+                 text="database migration strategy for postgres upgrade path",
+                 token_count=10, created_at=200.0,
+                 meta={"mem_type": "decision", "session_id": "s2"}),
+    ]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+    result_all = recall("auth login", "p", str(tmp_path / "m.db"),
+                        embedder=e, k=8, threshold=0.0)
+    result_excluded = recall("auth login", "p", str(tmp_path / "m.db"),
+                             embedder=e, k=8, threshold=0.0,
+                             exclude_ids={"a1"})
+    assert result_all.hits_count > result_excluded.hits_count
+    assert "a1" not in (result_excluded.hit_ids or [])
