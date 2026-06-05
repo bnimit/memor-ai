@@ -13,6 +13,21 @@ class Artifact:
     meta: dict = field(default_factory=dict)
 
 @dataclass
+class SessionUsage:
+    session_id: str
+    project: str
+    turn_count: int = 0
+    total_input_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    total_cache_create_tokens: int = 0
+    total_output_tokens: int = 0
+    tool_call_count: int = 0
+    recall_turn_count: int = 0
+    first_turn_at: float = 0.0
+    last_turn_at: float = 0.0
+
+
+@dataclass
 class Scope:
     project: str | None = None
     since: float | None = None

@@ -93,6 +93,15 @@ def ingest_file(path: Path, project: str, store: SqliteStore, embedder) -> int:
         return 0
     vecs = embedder.embed([a.text for a in arts])
     store.add_artifacts(arts, vecs)
+
+    from memor.ingest.claude_code import parse_session_usage
+    try:
+        usage = parse_session_usage(path, project)
+        if usage:
+            store.upsert_session_stats(usage)
+    except Exception:
+        pass
+
     return len(arts)
 
 

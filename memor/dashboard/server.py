@@ -114,6 +114,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
             })
         return result
 
+    @app.get("/api/session-efficiency")
+    def session_efficiency():
+        store = _store()
+        return store.get_session_efficiency()
+
     @app.get("/api/recall-trend")
     def recall_trend(days: int = Query(30, ge=7, le=90)):
         store = _store()

@@ -2,7 +2,7 @@ from __future__ import annotations
 import json, sqlite3, struct
 from pathlib import Path
 import sqlite_vec
-from memor.types import Artifact, Scope
+from memor.types import Artifact, Scope, SessionUsage
 
 def _serialize(v: list[float]) -> bytes:
     return struct.pack("%sf" % len(v), *v)
@@ -46,6 +46,20 @@ class SqliteStore:
           timestamp REAL, project TEXT, query_preview TEXT,
           hits_count INTEGER, top_score REAL, tokens_injected INTEGER,
           latency_ms REAL, status TEXT, session_id TEXT);
+        CREATE TABLE IF NOT EXISTS session_stats(
+          session_id TEXT PRIMARY KEY,
+          project TEXT NOT NULL,
+          turn_count INTEGER NOT NULL DEFAULT 0,
+          total_input_tokens INTEGER NOT NULL DEFAULT 0,
+          total_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+          total_cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+          total_output_tokens INTEGER NOT NULL DEFAULT 0,
+          tool_call_count INTEGER NOT NULL DEFAULT 0,
+          recall_turn_count INTEGER NOT NULL DEFAULT 0,
+          first_turn_at REAL,
+          last_turn_at REAL,
+          updated_at REAL NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS idx_session_stats_project ON session_stats(project);
         """)
         self.db.commit()
 
@@ -313,6 +327,97 @@ class SqliteStore:
             "precision": round((totals["with_hits"] or 0) / total_recalls, 3) if total_recalls else 0,
             "avg_quality": round(totals["avg_quality"] or 0, 3),
             "sessions": session_list,
+        }
+
+    def upsert_session_stats(self, usage: SessionUsage) -> None:
+        import time
+        self.db.execute("""
+            INSERT INTO session_stats(
+                session_id, project, turn_count,
+                total_input_tokens, total_cache_read_tokens, total_cache_create_tokens,
+                total_output_tokens, tool_call_count, recall_turn_count,
+                first_turn_at, last_turn_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                project=excluded.project,
+                turn_count=excluded.turn_count,
+                total_input_tokens=excluded.total_input_tokens,
+                total_cache_read_tokens=excluded.total_cache_read_tokens,
+                total_cache_create_tokens=excluded.total_cache_create_tokens,
+                total_output_tokens=excluded.total_output_tokens,
+                tool_call_count=excluded.tool_call_count,
+                recall_turn_count=excluded.recall_turn_count,
+                first_turn_at=excluded.first_turn_at,
+                last_turn_at=excluded.last_turn_at,
+                updated_at=excluded.updated_at
+        """, (
+            usage.session_id, usage.project, usage.turn_count,
+            usage.total_input_tokens, usage.total_cache_read_tokens,
+            usage.total_cache_create_tokens, usage.total_output_tokens,
+            usage.tool_call_count, usage.recall_turn_count,
+            usage.first_turn_at, usage.last_turn_at, time.time(),
+        ))
+        self.db.commit()
+
+    def get_session_efficiency(self) -> dict:
+        rows = self.db.execute("""
+            SELECT * FROM session_stats WHERE turn_count > 0
+            ORDER BY last_turn_at DESC
+        """).fetchall()
+        if not rows:
+            return {
+                "avg_input_per_turn": 0, "avg_input_per_turn_with_recall": 0,
+                "avg_input_per_turn_without_recall": 0, "efficiency_gain_pct": 0,
+                "total_sessions": 0, "sessions_with_recall": 0,
+                "sessions_without_recall": 0,
+                "avg_tool_calls_with_recall": 0, "avg_tool_calls_without_recall": 0,
+                "sessions": [],
+            }
+
+        with_recall = [r for r in rows if r["recall_turn_count"] > 0]
+        without_recall = [r for r in rows if r["recall_turn_count"] == 0]
+
+        def avg_input(session_rows):
+            total_input = sum(r["total_input_tokens"] for r in session_rows)
+            total_turns = sum(r["turn_count"] for r in session_rows)
+            return round(total_input / total_turns) if total_turns > 0 else 0
+
+        def avg_tools(session_rows):
+            total_tools = sum(r["tool_call_count"] for r in session_rows)
+            total_turns = sum(r["turn_count"] for r in session_rows)
+            return round(total_tools / total_turns, 1) if total_turns > 0 else 0
+
+        avg_with = avg_input(with_recall)
+        avg_without = avg_input(without_recall)
+        gain = round((1 - avg_with / avg_without) * 100, 1) if avg_without > 0 else 0
+
+        sessions = []
+        for r in rows[:50]:
+            turns = r["turn_count"]
+            sessions.append({
+                "session_id": r["session_id"],
+                "project": r["project"],
+                "turn_count": turns,
+                "total_input_tokens": r["total_input_tokens"],
+                "total_output_tokens": r["total_output_tokens"],
+                "tool_call_count": r["tool_call_count"],
+                "recall_turn_count": r["recall_turn_count"],
+                "avg_input_per_turn": round(r["total_input_tokens"] / turns) if turns else 0,
+                "has_recall": r["recall_turn_count"] > 0,
+                "last_turn_at": r["last_turn_at"],
+            })
+
+        return {
+            "avg_input_per_turn": avg_input(rows),
+            "avg_input_per_turn_with_recall": avg_with,
+            "avg_input_per_turn_without_recall": avg_without,
+            "efficiency_gain_pct": gain,
+            "total_sessions": len(rows),
+            "sessions_with_recall": len(with_recall),
+            "sessions_without_recall": len(without_recall),
+            "avg_tool_calls_with_recall": avg_tools(with_recall),
+            "avg_tool_calls_without_recall": avg_tools(without_recall),
+            "sessions": sessions,
         }
 
     def get_onboarding_status(self) -> str:

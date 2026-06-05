@@ -2,7 +2,7 @@ from __future__ import annotations
 import hashlib, json, re
 from datetime import datetime
 from pathlib import Path
-from memor.types import Artifact
+from memor.types import Artifact, SessionUsage
 from memor.tokencount import count_tokens
 from memor.redact import redact_text
 
@@ -130,6 +130,60 @@ def parse_transcript(path: Path, project: str, *, filter_noise: bool = True) -> 
             created_at=_epoch(rec["timestamp"]),
             meta={"session_id": session_id, "role": role, "ord": i}))
     return arts
+
+def parse_session_usage(path: Path, project: str) -> SessionUsage | None:
+    """Extract API token usage from a transcript. Returns None if no assistant turns."""
+    session_id = path.stem
+    usage = SessionUsage(session_id=session_id, project=project)
+
+    uuids_with_recall: set[str] = set()
+    lines = path.read_text().splitlines()
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        if rec.get("type") == "attachment":
+            att = rec.get("attachment", {})
+            if att.get("type") == "hook_additional_context":
+                uuids_with_recall.add(rec.get("uuid", ""))
+
+        if rec.get("type") != "assistant":
+            continue
+
+        msg = rec.get("message", {})
+        msg_usage = msg.get("usage", {})
+        if not msg_usage:
+            continue
+
+        usage.turn_count += 1
+        usage.total_input_tokens += msg_usage.get("input_tokens", 0)
+        usage.total_cache_read_tokens += msg_usage.get("cache_read_input_tokens", 0)
+        usage.total_cache_create_tokens += msg_usage.get("cache_creation_input_tokens", 0)
+        usage.total_output_tokens += msg_usage.get("output_tokens", 0)
+
+        content = msg.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    usage.tool_call_count += 1
+
+        parent_uuid = rec.get("parentUuid", "")
+        if parent_uuid in uuids_with_recall:
+            usage.recall_turn_count += 1
+
+        ts = _epoch(rec["timestamp"])
+        if usage.first_turn_at == 0.0:
+            usage.first_turn_at = ts
+        usage.last_turn_at = ts
+
+    return usage if usage.turn_count > 0 else None
+
 
 def discover_project(transcript_path: Path) -> str:
     return transcript_path.parent.name
