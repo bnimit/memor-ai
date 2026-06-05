@@ -22,6 +22,7 @@ _TRIVIAL_PATTERNS = frozenset({
 _embedder = None
 _last_activity = 0.0
 _session_injected: dict[str, set[str]] = {}
+_MAX_TRACKED_SESSIONS = 50
 
 _UNSET = object()  # sentinel for "auto-discover embedder"
 
@@ -94,6 +95,9 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
 
     if session_id and result.hit_ids:
         _session_injected.setdefault(session_id, set()).update(result.hit_ids)
+        if len(_session_injected) > _MAX_TRACKED_SESSIONS:
+            oldest = next(iter(_session_injected))
+            del _session_injected[oldest]
 
     if Path(db_path).exists():
         try:

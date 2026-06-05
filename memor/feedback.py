@@ -5,6 +5,7 @@ if the agent's responses referenced recalled content. Updates memory_quality
 scores accordingly."""
 from __future__ import annotations
 import json
+import math
 from pathlib import Path
 from memor.store.sqlite_store import SqliteStore
 
@@ -51,7 +52,7 @@ def _text_was_used(memory_text: str, assistant_texts: list[str]) -> bool:
             if phrase in text:
                 matches += 1
                 break
-    return matches >= max(1, int(len(ngrams) * _MATCH_RATIO))
+    return matches >= max(1, math.ceil(len(ngrams) * _MATCH_RATIO))
 
 
 def analyze_session_feedback(
@@ -59,20 +60,22 @@ def analyze_session_feedback(
 ) -> int:
     recalled_ids = set()
     rows = store.db.execute("""
-        SELECT artifact_id FROM memory_quality
-        WHERE artifact_id IN (
-            SELECT id FROM artifacts WHERE active = 1
-        )
-        AND EXISTS (
-            SELECT 1 FROM recall_log
-            WHERE session_id = ? AND hits_count > 0
-        )
-        AND last_recalled >= (
-            SELECT MIN(timestamp) FROM recall_log WHERE session_id = ?
-        )
-        AND last_recalled <= (
-            SELECT MAX(timestamp) FROM recall_log WHERE session_id = ?
-        ) + 5
+        SELECT q.artifact_id FROM memory_quality q
+        JOIN artifacts a ON a.id = q.artifact_id
+        WHERE a.active = 1
+          AND a.project = (
+              SELECT project FROM recall_log
+              WHERE session_id = ? AND hits_count > 0
+              LIMIT 1
+          )
+          AND q.last_recalled >= (
+              SELECT MIN(timestamp) FROM recall_log
+              WHERE session_id = ? AND hits_count > 0
+          )
+          AND q.last_recalled <= (
+              SELECT MAX(timestamp) FROM recall_log
+              WHERE session_id = ? AND hits_count > 0
+          ) + 5
     """, (session_id, session_id, session_id)).fetchall()
     for row in rows:
         recalled_ids.add(row["artifact_id"])
