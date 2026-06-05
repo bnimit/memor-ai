@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-155%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-179%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -58,7 +58,13 @@ memor dashboard
   Embed query locally (model2vec, ~2ms)
       |
       v
-  Hybrid scoring: similarity + recency + kind weight + quality
+  Hybrid retrieval: dense vectors + lexical BM25, fused (RRF)
+      |
+      v
+  Relevance gate drops off-topic matches (inject nothing if nothing fits)
+      |
+      v
+  Rank: similarity + recency + kind weight + quality
       |
       v
   Inject relevant context into prompt
@@ -77,13 +83,24 @@ memor dashboard
 
 ---
 
-## Hybrid Scoring
+## Hybrid Retrieval
 
-Memor doesn't just match keywords. Each memory is scored by four signals:
+Memor retrieves over two channels and fuses them, so it catches both semantic matches and exact terms:
+
+- **Dense** — local vector similarity (model2vec) for semantic recall.
+- **Lexical** — SQLite FTS5 / BM25 over the raw text, to recover exact identifiers, error strings, and API names that static embeddings blur together.
+
+The two rankings are combined with **Reciprocal Rank Fusion (RRF)**. A **relevance gate** drops anti-correlated (off-topic) candidates *before* ranking, so an unrelated prompt injects nothing rather than the least-bad guess. The lexical channel only activates when the dense channel finds the query on-topic, preventing generic words from pulling in noise.
+
+> Tunable via `MEMOR_MIN_SIMILARITY` (relevance floor, default 0.0) and `MEMOR_MAX_TOKENS` (injection budget, default 1500).
+
+## Scoring
+
+Surviving candidates are ranked by four signals:
 
 | Signal | Weight | How it works |
 |---|---|---|
-| **Semantic similarity** | 50% | Vector cosine distance between query and memory |
+| **Semantic similarity** | 50% | Dense + lexical relevance, fused via RRF |
 | **Recency** | 25% | Exponential decay with 14-day half-life — recent decisions rank higher |
 | **Kind weight** | 15% | Distilled memories (1.3x) rank above raw session chunks (1.0x) |
 | **Quality** | 10% | Bayesian score from implicit feedback — memories the agent actually uses rank higher |
@@ -114,7 +131,7 @@ memor dashboard
 ```
 
 Dark fintech-inspired UI showing:
-- **Hero metrics** — total memories, recall count, avg latency, precision — with sparkline bars
+- **Hero metrics** — total memories, recall count, avg latency, coverage — with sparkline bars
 - **Daily recall activity** — stacked bar chart of hits vs misses over time
 - **Session efficiency** — real token savings measured from API usage data (avg tokens/turn with vs without recall)
 - **Per-project breakdown** — artifact counts, token totals, last activity
@@ -165,10 +182,10 @@ memor/
 +-- feedback.py           Implicit feedback analyzer (usage detection)
 |
 +-- retrieve/
-|   +-- retriever.py      Hybrid scoring: similarity + recency + kind + quality
+|   +-- retriever.py      Hybrid retrieval (dense + BM25, RRF) + relevance gate + scoring
 |
 +-- store/
-|   +-- sqlite_store.py   SQLite + sqlite-vec (WAL mode, dimension safety)
+|   +-- sqlite_store.py   SQLite + sqlite-vec + FTS5 (WAL mode, dimension safety)
 |
 +-- embed/
 |   +-- local.py          model2vec (potion-base-8M, 256-dim, ~60MB)
@@ -200,7 +217,7 @@ skill/recall.py            Standalone recall script
 **Nothing leaves your machine.** In the default configuration:
 
 - **No telemetry, no analytics, no phone-home.** Zero outbound network calls.
-- **Embeddings run locally** via model2vec ONNX (one-time model download from HuggingFace — no user data sent).
+- **Embeddings run locally** via model2vec static token embeddings — no inference runtime, no GPU (one-time model download from HuggingFace — no user data sent).
 - **Hook transport is a Unix socket** (`~/.memor/hook.sock`), not a network port.
 - **Dashboard binds localhost only.**
 
@@ -236,7 +253,7 @@ cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest  # 153 tests
+pytest  # 179 tests
 ```
 
 ---
