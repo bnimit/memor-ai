@@ -9,6 +9,8 @@ from memor.types import Scope
 from memor.ingest.claude_code import parse_transcript
 
 app = typer.Typer(no_args_is_help=True)
+service_app = typer.Typer(help="Manage the memor daemon as a background service.")
+app.add_typer(service_app, name="service")
 
 def _db_path(db: str) -> str:
     return str(Path(db).expanduser())
@@ -42,14 +44,21 @@ HELP_TEXT = """\
 memor — measured memory for coding agents
 
 GETTING STARTED
-  memor install-hook     Install the Claude Code recall hook + download model
-  memor daemon           Start the background watcher (ingests + distills)
-  memor dashboard        Open the web dashboard at localhost:8420
+  memor install-hook        Install the Claude Code recall hook + download model
+  memor service install     Start the daemon as a background service
+  memor dashboard           Open the web dashboard at localhost:8420
+
+SERVICE MANAGEMENT
+  memor service install     Install and start as a background service (survives reboots)
+  memor service status      Check if the daemon is running
+  memor service stop        Stop the service (restarts on next login)
+  memor service uninstall   Stop and remove the service completely
+  memor daemon              Run the daemon in the foreground (alternative to service)
 
 QUERYING
-  memor query <text>     Search memories from the command line
-    --project <name>     Scope to a specific project
-    --k <n>              Number of results (default: 8)
+  memor query <text>        Search memories from the command line
+    --project <name>        Scope to a specific project
+    --k <n>                 Number of results (default: 8)
 
 INGESTION
   memor ingest-cc <file>           Ingest a single transcript
@@ -66,6 +75,7 @@ MAINTENANCE
   memor scan                       Audit DB for leaked secrets
   memor scan --purge               Redact secrets in place
   memor setup-model                Download/retry the embedding model (~60MB)
+  memor version                    Print the installed version
 
 EVALUATION
   memor eval <cases.json>          Run eval suite
@@ -77,10 +87,10 @@ CONFIGURATION
   No configuration needed — just install, hook, and run the daemon.
 
 EXAMPLES
-  memor install-hook && memor daemon    # one-time setup
+  memor install-hook && memor service install  # one-time setup
   memor query "auth flow" --project my-app
-  memor reingest --project my-app -y    # refresh one project
-  memor dashboard                       # see stats at localhost:8420
+  memor reingest --project my-app -y           # refresh one project
+  memor dashboard                              # see stats at localhost:8420
 """
 
 
@@ -438,7 +448,8 @@ def install_hook():
         typer.echo("  retry later with: memor setup-model")
     typer.echo()
     typer.echo("Next steps:")
-    typer.echo("  1. Start the daemon: memor daemon")
+    typer.echo("  1. Start the daemon: memor service install")
+    typer.echo("     (or foreground: memor daemon)")
     typer.echo("  2. Open the dashboard: memor dashboard")
     typer.echo("  Everything works locally — no API keys needed.")
 
@@ -462,6 +473,48 @@ def dashboard(port: int = typer.Option(8420, help="Port to serve on"),
         threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{port}")).start()
     typer.echo(f"Memor dashboard: http://localhost:{port}")
     uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
+
+
+@app.command("version")
+def version():
+    """Print the memor version."""
+    from memor import __version__
+    typer.echo(f"memor {__version__}")
+
+
+@service_app.command("install")
+def service_install():
+    """Install and start the daemon as a background service (survives reboots)."""
+    from memor.service import install
+    try:
+        typer.echo(install())
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Failed to install service: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@service_app.command("uninstall")
+def service_uninstall():
+    """Stop and remove the background service."""
+    from memor.service import uninstall
+    typer.echo(uninstall())
+
+
+@service_app.command("stop")
+def service_stop():
+    """Stop the background service (will restart on next login)."""
+    from memor.service import stop
+    typer.echo(stop())
+
+
+@service_app.command("status")
+def service_status():
+    """Show whether the daemon service is running."""
+    from memor.service import status
+    typer.echo(status())
 
 
 if __name__ == "__main__":

@@ -114,6 +114,21 @@ def create_app(db_path: str | None = None) -> FastAPI:
             })
         return result
 
+    @app.get("/api/recall-trend")
+    def recall_trend(days: int = Query(30, ge=7, le=90)):
+        store = _store()
+        rows = store.db.execute("""
+            SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+                   COUNT(*) as recalls,
+                   SUM(CASE WHEN hits_count > 0 THEN 1 ELSE 0 END) as hits,
+                   SUM(tokens_injected) as tokens,
+                   AVG(CASE WHEN hits_count > 0 THEN top_score END) as avg_score
+            FROM recall_log
+            WHERE timestamp >= unixepoch('now', ? || ' days')
+            GROUP BY day ORDER BY day
+        """, (f"-{days}",)).fetchall()
+        return [dict(r) for r in rows]
+
     @app.get("/api/health")
     def health():
         store = _store()

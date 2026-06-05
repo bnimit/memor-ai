@@ -1,44 +1,41 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Memor Dashboard</title>
 <style>
-  /* ── Reset & custom properties ─────────────────────────────── */
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg:         #0f1117;
-    --surface:    #1a1d27;
-    --surface2:   #22263a;
-    --border:     #2e3245;
-    --text:       #e2e8f0;
-    --text-muted: #8892a8;
-    --accent:     #6c8eff;
-    --accent2:    #a78bfa;
-    --ok:         #34d399;
-    --warn:       #fbbf24;
-    --neutral:    #64748b;
-    --hover:      #252a40;
-    --card-shadow: 0 2px 8px rgba(0,0,0,0.4);
-    --radius:     10px;
-    --radius-sm:  6px;
-    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    --bg:           #111113;
+    --surface:      #1a1a1e;
+    --surface2:     #222226;
+    --surface3:     #2a2a2f;
+    --border:       #2e2e33;
+    --border-light: #252529;
+    --text:         #eae8e4;
+    --text-secondary: #b0aaa0;
+    --text-muted:   #6b6660;
+    --accent:       #e89320;
+    --accent-dim:   rgba(232,147,32,0.15);
+    --accent-glow:  rgba(232,147,32,0.06);
+    --ok:           #3dd68c;
+    --ok-dim:       rgba(61,214,140,0.12);
+    --warn:         #e89320;
+    --warn-dim:     rgba(232,147,32,0.12);
+    --error:        #e85454;
+    --neutral:      #6b6660;
+    --neutral-dim:  rgba(107,102,96,0.15);
+    --hover:        #222226;
+    --card-shadow:  0 1px 2px rgba(0,0,0,0.4);
+    --radius:       12px;
+    --radius-sm:    8px;
+    --font:         'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
 
-  [data-theme="light"] {
-    --bg:         #f4f6fc;
-    --surface:    #ffffff;
-    --surface2:   #eef0f8;
-    --border:     #d4d9ef;
-    --text:       #1a1d27;
-    --text-muted: #5a6481;
-    --hover:      #eef0f8;
-    --card-shadow: 0 2px 8px rgba(0,0,0,0.08);
-  }
-
-  /* ── Base ────────────────────────────────────────────────────── */
   body {
     font-family: var(--font);
     background: var(--bg);
@@ -46,301 +43,401 @@
     min-height: 100vh;
     font-size: 14px;
     line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
   }
 
-  /* ── Utilities ───────────────────────────────────────────────── */
-  .muted        { color: var(--text-muted); }
-  .mono         { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
-  .truncate     { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sr-only      { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  .mono { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 13px; }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .container { max-width: 1320px; margin: 0 auto; padding: 0 28px; }
 
-  /* ── Layout ──────────────────────────────────────────────────── */
-  .container    { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
-
-  /* ── Header ──────────────────────────────────────────────────── */
-  header {
+  /* ── Top bar ───────────────────────────────────────────── */
+  .topbar {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    padding: 14px 0;
+    padding: 0 28px;
+    height: 52px;
+    display: flex; align-items: center;
     position: sticky; top: 0; z-index: 50;
   }
-  .header-inner {
-    display: flex; align-items: center; gap: 12px;
+  .topbar-inner {
+    max-width: 1320px; margin: 0 auto; width: 100%;
+    display: flex; align-items: center; gap: 16px;
   }
-  .logo {
-    font-size: 18px; font-weight: 700; letter-spacing: -0.5px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
+  .breadcrumb { font-size: 13px; color: var(--text-muted); }
+  .breadcrumb span { color: var(--accent); }
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .topbar-time {
+    font-size: 12px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 6px;
   }
-  .header-right  { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-  .last-updated  { font-size: 12px; color: var(--text-muted); }
+  .topbar-time svg { opacity: 0.5; }
+  .refresh-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ok); display: inline-block;
+    animation: pulse 2s ease infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-  /* theme toggle */
-  .theme-btn {
-    background: var(--surface2); border: 1px solid var(--border);
-    color: var(--text); cursor: pointer; border-radius: var(--radius-sm);
-    padding: 5px 10px; font-size: 13px; transition: background 0.15s;
+  /* ── Page header ───────────────────────────────────────── */
+  .page-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 28px 0 24px;
   }
-  .theme-btn:hover { background: var(--hover); }
+  .page-title { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+  .page-title .accent { color: var(--accent); }
 
-  /* ── Banner ──────────────────────────────────────────────────── */
+  /* ── Banner ────────────────────────────────────────────── */
   .banner {
-    background: linear-gradient(135deg, rgba(108,142,255,0.15), rgba(167,139,250,0.10));
-    border: 1px solid rgba(108,142,255,0.35);
-    border-radius: var(--radius); padding: 16px 20px; margin: 20px 0;
-    display: flex; align-items: flex-start; gap: 14px;
+    background: var(--accent-dim); border: 1px solid rgba(232,147,32,0.25);
+    border-radius: var(--radius); padding: 16px 20px; margin-bottom: 24px;
+    display: flex; align-items: flex-start; gap: 12px;
   }
-  .banner-icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
-  .banner h3   { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
-  .banner p    { font-size: 13px; color: var(--text-muted); }
+  .banner-icon { font-size: 18px; margin-top: 1px; }
+  .banner h3 { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+  .banner p { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
   .banner code {
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    background: var(--surface2); border-radius: 4px;
-    padding: 1px 5px; font-size: 12px;
+    font-family: 'SF Mono', monospace; background: var(--surface2);
+    border-radius: 4px; padding: 1px 6px; font-size: 11px; color: var(--accent);
   }
   #banner { display: none; }
 
-  /* ── Section title ───────────────────────────────────────────── */
-  .section-title {
-    font-size: 13px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 12px;
+  /* ── Section ───────────────────────────────────────────── */
+  .section-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 14px;
+    display: flex; align-items: center; gap: 8px;
   }
-  section { margin-top: 28px; }
+  .section-label .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
+  section { margin-bottom: 28px; }
 
-  /* ── Hero metric cards ────────────────────────────────────────── */
+  /* ── Metric cards ──────────────────────────────────────── */
   .metric-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(4, 1fr);
     gap: 14px;
   }
+  @media (max-width: 900px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
+
   .metric-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 18px 20px;
-    box-shadow: var(--card-shadow); transition: border-color 0.15s;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    box-shadow: var(--card-shadow);
+    display: flex; justify-content: space-between; align-items: flex-end;
+    transition: border-color 0.15s;
+    position: relative; overflow: hidden;
   }
   .metric-card:hover { border-color: var(--accent); }
+  .metric-card::after {
+    content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--accent); opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .metric-card:hover::after { opacity: 1; }
+
+  .metric-info { flex: 1; }
   .metric-label {
-    font-size: 12px; font-weight: 500; color: var(--text-muted);
-    text-transform: uppercase; letter-spacing: 0.05em;
+    font-size: 11px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 8px;
   }
   .metric-value {
-    font-size: 32px; font-weight: 700; letter-spacing: -1px;
-    color: var(--text); line-height: 1.2; margin: 6px 0 4px;
+    font-size: 28px; font-weight: 700; letter-spacing: -1px;
+    color: var(--text); line-height: 1;
   }
-  .metric-sub { font-size: 12px; color: var(--text-muted); }
+  .metric-sub {
+    font-size: 12px; color: var(--text-muted); margin-top: 6px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .metric-sub .up { color: var(--ok); }
+  .metric-sub .down { color: var(--error); }
 
-  /* ── Savings bars ────────────────────────────────────────────── */
-  .savings-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 14px;
+  .mini-bars {
+    display: flex; align-items: flex-end; gap: 3px; height: 40px;
+    flex-shrink: 0; margin-left: 12px;
   }
-  .savings-card {
+  .mini-bar {
+    width: 6px; border-radius: 2px 2px 0 0;
+    background: var(--accent); opacity: 0.7;
+    transition: opacity 0.15s;
+  }
+  .metric-card:hover .mini-bar { opacity: 1; }
+
+  /* ── Chart section ─────────────────────────────────────── */
+  .chart-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
+
+  .chart-card {
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 16px 18px;
+    border-radius: var(--radius); padding: 22px 24px;
     box-shadow: var(--card-shadow);
   }
-  .savings-header { display: flex; justify-content: space-between; margin-bottom: 10px; }
-  .savings-project { font-weight: 600; font-size: 14px; }
-  .savings-pct {
-    font-weight: 700; font-size: 14px;
-    color: var(--ok);
+  .chart-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 18px;
   }
-  .bar-track {
-    background: var(--surface2); border-radius: 99px; height: 6px; overflow: hidden;
+  .chart-title {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-muted);
   }
-  .bar-fill {
-    height: 100%; border-radius: 99px;
-    background: linear-gradient(90deg, var(--accent), var(--ok));
-    transition: width 0.6s ease;
+  .chart-legend {
+    display: flex; align-items: center; gap: 14px; font-size: 11px; color: var(--text-muted);
   }
-  .savings-meta {
-    display: flex; justify-content: space-between;
-    font-size: 12px; color: var(--text-muted); margin-top: 8px;
+  .legend-dot {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; margin-right: 4px;
+  }
+  .chart-big-number {
+    font-size: 26px; font-weight: 700; color: var(--text); margin-bottom: 16px;
+    letter-spacing: -0.5px;
+  }
+  .chart-big-number .label {
+    font-size: 12px; font-weight: 500; color: var(--text-muted);
+    letter-spacing: 0; margin-right: 10px;
   }
 
-  /* ── Tables ──────────────────────────────────────────────────── */
-  .table-wrap {
+  .bar-chart {
+    display: flex; align-items: flex-end; gap: 4px;
+    height: 180px; padding-top: 8px;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .bar-group {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; gap: 0; height: 100%;
+    justify-content: flex-end;
+  }
+  .bar-stack { display: flex; flex-direction: column-reverse; gap: 1px; width: 100%; max-width: 22px; }
+  .bar-hits { background: var(--accent); border-radius: 2px 2px 0 0; min-height: 0; transition: height 0.3s; }
+  .bar-miss { background: var(--surface3); border-radius: 2px 2px 0 0; min-height: 0; transition: height 0.3s; }
+  .bar-label {
+    font-size: 9px; color: var(--text-muted); margin-top: 6px;
+    text-align: center; white-space: nowrap;
+  }
+
+  .bar-group:hover .bar-hits { background: #f0a030; }
+  .bar-group { cursor: default; position: relative; }
+  .bar-tooltip {
+    display: none; position: absolute; bottom: calc(100% + 8px);
+    background: var(--surface3); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; font-size: 11px;
+    color: var(--text); white-space: nowrap; z-index: 10;
+    pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .bar-group:hover .bar-tooltip { display: block; }
+
+  /* ── Side stats ────────────────────────────────────────── */
+  .side-stats { display: flex; flex-direction: column; gap: 14px; }
+  .side-stat {
+    background: var(--surface2); border-radius: var(--radius-sm);
+    padding: 14px 16px;
+  }
+  .side-stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .side-stat-value { font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: -0.5px; }
+  .side-stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* ── Tables ────────────────────────────────────────────── */
+  .table-card {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius); overflow: hidden;
     box-shadow: var(--card-shadow);
   }
-  table { width: 100%; border-collapse: collapse; }
-  thead { background: var(--surface2); }
-  th {
-    padding: 11px 14px; text-align: left; font-size: 12px;
-    font-weight: 600; color: var(--text-muted);
-    text-transform: uppercase; letter-spacing: 0.05em;
-    user-select: none;
+  .table-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
   }
-  th.sortable { cursor: pointer; }
-  th.sortable:hover { color: var(--text); }
-  th .sort-icon { display: inline-block; margin-left: 4px; opacity: 0.4; font-size: 10px; }
-  th.sort-asc  .sort-icon, th.sort-desc .sort-icon { opacity: 1; color: var(--accent); }
-  td {
-    padding: 10px 14px; border-top: 1px solid var(--border);
-    font-size: 13px; color: var(--text);
+  .table-title {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-muted);
+    display: flex; align-items: center; gap: 8px;
   }
-  tr:hover td { background: var(--hover); }
-  tr.selected td { background: rgba(108,142,255,0.12); }
+  .table-title .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
 
-  /* clickable project rows */
-  .projects-body tr { cursor: pointer; }
-  .projects-body tr:hover td { background: var(--hover); }
-  .projects-body tr.selected td { background: rgba(108,142,255,0.12); }
-
-  /* ── Status badges ────────────────────────────────────────────── */
-  .badge {
-    display: inline-block; border-radius: 99px; padding: 2px 8px;
-    font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
-  }
-  .badge-ok         { background: rgba(52,211,153,0.18); color: var(--ok); }
-  .badge-extractive { background: rgba(251,191,36,0.18); color: var(--warn); }
-  .badge-no_hits    { background: rgba(100,116,139,0.2);  color: var(--neutral); }
-
-  /* ── Filter pill ─────────────────────────────────────────────── */
-  .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; min-height: 28px; }
+  .filter-bar { display: flex; align-items: center; gap: 8px; }
   .filter-pill {
-    background: rgba(108,142,255,0.15); border: 1px solid rgba(108,142,255,0.4);
-    border-radius: 99px; padding: 3px 10px; font-size: 12px; font-weight: 500;
+    background: var(--accent-dim); border: 1px solid rgba(232,147,32,0.3);
+    border-radius: 99px; padding: 3px 10px; font-size: 11px; font-weight: 500;
     color: var(--accent); display: flex; align-items: center; gap: 6px;
   }
   .filter-pill button {
     background: none; border: none; color: var(--accent); cursor: pointer;
-    font-size: 14px; line-height: 1; padding: 0;
+    font-size: 13px; line-height: 1; padding: 0;
   }
 
-  /* ── Disclaimer note ─────────────────────────────────────────── */
-  .note {
-    font-size: 12px; color: var(--text-muted); margin-top: 12px;
-    padding: 10px 14px; background: var(--surface);
-    border-left: 3px solid var(--border); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  table { width: 100%; border-collapse: collapse; }
+  thead { background: var(--surface2); }
+  th {
+    padding: 10px 16px; text-align: left; font-size: 11px;
+    font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    user-select: none;
   }
+  th.sortable { cursor: pointer; transition: color 0.15s; }
+  th.sortable:hover { color: var(--text); }
+  th .sort-icon { display: inline-block; margin-left: 4px; opacity: 0.3; font-size: 10px; }
+  th.sort-asc .sort-icon, th.sort-desc .sort-icon { opacity: 1; color: var(--accent); }
+  td {
+    padding: 10px 16px; border-top: 1px solid var(--border-light);
+    font-size: 13px; color: var(--text-secondary);
+  }
+  tr:hover td { background: var(--hover); }
+  tr.selected td { background: var(--accent-dim); }
+  .projects-body tr { cursor: pointer; }
 
-  /* ── Empty state ─────────────────────────────────────────────── */
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    border-radius: 99px; padding: 3px 10px;
+    font-size: 11px; font-weight: 600;
+  }
+  .badge::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%;
+  }
+  .badge-ok { background: var(--ok-dim); color: var(--ok); }
+  .badge-ok::before { background: var(--ok); }
+  .badge-extractive { background: var(--warn-dim); color: var(--warn); }
+  .badge-extractive::before { background: var(--warn); }
+  .badge-no_hits { background: var(--neutral-dim); color: var(--neutral); }
+  .badge-no_hits::before { background: var(--neutral); }
+
   .empty-state {
     text-align: center; padding: 40px 20px;
     color: var(--text-muted); font-size: 13px;
   }
 
-  /* ── Footer ──────────────────────────────────────────────────── */
+  /* ── Footer ────────────────────────────────────────────── */
   footer {
-    margin-top: 40px; padding: 20px 0;
-    border-top: 1px solid var(--border);
-    text-align: center; font-size: 12px; color: var(--text-muted);
+    margin-top: 20px; padding: 20px 0 28px;
+    text-align: center; font-size: 11px; color: var(--text-muted);
   }
 </style>
 </head>
 <body>
 
-<header>
-  <div class="container header-inner">
-    <span class="logo">memor</span>
-    <span class="muted" style="font-size:12px;">context intelligence</span>
-    <div class="header-right">
-      <span class="last-updated" id="last-updated">–</span>
-      <button class="theme-btn" id="theme-toggle" title="Toggle theme">☀ Light</button>
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="breadcrumb">Dashboard &rsaquo; <span>Overview</span></div>
+    <div class="topbar-right">
+      <div class="topbar-time">
+        <span class="refresh-dot"></span>
+        <span id="last-updated">Live</span>
+      </div>
     </div>
   </div>
-</header>
+</div>
 
 <main class="container">
 
-  <!-- Onboarding banner (hidden until health check says not full) -->
+  <div class="page-header">
+    <div class="page-title">memor<span class="accent">.</span></div>
+  </div>
+
   <div id="banner" class="banner" role="alert">
-    <div class="banner-icon">💡</div>
+    <div class="banner-icon">&#x26A0;</div>
     <div>
-      <h3>Getting started with Memor</h3>
-      <p id="banner-msg">No artifacts ingested yet. Run <code>memor ingest &lt;path&gt;</code> to index a project, then add the Claude Code hook so recalls are logged automatically.</p>
+      <h3>Getting Started</h3>
+      <p id="banner-msg">No data yet. Run <code>memor service install</code> to start the daemon.</p>
     </div>
   </div>
 
-  <!-- ── Hero metrics ───────────────────────────────────────────── -->
-  <section aria-label="Hero metrics">
-    <div class="section-title">Memory Bank</div>
-    <div class="metric-grid" id="metric-grid">
+  <!-- ── Hero metrics ───────────────────────────────────── -->
+  <section>
+    <div class="section-label"><span class="dot"></span> Memory Bank</div>
+    <div class="metric-grid">
       <div class="metric-card">
-        <div class="metric-label">Session Chunks</div>
-        <div class="metric-value" id="m-chunks">–</div>
-        <div class="metric-sub">ingested from transcripts</div>
+        <div class="metric-info">
+          <div class="metric-label">Session Chunks</div>
+          <div class="metric-value" id="m-chunks">&ndash;</div>
+          <div class="metric-sub">ingested from transcripts</div>
+        </div>
+        <div class="mini-bars" id="mb-chunks"></div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Memories</div>
-        <div class="metric-value" id="m-memories">–</div>
-        <div class="metric-sub">distilled insights</div>
+        <div class="metric-info">
+          <div class="metric-label">Memories</div>
+          <div class="metric-value" id="m-memories">&ndash;</div>
+          <div class="metric-sub">distilled insights</div>
+        </div>
+        <div class="mini-bars" id="mb-memories"></div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Projects</div>
-        <div class="metric-value" id="m-projects">–</div>
-        <div class="metric-sub">tracked projects</div>
+        <div class="metric-info">
+          <div class="metric-label">Projects</div>
+          <div class="metric-value" id="m-projects">&ndash;</div>
+          <div class="metric-sub">tracked projects</div>
+        </div>
+        <div class="mini-bars" id="mb-projects"></div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Total Recalls</div>
-        <div class="metric-value" id="m-recalls">–</div>
-        <div class="metric-sub" id="m-recalls-sub">hook recall events</div>
+        <div class="metric-info">
+          <div class="metric-label">Total Recalls</div>
+          <div class="metric-value" id="m-recalls">&ndash;</div>
+          <div class="metric-sub" id="m-recalls-sub">hook recall events</div>
+        </div>
+        <div class="mini-bars" id="mb-recalls"></div>
       </div>
     </div>
   </section>
 
-  <!-- ── Context efficiency ──────────────────────────────────────── -->
-  <section aria-label="Context efficiency">
-    <div class="section-title">Context Efficiency</div>
-    <div class="metric-grid" id="efficiency-metrics">
-      <div class="metric-card">
-        <div class="metric-label">Context Overhead</div>
-        <div class="metric-value" id="e-overhead">–</div>
-        <div class="metric-sub">avg % of context window used by Memor per session</div>
+  <!-- ── Recall trend chart ─────────────────────────────── -->
+  <section>
+    <div class="chart-grid">
+      <div class="chart-card">
+        <div class="chart-header">
+          <div class="chart-title">Recall Activity</div>
+          <div class="chart-legend">
+            <span><span class="legend-dot" style="background:var(--accent)"></span> Hits</span>
+            <span><span class="legend-dot" style="background:var(--surface3)"></span> No hits</span>
+          </div>
+        </div>
+        <div class="chart-big-number">
+          <span class="label">Total Recalls:</span>
+          <span id="chart-total">0</span>
+        </div>
+        <div class="bar-chart" id="trend-chart"></div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">Recall Precision</div>
-        <div class="metric-value" id="e-precision">–</div>
-        <div class="metric-sub">% of prompts that got relevant context</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Avg Quality</div>
-        <div class="metric-value" id="e-quality">–</div>
-        <div class="metric-sub">mean relevance score when hits found</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Sessions Tracked</div>
-        <div class="metric-value" id="e-sessions">–</div>
-        <div class="metric-sub" id="e-sessions-sub">with recall data</div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <div class="chart-title">Efficiency</div>
+        </div>
+        <div class="side-stats" id="efficiency-side">
+          <div class="side-stat">
+            <div class="side-stat-label">Recall Precision</div>
+            <div class="side-stat-value" id="e-precision">&ndash;</div>
+            <div class="side-stat-sub">% of prompts with relevant context</div>
+          </div>
+          <div class="side-stat">
+            <div class="side-stat-label">Avg Quality</div>
+            <div class="side-stat-value" id="e-quality">&ndash;</div>
+            <div class="side-stat-sub">mean similarity score</div>
+          </div>
+          <div class="side-stat">
+            <div class="side-stat-label">Avg Latency</div>
+            <div class="side-stat-value" id="e-latency">&ndash;</div>
+            <div class="side-stat-sub">recall pipeline speed</div>
+          </div>
+          <div class="side-stat">
+            <div class="side-stat-label">Hit Rate</div>
+            <div class="side-stat-value" id="e-hitrate">&ndash;</div>
+            <div class="side-stat-sub">recalls that returned results</div>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="table-wrap" style="margin-top: 14px;">
-      <table>
-        <thead>
-          <tr>
-            <th>Session</th>
-            <th>Prompts</th>
-            <th>Tokens Injected</th>
-            <th>Overhead %</th>
-            <th>Precision</th>
-            <th>Quality</th>
-            <th>Last Active</th>
-          </tr>
-        </thead>
-        <tbody id="efficiency-body"></tbody>
-      </table>
-    </div>
-    <p class="note">
-      Overhead = total tokens Memor injected as a % of the 200K context window. Lower is better.
-      Precision = % of prompts where relevant memories were found. Quality = avg similarity score.
-      Good efficiency means low overhead with high precision — Memor adds value without bloating context.
-    </p>
   </section>
 
-  <!-- ── Project breakdown ─────────────────────────────────────── -->
-  <section aria-label="Project breakdown">
-    <div class="section-title">Project Breakdown</div>
-    <div class="table-wrap">
+  <!-- ── Projects table ─────────────────────────────────── -->
+  <section>
+    <div class="table-card">
+      <div class="table-header">
+        <div class="table-title"><span class="dot"></span> Project Breakdown</div>
+      </div>
       <table>
         <thead>
           <tr>
-            <th class="sortable" data-col="project" data-type="str">Project <span class="sort-icon">↕</span></th>
-            <th class="sortable" data-col="artifacts" data-type="num"><span id="th-col1">Chunks</span> <span class="sort-icon">↕</span></th>
-            <th class="sortable" data-col="memories" data-type="num"><span id="th-col2">Memories</span> <span class="sort-icon">↕</span></th>
-            <th class="sortable" data-col="total_tokens" data-type="num"><span id="th-col3">Tokens</span> <span class="sort-icon">↕</span></th>
+            <th class="sortable" data-col="project" data-type="str">Project <span class="sort-icon">&updownarrow;</span></th>
+            <th class="sortable" data-col="artifacts" data-type="num"><span id="th-col1">Chunks</span> <span class="sort-icon">&updownarrow;</span></th>
+            <th class="sortable" data-col="memories" data-type="num"><span id="th-col2">Memories</span> <span class="sort-icon">&updownarrow;</span></th>
+            <th class="sortable" data-col="total_tokens" data-type="num"><span id="th-col3">Tokens</span> <span class="sort-icon">&updownarrow;</span></th>
             <th id="th-col4">Status</th>
             <th id="th-col5"></th>
             <th id="th-col6"></th>
@@ -351,11 +448,13 @@
     </div>
   </section>
 
-  <!-- ── Recent recalls ────────────────────────────────────────── -->
-  <section aria-label="Recent recalls">
-    <div class="section-title">Recent Recalls</div>
-    <div class="filter-bar" id="filter-bar"></div>
-    <div class="table-wrap">
+  <!-- ── Recent recalls ─────────────────────────────────── -->
+  <section>
+    <div class="table-card">
+      <div class="table-header">
+        <div class="table-title"><span class="dot"></span> Recent Recalls</div>
+        <div class="filter-bar" id="filter-bar"></div>
+      </div>
       <table>
         <thead>
           <tr>
@@ -376,39 +475,17 @@
 
 </main>
 
-<footer>
-  <div class="container">
-    Memor Dashboard &mdash; metrics refresh every 30 s
-  </div>
-</footer>
+<footer>memor &mdash; refreshes every 30s</footer>
 
 <script>
 (function () {
   'use strict';
 
-  /* ── theme ─────────────────────────────────────────────── */
-  const html = document.documentElement;
-  const themeBtn = document.getElementById('theme-toggle');
-  let theme = localStorage.getItem('memor-theme') || 'dark';
+  var projectFilter = null;
+  var sortCol = 'artifacts';
+  var sortDir = 'desc';
+  var projectsData = [];
 
-  function applyTheme(t) {
-    html.setAttribute('data-theme', t);
-    themeBtn.textContent = t === 'dark' ? '☀ Light' : '🌙 Dark';
-    localStorage.setItem('memor-theme', t);
-  }
-  applyTheme(theme);
-  themeBtn.addEventListener('click', () => {
-    theme = theme === 'dark' ? 'light' : 'dark';
-    applyTheme(theme);
-  });
-
-  /* ── state ─────────────────────────────────────────────── */
-  let projectFilter = null;
-  let sortCol = 'artifacts';
-  let sortDir = 'desc';
-  let projectsData = [];
-
-  /* ── helpers ───────────────────────────────────────────── */
   function fmt(n) {
     if (n == null) return '–';
     if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
@@ -416,108 +493,148 @@
     return String(n);
   }
   function fmtPct(n) { return n == null ? '–' : n.toFixed(1) + '%'; }
-  function fmtMs(n)  { return n == null ? '–' : n.toFixed(0) + ' ms'; }
+  function fmtMs(n)  { return n == null ? '–' : n.toFixed(0) + 'ms'; }
   function fmtScore(n) { return n == null ? '–' : n.toFixed(3); }
 
   function relativeTime(ts) {
     if (!ts) return '–';
-    const d = new Date(typeof ts === 'number' ? ts * 1000 : ts);
-    const diff = (Date.now() - d) / 1000;
-    if (diff < 60)   return Math.round(diff) + 's ago';
-    if (diff < 3600) return Math.round(diff / 60) + 'm ago';
-    if (diff < 86400)return Math.round(diff / 3600) + 'h ago';
+    var d = new Date(typeof ts === 'number' ? ts * 1000 : ts);
+    var diff = (Date.now() - d) / 1000;
+    if (diff < 60)    return Math.round(diff) + 's ago';
+    if (diff < 3600)  return Math.round(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
     return d.toLocaleDateString();
   }
 
   function badge(status) {
-    const map = {
-      ok:               ['badge-ok',         'ok'],
-      extractive_only:  ['badge-extractive',  'extractive'],
-      no_hits:          ['badge-no_hits',     'no hits'],
+    var map = {
+      ok:              ['badge-ok',        'Success'],
+      extractive_only: ['badge-extractive','Extractive'],
+      no_hits:         ['badge-no_hits',   'No Hits'],
     };
-    const [cls, label] = map[status] || ['badge-no_hits', status];
-    return `<span class="badge ${cls}">${label}</span>`;
+    var m = map[status] || ['badge-no_hits', status];
+    return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';
   }
 
   function el(tag, attrs, inner) {
-    const e = document.createElement(tag);
-    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    var e = document.createElement(tag);
+    for (var k in (attrs || {})) e.setAttribute(k, attrs[k]);
     if (inner != null) e.innerHTML = inner;
     return e;
   }
 
-  /* ── fetch helpers ─────────────────────────────────────── */
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
   async function api(path) {
-    const r = await fetch(path);
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    var r = await fetch(path);
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
     return r.json();
   }
 
-  /* ── render summary ────────────────────────────────────── */
+  function renderMiniBars(containerId, values) {
+    var c = document.getElementById(containerId);
+    if (!c) return;
+    c.innerHTML = '';
+    if (!values || !values.length) {
+      for (var i = 0; i < 7; i++) {
+        var b = document.createElement('div');
+        b.className = 'mini-bar';
+        b.style.height = (4 + Math.random() * 20) + 'px';
+        b.style.opacity = '0.2';
+        c.appendChild(b);
+      }
+      return;
+    }
+    var max = Math.max.apply(null, values) || 1;
+    values.slice(-7).forEach(function(v) {
+      var b = document.createElement('div');
+      b.className = 'mini-bar';
+      b.style.height = Math.max(3, (v / max) * 36) + 'px';
+      c.appendChild(b);
+    });
+  }
+
+  /* ── Summary ───────────────────────────────────────────── */
   function renderSummary(d) {
-    const ing = d.ingestion || {};
-    const chunks = (ing.session_chunk || {}).count || 0;
-    const memories = (ing.memory || {}).count || 0;
-    document.getElementById('m-chunks').textContent   = fmt(chunks);
-    document.getElementById('m-memories').textContent  = fmt(memories);
-    document.getElementById('m-projects').textContent  = fmt(d.project_count || 0);
-    document.getElementById('m-recalls').textContent   = fmt(d.total_recalls);
+    var ing = d.ingestion || {};
+    var chunks = (ing.session_chunk || {}).count || 0;
+    var memories = (ing.memory || {}).count || 0;
+    document.getElementById('m-chunks').textContent = fmt(chunks);
+    document.getElementById('m-memories').textContent = fmt(memories);
+    document.getElementById('m-projects').textContent = fmt(d.project_count || 0);
+    document.getElementById('m-recalls').textContent = fmt(d.total_recalls);
     if (d.total_recalls > 0) {
       document.getElementById('m-recalls-sub').textContent =
         fmtPct(d.hit_rate * 100) + ' hit rate · ' + fmtMs(d.avg_latency_ms) + ' avg';
     }
+
+    document.getElementById('e-hitrate').textContent = d.total_recalls > 0 ? fmtPct(d.hit_rate * 100) : '–';
+    document.getElementById('e-latency').textContent = d.total_recalls > 0 ? fmtMs(d.avg_latency_ms) : '–';
   }
 
-  /* ── render efficiency ──────────────────────────────────── */
+  /* ── Efficiency ────────────────────────────────────────── */
   function renderEfficiency(data) {
-    document.getElementById('e-overhead').textContent = data.avg_overhead_pct + '%';
     document.getElementById('e-precision').textContent = fmtPct(data.precision * 100);
     document.getElementById('e-quality').textContent = fmtScore(data.avg_quality);
-    document.getElementById('e-sessions').textContent = fmt(data.total_sessions);
-    if (data.total_sessions > 0) {
-      document.getElementById('e-sessions-sub').textContent =
-        fmt(data.total_tokens_injected) + ' total tokens injected';
-    }
+  }
 
-    const tbody = document.getElementById('efficiency-body');
-    tbody.innerHTML = '';
-    if (!data.sessions || !data.sessions.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No session data yet.</td></tr>';
+  /* ── Trend chart ───────────────────────────────────────── */
+  function renderTrend(data) {
+    var container = document.getElementById('trend-chart');
+    container.innerHTML = '';
+    if (!data || !data.length) {
+      container.innerHTML = '<div class="empty-state" style="height:180px;display:flex;align-items:center;justify-content:center;">No recall data yet</div>';
+      document.getElementById('chart-total').textContent = '0';
       return;
     }
-    data.sessions.forEach(s => {
-      const overheadColor = s.overhead_pct < 2 ? 'var(--ok)' : s.overhead_pct < 5 ? 'var(--warn)' : 'var(--text)';
-      const precColor = s.precision > 0.7 ? 'var(--ok)' : s.precision > 0.3 ? 'var(--warn)' : 'var(--neutral)';
-      const shortId = s.session_id.length > 12 ? s.session_id.slice(0, 8) + '…' : s.session_id;
-      const tr = el('tr', {});
-      tr.innerHTML = `
-        <td class="mono truncate" style="max-width:120px" title="${esc(s.session_id)}">${esc(shortId)}</td>
-        <td>${s.prompts}</td>
-        <td>${fmt(s.tokens_injected)}</td>
-        <td style="color:${overheadColor}">${s.overhead_pct}%</td>
-        <td style="color:${precColor}">${fmtPct(s.precision * 100)}</td>
-        <td>${fmtScore(s.avg_quality)}</td>
-        <td class="mono muted">${relativeTime(s.last_recall)}</td>
-      `;
-      tbody.appendChild(tr);
+    var total = 0;
+    var maxRecalls = 1;
+    data.forEach(function(d) {
+      total += d.recalls;
+      if (d.recalls > maxRecalls) maxRecalls = d.recalls;
+    });
+    document.getElementById('chart-total').textContent = fmt(total);
+
+    var recallsByDay = data.map(function(d) { return d.recalls; });
+    renderMiniBars('mb-recalls', recallsByDay);
+
+    data.forEach(function(d) {
+      var pct = (d.recalls / maxRecalls) * 100;
+      var hitPct = d.hits ? (d.hits / d.recalls) * 100 : 0;
+      var missPct = 100 - hitPct;
+      var hitH = Math.max(0, pct * hitPct / 100);
+      var missH = Math.max(0, pct * missPct / 100);
+
+      var dayStr = d.day.slice(5);
+      var group = el('div', {class: 'bar-group'});
+      group.innerHTML =
+        '<div class="bar-tooltip">' + esc(d.day) + '<br>' + d.recalls + ' recalls · ' + (d.hits||0) + ' hits</div>' +
+        '<div class="bar-stack">' +
+          '<div class="bar-hits" style="height:' + hitH + '%"></div>' +
+          '<div class="bar-miss" style="height:' + missH + '%"></div>' +
+        '</div>' +
+        '<div class="bar-label">' + dayStr + '</div>';
+      container.appendChild(group);
     });
   }
 
-  /* ── render projects table ─────────────────────────────── */
+  /* ── Projects ──────────────────────────────────────────── */
   function renderProjects(data) {
     projectsData = data;
-    // apply sort
-    const sorted = [...data].sort((a, b) => {
-      let va = a[sortCol], vb = b[sortCol];
-      if (typeof va === 'string') va = va.toLowerCase(), vb = (vb||'').toLowerCase();
+    var sorted = data.slice().sort(function(a, b) {
+      var va = a[sortCol], vb = b[sortCol];
+      if (typeof va === 'string') { va = va.toLowerCase(); vb = (vb||'').toLowerCase(); }
       if (va < vb) return sortDir === 'asc' ? -1 : 1;
       if (va > vb) return sortDir === 'asc' ? 1 : -1;
       return 0;
     });
 
-    // update sort header icons
-    document.querySelectorAll('th.sortable').forEach(th => {
-      const icon = th.querySelector('.sort-icon');
+    document.querySelectorAll('th.sortable').forEach(function(th) {
+      var icon = th.querySelector('.sort-icon');
       if (th.dataset.col === sortCol) {
         th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
         th.classList.remove(sortDir === 'asc' ? 'sort-desc' : 'sort-asc');
@@ -528,13 +645,13 @@
       }
     });
 
-    const tbody = document.getElementById('projects-body');
+    var tbody = document.getElementById('projects-body');
     tbody.innerHTML = '';
     if (!sorted.length) {
       tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No projects yet.</td></tr>';
       return;
     }
-    const isRecallMode = sorted.length > 0 && sorted[0].recalls !== undefined;
+    var isRecallMode = sorted[0].recalls !== undefined;
     if (isRecallMode) {
       document.getElementById('th-col1').textContent = 'Recalls';
       document.getElementById('th-col2').textContent = 'Tokens';
@@ -544,142 +661,116 @@
       document.getElementById('th-col6').textContent = 'Extractive';
     }
 
-    sorted.forEach(row => {
-      const tr = el('tr', {});
-      const isSelected = projectFilter === row.project;
-      if (isSelected) tr.classList.add('selected');
+    sorted.forEach(function(row) {
+      var tr = el('tr', {});
+      if (projectFilter === row.project) tr.classList.add('selected');
       if (isRecallMode) {
-        tr.innerHTML = `
-          <td class="truncate mono" title="${esc(row.project)}">${esc(row.project)}</td>
-          <td>${fmt(row.recalls)}</td>
-          <td>${fmt(row.tokens)}</td>
-          <td>${fmtScore(row.avg_score)}</td>
-          <td style="color:var(--ok)">${row.ok_count ?? 0}</td>
-          <td style="color:var(--neutral)">${row.no_hits_count ?? 0}</td>
-          <td style="color:var(--warn)">${row.extractive_count ?? 0}</td>
-        `;
+        tr.innerHTML =
+          '<td class="truncate mono" title="' + esc(row.project) + '">' + esc(row.project) + '</td>' +
+          '<td>' + fmt(row.recalls) + '</td><td>' + fmt(row.tokens) + '</td>' +
+          '<td>' + fmtScore(row.avg_score) + '</td>' +
+          '<td style="color:var(--ok)">' + (row.ok_count||0) + '</td>' +
+          '<td style="color:var(--neutral)">' + (row.no_hits_count||0) + '</td>' +
+          '<td style="color:var(--warn)">' + (row.extractive_count||0) + '</td>';
       } else {
-        const hasMemories = (row.memories || 0) > 0;
-        const status = hasMemories ? 'extractive' : 'ingested';
-        const statusColor = hasMemories ? 'var(--ok)' : 'var(--warn)';
-        tr.innerHTML = `
-          <td class="truncate mono" title="${esc(row.project)}">${esc(row.project)}</td>
-          <td>${fmt(row.chunks || 0)}</td>
-          <td>${fmt(row.memories || 0)}</td>
-          <td>${fmt(row.total_tokens || 0)}</td>
-          <td style="color:${statusColor}">${status}</td>
-          <td></td>
-          <td></td>
-        `;
+        var hasMemories = (row.memories||0) > 0;
+        var badgeCls = hasMemories ? 'badge-ok' : 'badge-extractive';
+        var status = hasMemories ? 'Active' : 'Ingested';
+        tr.innerHTML =
+          '<td class="truncate mono" title="' + esc(row.project) + '">' + esc(row.project) + '</td>' +
+          '<td>' + fmt(row.chunks||0) + '</td><td>' + fmt(row.memories||0) + '</td>' +
+          '<td>' + fmt(row.total_tokens||0) + '</td>' +
+          '<td><span class="badge ' + badgeCls + '">' + status + '</span></td>' +
+          '<td></td><td></td>';
       }
-      tr.addEventListener('click', () => {
-        if (projectFilter === row.project) {
-          projectFilter = null;
-        } else {
-          projectFilter = row.project;
-        }
-        loadRecalls();
-        renderProjects(projectsData);
+      tr.addEventListener('click', function() {
+        projectFilter = projectFilter === row.project ? null : row.project;
+        loadRecalls(); renderProjects(projectsData);
       });
       tbody.appendChild(tr);
     });
   }
 
-  /* ── render recalls table ──────────────────────────────── */
+  /* ── Recalls ───────────────────────────────────────────── */
   function renderRecalls(data) {
-    const bar = document.getElementById('filter-bar');
+    var bar = document.getElementById('filter-bar');
     bar.innerHTML = '';
     if (projectFilter) {
-      const pill = el('div', { class: 'filter-pill' },
-        `Filtered: ${esc(projectFilter)} <button title="Clear filter">×</button>`);
-      pill.querySelector('button').addEventListener('click', () => {
-        projectFilter = null;
-        loadRecalls();
-        renderProjects(projectsData);
+      var pill = el('div', {class:'filter-pill'},
+        esc(projectFilter) + ' <button title="Clear">×</button>');
+      pill.querySelector('button').addEventListener('click', function() {
+        projectFilter = null; loadRecalls(); renderProjects(projectsData);
       });
       bar.appendChild(pill);
     }
 
-    const tbody = document.getElementById('recalls-body');
+    var tbody = document.getElementById('recalls-body');
     tbody.innerHTML = '';
     if (!data.length) {
       tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No recall events yet.</td></tr>';
       return;
     }
-    data.forEach(row => {
-      const tr = el('tr', {});
-      tr.innerHTML = `
-        <td class="mono muted" style="white-space:nowrap">${relativeTime(row.timestamp)}</td>
-        <td class="truncate mono" style="max-width:120px" title="${esc(row.project)}">${esc(row.project)}</td>
-        <td class="truncate" style="max-width:220px" title="${esc(row.query_preview)}">${esc(row.query_preview)}</td>
-        <td>${row.hits_count ?? 0}</td>
-        <td>${fmtScore(row.top_score)}</td>
-        <td>${fmt(row.tokens_injected)}</td>
-        <td class="mono">${fmtMs(row.latency_ms)}</td>
-        <td>${badge(row.status)}</td>
-      `;
+    data.forEach(function(row) {
+      var tr = el('tr', {});
+      tr.innerHTML =
+        '<td class="mono" style="white-space:nowrap;color:var(--text-muted)">' + relativeTime(row.timestamp) + '</td>' +
+        '<td class="truncate mono" style="max-width:120px" title="' + esc(row.project) + '">' + esc(row.project) + '</td>' +
+        '<td class="truncate" style="max-width:220px" title="' + esc(row.query_preview) + '">' + esc(row.query_preview) + '</td>' +
+        '<td>' + (row.hits_count||0) + '</td>' +
+        '<td>' + fmtScore(row.top_score) + '</td>' +
+        '<td>' + fmt(row.tokens_injected) + '</td>' +
+        '<td class="mono">' + fmtMs(row.latency_ms) + '</td>' +
+        '<td>' + badge(row.status) + '</td>';
       tbody.appendChild(tr);
     });
   }
 
-  /* ── render health / banner ────────────────────────────── */
+  /* ── Health / banner ───────────────────────────────────── */
   function renderHealth(h) {
-    const banner = document.getElementById('banner');
-    const msg = document.getElementById('banner-msg');
-    const status = h.onboarding_status;
-    if (status === 'full') {
-      banner.style.display = 'none';
-    } else {
-      banner.style.display = 'flex';
-      if (status === 'no_artifacts') {
-        msg.innerHTML = 'No artifacts ingested yet. Run <code>memor ingest &lt;path&gt;</code> to index a project, then add the Claude Code hook so recalls are logged automatically.';
-      } else if (status === 'no_recalls') {
-        msg.innerHTML = 'Artifacts are indexed but no recalls yet. Add the hook: <code>memor install-hook</code> — Memor will start injecting context automatically on each Claude call.';
-      } else {
-        msg.innerHTML = `Status: <strong>${esc(status)}</strong>. Run <code>memor --help</code> for setup guidance.`;
-      }
-    }
+    var banner = document.getElementById('banner');
+    var msg = document.getElementById('banner-msg');
+    var status = h.onboarding_status;
+    if (status === 'full') { banner.style.display = 'none'; return; }
+    banner.style.display = 'flex';
+    if (status === 'no_artifacts')
+      msg.innerHTML = 'No artifacts ingested yet. Run <code>memor service install</code> to start the daemon.';
+    else if (status === 'no_recalls')
+      msg.innerHTML = 'Artifacts indexed. Install the hook: <code>memor install-hook</code>';
+    else
+      msg.innerHTML = 'Status: <strong>' + esc(status) + '</strong>. Run <code>memor help</code> for guidance.';
   }
 
-  /* ── load data ─────────────────────────────────────────── */
-  async function loadSummary()  { try { renderSummary(await api('/api/summary')); } catch(e) { console.warn('summary', e); } }
-  async function loadProjects() { try { renderProjects(await api('/api/projects')); } catch(e) { console.warn('projects', e); } }
-  async function loadEfficiency() { try { renderEfficiency(await api('/api/efficiency')); } catch(e) { console.warn('efficiency', e); } }
-  async function loadHealth()   { try { renderHealth(await api('/api/health')); } catch(e) { console.warn('health', e); } }
+  /* ── Data loaders ──────────────────────────────────────── */
+  async function loadSummary()    { try { renderSummary(await api('/api/summary')); } catch(e) { console.warn('summary',e); } }
+  async function loadProjects()   { try { renderProjects(await api('/api/projects')); } catch(e) { console.warn('projects',e); } }
+  async function loadEfficiency() { try { renderEfficiency(await api('/api/efficiency')); } catch(e) { console.warn('efficiency',e); } }
+  async function loadHealth()     { try { renderHealth(await api('/api/health')); } catch(e) { console.warn('health',e); } }
+  async function loadTrend()      { try { renderTrend(await api('/api/recall-trend?days=30')); } catch(e) { console.warn('trend',e); } }
   async function loadRecalls() {
     try {
-      const url = '/api/recalls?limit=50' + (projectFilter ? '&project=' + encodeURIComponent(projectFilter) : '');
+      var url = '/api/recalls?limit=50' + (projectFilter ? '&project=' + encodeURIComponent(projectFilter) : '');
       renderRecalls(await api(url));
-    } catch(e) { console.warn('recalls', e); }
+    } catch(e) { console.warn('recalls',e); }
   }
 
   async function refresh() {
-    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadHealth(), loadRecalls()]);
-    document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadHealth(), loadTrend(), loadRecalls()]);
+    document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+
+    renderMiniBars('mb-chunks', null);
+    renderMiniBars('mb-memories', null);
+    renderMiniBars('mb-projects', null);
   }
 
-  /* ── sort headers ──────────────────────────────────────── */
-  document.querySelectorAll('th.sortable').forEach(th => {
-    th.addEventListener('click', () => {
-      if (sortCol === th.dataset.col) {
-        sortDir = sortDir === 'asc' ? 'desc' : 'asc';
-      } else {
-        sortCol = th.dataset.col;
-        sortDir = th.dataset.type === 'str' ? 'asc' : 'desc';
-      }
+  /* ── Sort headers ──────────────────────────────────────── */
+  document.querySelectorAll('th.sortable').forEach(function(th) {
+    th.addEventListener('click', function() {
+      if (sortCol === th.dataset.col) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+      else { sortCol = th.dataset.col; sortDir = th.dataset.type === 'str' ? 'asc' : 'desc'; }
       renderProjects(projectsData);
     });
   });
 
-  /* ── escape helper ─────────────────────────────────────── */
-  function esc(s) {
-    if (s == null) return '';
-    return String(s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
-
-  /* ── boot ──────────────────────────────────────────────── */
   refresh();
   setInterval(refresh, 30000);
 })();
