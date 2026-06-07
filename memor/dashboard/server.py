@@ -134,6 +134,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
         """, (f"-{days}",)).fetchall()
         return [dict(r) for r in rows]
 
+    @app.get("/api/roi")
+    def roi(project: str | None = Query(None)):
+        store = _store()
+        return store.get_token_roi(project=project)
+
     @app.get("/api/health")
     def health():
         store = _store()

@@ -132,13 +132,13 @@ def _cluster_select(chunks: list[Artifact], embedder, max_clusters: int) -> list
     return selected
 
 
-def extract_key_chunks(
-    chunks: list[Artifact], embedder, *, max_extracts: int = MAX_EXTRACTS
-) -> list[Artifact]:
-    """Select the highest-signal chunks from a session. Pure local, no LLM."""
+MIN_MEMORY_SIGNAL = 0.3
+
+
+def score_chunks(chunks: list[Artifact]) -> list[float]:
+    """Score each chunk by TF-IDF + heuristic. Returns parallel list of scores."""
     if not chunks:
         return []
-    # Score each chunk: TF-IDF + heuristic
     tfidf = _tfidf_scores(chunks)
     max_tf = max(tfidf) or 1.0
     combined = []
@@ -148,6 +148,16 @@ def extract_key_chunks(
             combined.append(-999.0)
             continue
         combined.append((tfidf[i] / max_tf) + h)
+    return combined
+
+
+def extract_key_chunks(
+    chunks: list[Artifact], embedder, *, max_extracts: int = MAX_EXTRACTS
+) -> list[Artifact]:
+    """Select the highest-signal chunks from a session. Pure local, no LLM."""
+    if not chunks:
+        return []
+    combined = score_chunks(chunks)
     # Pre-filter: drop anything scored below 0
     viable_idx = [i for i, s in enumerate(combined) if s > 0]
     if not viable_idx:

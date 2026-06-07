@@ -426,6 +426,32 @@
           </div>
         </div>
       </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <div class="chart-title">Token ROI</div>
+        </div>
+        <div id="roi-banner" style="display:none;background:var(--ok-dim);border:1px solid rgba(61,214,140,0.2);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px;">
+          <div style="font-size:22px;font-weight:700;color:var(--ok);letter-spacing:-0.5px;" id="roi-value">&ndash;</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;" id="roi-desc">fewer tool calls when Memor injects context</div>
+        </div>
+        <div class="side-stats" id="roi-side">
+          <div class="side-stat">
+            <div class="side-stat-label">Avg Tools / Turn (with recall)</div>
+            <div class="side-stat-value" id="roi-tools-with">&ndash;</div>
+            <div class="side-stat-sub">when Memor injected context</div>
+          </div>
+          <div class="side-stat">
+            <div class="side-stat-label">Avg Tools / Turn (without)</div>
+            <div class="side-stat-value" id="roi-tools-without">&ndash;</div>
+            <div class="side-stat-sub">when no context was injected</div>
+          </div>
+          <div class="side-stat">
+            <div class="side-stat-label">Turns Measured</div>
+            <div class="side-stat-value" id="roi-turns">&ndash;</div>
+            <div class="side-stat-sub" id="roi-turns-sub">with vs. without recall</div>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -781,6 +807,38 @@
       msg.innerHTML = 'Status: <strong>' + esc(status) + '</strong>. Run <code>memor help</code> for guidance.';
   }
 
+  /* ── ROI renderer ─────────────────────────────────────── */
+  function renderROI(data) {
+    document.getElementById('roi-tools-with').textContent = data.avg_tools_with_recall;
+    document.getElementById('roi-tools-without').textContent = data.avg_tools_without_recall;
+    document.getElementById('roi-turns').textContent =
+      (data.turns_with_recall + data.turns_without_recall).toLocaleString();
+    document.getElementById('roi-turns-sub').textContent =
+      data.turns_with_recall + ' with recall · ' + data.turns_without_recall + ' without';
+
+    var banner = document.getElementById('roi-banner');
+    var roiValue = document.getElementById('roi-value');
+    var roiDesc = document.getElementById('roi-desc');
+    banner.style.display = 'none';
+    banner.style.background = 'var(--ok-dim)';
+    banner.style.borderColor = 'rgba(61,214,140,0.2)';
+    roiValue.style.color = 'var(--ok)';
+    roiValue.textContent = '–';
+    roiDesc.textContent = 'fewer tool calls when Memor injects context';
+
+    if (data.tool_call_reduction_pct > 0 && data.turns_with_recall >= 5 && data.turns_without_recall >= 5) {
+      roiValue.textContent = data.tool_call_reduction_pct + '% fewer';
+      banner.style.display = 'block';
+    } else if (data.tool_call_reduction_pct < 0 && data.turns_with_recall >= 5) {
+      roiValue.textContent = Math.abs(data.tool_call_reduction_pct) + '% more';
+      roiValue.style.color = 'var(--warn)';
+      roiDesc.textContent = 'tool calls with recall — investigating...';
+      banner.style.display = 'block';
+      banner.style.background = 'var(--warn-dim)';
+      banner.style.borderColor = 'rgba(232,147,32,0.2)';
+    }
+  }
+
   /* ── Data loaders ──────────────────────────────────────── */
   async function loadSummary()    { try { renderSummary(await api('/api/summary')); } catch(e) { console.warn('summary',e); } }
   async function loadProjects()   { try { renderProjects(await api('/api/projects')); } catch(e) { console.warn('projects',e); } }
@@ -788,6 +846,7 @@
   async function loadSessionEfficiency() { try { renderSessionEfficiency(await api('/api/session-efficiency')); } catch(e) { console.warn('session-efficiency',e); } }
   async function loadHealth()     { try { renderHealth(await api('/api/health')); } catch(e) { console.warn('health',e); } }
   async function loadTrend()      { try { renderTrend(await api('/api/recall-trend?days=30')); } catch(e) { console.warn('trend',e); } }
+  async function loadROI()        { try { renderROI(await api('/api/roi')); } catch(e) { console.warn('roi',e); } }
   async function loadRecalls() {
     try {
       var url = '/api/recalls?limit=50' + (projectFilter ? '&project=' + encodeURIComponent(projectFilter) : '');
@@ -796,7 +855,7 @@
   }
 
   async function refresh() {
-    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls()]);
+    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls(), loadROI()]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 
     renderMiniBars('mb-chunks', null);

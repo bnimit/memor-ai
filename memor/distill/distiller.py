@@ -99,11 +99,14 @@ class ExtractiveDistiller:
     def distill_session(
         self, session_id: str, chunks: list[Artifact], project: str
     ) -> list[str]:
-        from memor.distill.extractive import classify_chunk
+        from memor.distill.extractive import classify_chunk, score_chunks, MIN_MEMORY_SIGNAL
         key_chunks = extract_key_chunks(chunks, self.embedder)
+        scores = score_chunks(key_chunks)
         created = max((c.created_at for c in chunks), default=0.0)
         new_ids: list[str] = []
-        for c in key_chunks:
+        for c, score in zip(key_chunks, scores):
+            if score < MIN_MEMORY_SIGNAL:
+                continue
             mem_type = classify_chunk(c.text)
             mid = _store_memory(self.store, self.embedder, c.text, mem_type,
                                 session_id, project, created, [c])
