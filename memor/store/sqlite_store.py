@@ -63,6 +63,15 @@ class SqliteStore:
           last_turn_at REAL,
           updated_at REAL NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_session_stats_project ON session_stats(project);
+        CREATE TABLE IF NOT EXISTS turn_metrics(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          project TEXT NOT NULL,
+          turn_idx INTEGER NOT NULL,
+          user_timestamp REAL,
+          tool_call_count INTEGER DEFAULT 0,
+          had_recall INTEGER DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS idx_turn_metrics_session ON turn_metrics(session_id);
         """)
         self.db.commit()
 
@@ -320,6 +329,32 @@ class SqliteStore:
         """, (cutoff, cutoff)).fetchall()
         return [r["id"] for r in rows]
 
+    def decay_quality(self, stale_days: int = 14, factor: float = 0.5,
+                      deactivate_floor: float = 0.03) -> int:
+        """Halve quality_score for memories not recalled in stale_days.
+        If the decayed score drops below deactivate_floor, deactivate the memory.
+        Returns number of memories decayed."""
+        import time as _time
+        cutoff = _time.time() - (stale_days * 86400)
+        rows = self.db.execute("""
+            SELECT q.artifact_id, q.quality_score
+            FROM memory_quality q
+            JOIN artifacts a ON a.id = q.artifact_id
+            WHERE a.kind = 'memory' AND a.active = 1
+              AND q.last_recalled < ?
+        """, (cutoff,)).fetchall()
+        decayed = 0
+        for r in rows:
+            new_score = round(r["quality_score"] * factor, 4)
+            if new_score < deactivate_floor:
+                self.db.execute("UPDATE artifacts SET active=0 WHERE id=?",
+                                (r["artifact_id"],))
+            self.db.execute("UPDATE memory_quality SET quality_score=? WHERE artifact_id=?",
+                            (new_score, r["artifact_id"]))
+            decayed += 1
+        self.db.commit()
+        return decayed
+
     def deactivate_stale(self, days: int = 30) -> int:
         ids = self.get_stale_memories(days)
         for aid in ids:
@@ -472,6 +507,49 @@ class SqliteStore:
             "avg_tool_calls_with_recall": avg_tools(with_recall),
             "avg_tool_calls_without_recall": avg_tools(without_recall),
             "sessions": sessions,
+        }
+
+    def save_turn_metrics(self, session_id: str, project: str, metrics: list) -> None:
+        """Persist per-turn tool call metrics. Idempotent — deletes old metrics
+        for the session first."""
+        self.db.execute("DELETE FROM turn_metrics WHERE session_id=?", (session_id,))
+        for m in metrics:
+            self.db.execute(
+                "INSERT INTO turn_metrics(session_id, project, turn_idx, "
+                "user_timestamp, tool_call_count, had_recall) VALUES(?,?,?,?,?,?)",
+                (session_id, project, m.turn_idx, m.user_timestamp,
+                 m.tool_call_count, 1 if m.had_recall else 0))
+        self.db.commit()
+
+    def get_token_roi(self, project: str | None = None) -> dict:
+        """Compute tool-call ROI: avg tool calls per turn with vs without recall."""
+        where = "WHERE 1=1"
+        params: list = []
+        if project:
+            where += " AND project = ?"
+            params.append(project)
+
+        row = self.db.execute(f"""
+            SELECT
+              COUNT(CASE WHEN had_recall = 1 THEN 1 END) AS turns_with,
+              COUNT(CASE WHEN had_recall = 0 THEN 1 END) AS turns_without,
+              AVG(CASE WHEN had_recall = 1 THEN tool_call_count END) AS avg_with,
+              AVG(CASE WHEN had_recall = 0 THEN tool_call_count END) AS avg_without
+            FROM turn_metrics {where}
+        """, params).fetchone()
+
+        turns_with = row["turns_with"] or 0
+        turns_without = row["turns_without"] or 0
+        avg_with = round(row["avg_with"] or 0, 2)
+        avg_without = round(row["avg_without"] or 0, 2)
+        reduction = round((1 - avg_with / avg_without) * 100, 1) if avg_without > 0 else 0
+
+        return {
+            "turns_with_recall": turns_with,
+            "turns_without_recall": turns_without,
+            "avg_tools_with_recall": avg_with,
+            "avg_tools_without_recall": avg_without,
+            "tool_call_reduction_pct": reduction,
         }
 
     def get_onboarding_status(self) -> str:

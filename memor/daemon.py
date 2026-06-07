@@ -146,7 +146,7 @@ def distill_new_sessions(
     return distilled
 
 
-COMPACT_SIM_THRESHOLD = 0.90
+COMPACT_SIM_THRESHOLD = 0.85
 
 
 def compact_memories(store: SqliteStore, embedder) -> int:
@@ -239,11 +239,33 @@ def run_poll_cycle(
         for path, project in pending:
             session_id = path.stem
             try:
-                used = analyze_session_feedback(store, session_id, path)
+                used = analyze_session_feedback(store, session_id, path, embedder=embedder)
                 if used > 0:
                     print(f"  feedback: {used} memories confirmed used in {session_id[:12]}...")
             except Exception:
                 pass
+
+    # Turn-level metrics: parse tool calls per turn, correlate with recalls
+    if new_ingested:
+        from memor.turn_metrics import parse_turn_metrics, correlate_with_recalls
+        for path, project in pending:
+            session_id = path.stem
+            try:
+                metrics = parse_turn_metrics(path, session_id)
+                if metrics:
+                    metrics = correlate_with_recalls(metrics, store, session_id)
+                    store.save_turn_metrics(session_id, project, metrics)
+            except Exception:
+                pass
+
+    # Soft quality decay: unused memories lose quality over time
+    if new_ingested:
+        try:
+            decayed = store.decay_quality(stale_days=14, factor=0.5, deactivate_floor=0.03)
+            if decayed > 0:
+                print(f"  decayed quality for {decayed} stale memories")
+        except Exception:
+            pass
 
     # Compact near-duplicate memories (run occasionally, not every cycle)
     if new_ingested:

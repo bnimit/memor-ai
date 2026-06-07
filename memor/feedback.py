@@ -2,7 +2,12 @@
 
 After a session ends, cross-references recall_log with the transcript to see
 if the agent's responses referenced recalled content. Updates memory_quality
-scores accordingly."""
+scores accordingly.
+
+Two matching strategies:
+1. N-gram overlap (fast, catches verbatim reuse)
+2. Semantic similarity via embeddings (catches paraphrased reuse)
+"""
 from __future__ import annotations
 import json
 import math
@@ -12,6 +17,7 @@ from memor.store.sqlite_store import SqliteStore
 _NGRAM_SIZE = 3
 _MIN_WORDS = 4
 _MATCH_RATIO = 0.10
+_SEMANTIC_SIM_THRESHOLD = 0.45
 
 
 def _extract_assistant_texts(transcript_path: Path) -> list[str]:
@@ -55,8 +61,25 @@ def _text_was_used(memory_text: str, assistant_texts: list[str]) -> bool:
     return matches >= max(1, math.ceil(len(ngrams) * _MATCH_RATIO))
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _semantic_match(memory_text: str, response_text: str, embedder) -> bool:
+    """Check if memory content appears in the response via embedding similarity.
+    Catches paraphrased reuse that n-gram matching misses."""
+    if len(memory_text.split()) < _MIN_WORDS:
+        return False
+    vecs = embedder.embed([memory_text, response_text])
+    return _cosine(vecs[0], vecs[1]) >= _SEMANTIC_SIM_THRESHOLD
+
+
 def analyze_session_feedback(
-    store: SqliteStore, session_id: str, transcript_path: Path
+    store: SqliteStore, session_id: str, transcript_path: Path,
+    *, embedder=None,
 ) -> int:
     recalled_ids = set()
     rows = store.db.execute("""
@@ -88,11 +111,16 @@ def analyze_session_feedback(
         return 0
 
     used_ids = []
+    combined_response = " ".join(assistant_texts) if embedder else ""
     for aid in recalled_ids:
         art = store.db.execute(
             "SELECT text FROM artifacts WHERE id=?", (aid,)
         ).fetchone()
-        if art and _text_was_used(art["text"], assistant_texts):
+        if not art:
+            continue
+        if _text_was_used(art["text"], assistant_texts):
+            used_ids.append(aid)
+        elif embedder and _semantic_match(art["text"], combined_response, embedder):
             used_ids.append(aid)
 
     if used_ids:

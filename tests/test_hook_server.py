@@ -1,4 +1,5 @@
-from memor.hook_server import handle_request, IDLE_TIMEOUT_S, _TRIVIAL_PATTERNS, MIN_QUERY_WORDS
+from memor.hook_server import handle_request, IDLE_TIMEOUT_S
+from memor.query_complexity import _TRIVIAL_PATTERNS
 from memor.embed.fake import FakeEmbedder
 from memor.store.sqlite_store import SqliteStore
 from memor.types import Artifact
@@ -25,7 +26,8 @@ def test_handle_request_returns_json(tmp_path):
 def test_handle_request_empty_db(tmp_path):
     db_path = str(tmp_path / "nope.db")
     e = FakeEmbedder(dim=16)
-    req = {"prompt": "anything", "cwd": str(tmp_path / "proj"), "session_id": "test"}
+    req = {"prompt": "how does the auth module handle password hashing?",
+           "cwd": str(tmp_path / "proj"), "session_id": "test"}
     result = handle_request(req, db_path=db_path, embedder=e)
     ctx = result["hookSpecificOutput"]["additionalContext"]
     assert "empty" in ctx.lower() or "daemon" in ctx.lower()
@@ -42,7 +44,7 @@ def test_handle_request_skips_trivial_prompt(tmp_path):
     db_path = str(tmp_path / "m.db")
     e = FakeEmbedder(dim=16)
     SqliteStore(db_path, dim=16)
-    req = {"prompt": "yes", "cwd": str(tmp_path / "proj"), "session_id": "test"}
+    req = {"prompt": "yes", "cwd": str(tmp_path / "proj"), "session_id": "trivial-test-1"}
     result = handle_request(req, db_path=db_path, embedder=e)
     ctx = result["hookSpecificOutput"]["additionalContext"]
     assert "skipped" in ctx.lower()
@@ -52,7 +54,7 @@ def test_handle_request_skips_trivial_with_punctuation(tmp_path):
     db_path = str(tmp_path / "m.db")
     e = FakeEmbedder(dim=16)
     SqliteStore(db_path, dim=16)
-    req = {"prompt": "looks good!", "cwd": str(tmp_path / "proj"), "session_id": "test"}
+    req = {"prompt": "looks good!", "cwd": str(tmp_path / "proj"), "session_id": "trivial-test-2"}
     result = handle_request(req, db_path=db_path, embedder=e)
     ctx = result["hookSpecificOutput"]["additionalContext"]
     assert "skipped" in ctx.lower()
