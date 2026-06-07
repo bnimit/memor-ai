@@ -88,6 +88,29 @@ def test_decay_skips_recently_recalled_memories(tmp_path):
     assert abs(s.get_quality_score("m1") - 0.5) < 0.01
 
 
+def test_decay_does_not_double_count(tmp_path):
+    """Calling decay_quality twice in a row should only decay once (tracked by last_decayed_at)."""
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    e = FakeEmbedder(dim=16)
+    art = Artifact(id="m1", kind="memory", project="p", source="distill",
+                   text="some decision", token_count=5, created_at=100.0,
+                   meta={"mem_type": "decision"})
+    s.add_artifacts([art], e.embed([art.text]))
+    now = _time.time()
+    s.db.execute("""
+        INSERT INTO memory_quality(artifact_id, recall_count, use_count, last_recalled, quality_score)
+        VALUES ('m1', 5, 2, ?, 0.5)
+    """, (now - 20 * 86400,))
+    s.db.commit()
+
+    first = s.decay_quality(stale_days=14, factor=0.5)
+    assert first == 1
+    assert abs(s.get_quality_score("m1") - 0.25) < 0.01
+    second = s.decay_quality(stale_days=14, factor=0.5)
+    assert second == 0  # last_decayed_at is now recent, no double decay
+    assert abs(s.get_quality_score("m1") - 0.25) < 0.01
+
+
 def test_decay_deactivates_after_floor(tmp_path):
     """After enough decay rounds, the quality drops below the floor and
     the memory gets deactivated."""

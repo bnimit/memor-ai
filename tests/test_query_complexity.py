@@ -73,3 +73,10 @@ def test_light_tier_has_smaller_budget_than_full():
 def test_empty_query_routes_to_skip():
     assert route_query("") == Tier.SKIP
     assert route_query("   ") == Tier.SKIP
+
+
+def test_short_real_query_does_not_skip():
+    """4-word real queries should route to LIGHT, not SKIP."""
+    assert route_query("fix the auth bug") != Tier.SKIP
+    assert route_query("update the config") != Tier.SKIP
+    assert route_query("run tests now") != Tier.SKIP

@@ -60,8 +60,7 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
 
     from memor.query_complexity import route_query, Tier
 
-    retrieval_query = _session_ctx.enrich(query, session_id) if session_id else query
-    tier = route_query(retrieval_query)
+    tier = route_query(query)
     if tier == Tier.SKIP:
         msg = "Memor: skipped — trivial prompt"
         if Path(db_path).exists():
@@ -91,6 +90,7 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
         min_similarity = float(os.environ.get("MEMOR_MIN_SIMILARITY", "0.0"))
     except (ValueError, TypeError):
         min_similarity = 0.0
+    retrieval_query = _session_ctx.enrich(query, session_id) if session_id else query
     already_injected = _session_injected.get(session_id, set()) if session_id else set()
     result = recall(retrieval_query, project, db_path, embedder=embedder, k=tier.k,
                     threshold=0.15, max_tokens=max_tokens, min_similarity=min_similarity,

@@ -817,13 +817,22 @@
       data.turns_with_recall + ' with recall · ' + data.turns_without_recall + ' without';
 
     var banner = document.getElementById('roi-banner');
+    var roiValue = document.getElementById('roi-value');
+    var roiDesc = document.getElementById('roi-desc');
+    banner.style.display = 'none';
+    banner.style.background = 'var(--ok-dim)';
+    banner.style.borderColor = 'rgba(61,214,140,0.2)';
+    roiValue.style.color = 'var(--ok)';
+    roiValue.textContent = '–';
+    roiDesc.textContent = 'fewer tool calls when Memor injects context';
+
     if (data.tool_call_reduction_pct > 0 && data.turns_with_recall >= 5 && data.turns_without_recall >= 5) {
-      document.getElementById('roi-value').textContent = data.tool_call_reduction_pct + '% fewer';
+      roiValue.textContent = data.tool_call_reduction_pct + '% fewer';
       banner.style.display = 'block';
     } else if (data.tool_call_reduction_pct < 0 && data.turns_with_recall >= 5) {
-      document.getElementById('roi-value').textContent = Math.abs(data.tool_call_reduction_pct) + '% more';
-      document.getElementById('roi-value').style.color = 'var(--warn)';
-      document.getElementById('roi-desc').textContent = 'tool calls with recall — investigating...';
+      roiValue.textContent = Math.abs(data.tool_call_reduction_pct) + '% more';
+      roiValue.style.color = 'var(--warn)';
+      roiDesc.textContent = 'tool calls with recall — investigating...';
       banner.style.display = 'block';
       banner.style.background = 'var(--warn-dim)';
       banner.style.borderColor = 'rgba(232,147,32,0.2)';

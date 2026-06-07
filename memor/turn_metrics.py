@@ -8,7 +8,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+
+
+def _to_epoch(ts) -> float:
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    if isinstance(ts, str):
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    return 0.0
 
 
 @dataclass
@@ -39,7 +48,7 @@ def parse_turn_metrics(transcript_path: Path, session_id: str) -> list[TurnMetri
     for rec in records:
         rec_type = rec.get("type")
         if rec_type == "user":
-            pending_user_ts = rec.get("timestamp", 0.0)
+            pending_user_ts = _to_epoch(rec.get("timestamp", 0.0))
         elif rec_type == "assistant" and pending_user_ts is not None:
             msg = rec.get("message", {})
             content = msg.get("content", [])

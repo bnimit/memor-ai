@@ -20,6 +20,7 @@ class SqliteStore:
         self._init_schema()
         self._check_dim(dim)
         self._migrate_fts()
+        self._migrate_quality_decay()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -43,7 +44,8 @@ class SqliteStore:
           recall_count INTEGER DEFAULT 0,
           use_count INTEGER DEFAULT 0,
           last_recalled REAL,
-          quality_score REAL DEFAULT 0.5);
+          quality_score REAL DEFAULT 0.5,
+          last_decayed_at REAL);
         CREATE TABLE IF NOT EXISTS recall_log(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           timestamp REAL, project TEXT, query_preview TEXT,
@@ -85,6 +87,16 @@ class SqliteStore:
                 f"Embedding dimension mismatch: database was created with dim={row['value']} "
                 f"but current embedder has dim={dim}. Use the same embedder or re-ingest."
             )
+
+    def _migrate_quality_decay(self):
+        """Add last_decayed_at column to memory_quality if missing."""
+        cols = [r[1] for r in self.db.execute("PRAGMA table_info(memory_quality)").fetchall()]
+        if "last_decayed_at" not in cols:
+            try:
+                self.db.execute("ALTER TABLE memory_quality ADD COLUMN last_decayed_at REAL")
+                self.db.commit()
+            except Exception:
+                pass
 
     def _migrate_fts(self):
         """One-time backfill of the FTS index for databases created before
@@ -332,25 +344,32 @@ class SqliteStore:
     def decay_quality(self, stale_days: int = 14, factor: float = 0.5,
                       deactivate_floor: float = 0.03) -> int:
         """Halve quality_score for memories not recalled in stale_days.
-        If the decayed score drops below deactivate_floor, deactivate the memory.
+        Only decays each memory once per stale_days interval (tracked via
+        last_decayed_at). Also catches memories with NULL last_recalled
+        that are old enough. If the decayed score drops below
+        deactivate_floor, deactivate the memory.
         Returns number of memories decayed."""
         import time as _time
-        cutoff = _time.time() - (stale_days * 86400)
+        now = _time.time()
+        recall_cutoff = now - (stale_days * 86400)
+        decay_cutoff = now - (stale_days * 86400)
         rows = self.db.execute("""
             SELECT q.artifact_id, q.quality_score
             FROM memory_quality q
             JOIN artifacts a ON a.id = q.artifact_id
             WHERE a.kind = 'memory' AND a.active = 1
-              AND q.last_recalled < ?
-        """, (cutoff,)).fetchall()
+              AND (q.last_recalled IS NULL OR q.last_recalled < ?)
+              AND (q.last_decayed_at IS NULL OR q.last_decayed_at < ?)
+        """, (recall_cutoff, decay_cutoff)).fetchall()
         decayed = 0
         for r in rows:
             new_score = round(r["quality_score"] * factor, 4)
             if new_score < deactivate_floor:
                 self.db.execute("UPDATE artifacts SET active=0 WHERE id=?",
                                 (r["artifact_id"],))
-            self.db.execute("UPDATE memory_quality SET quality_score=? WHERE artifact_id=?",
-                            (new_score, r["artifact_id"]))
+            self.db.execute(
+                "UPDATE memory_quality SET quality_score=?, last_decayed_at=? WHERE artifact_id=?",
+                (new_score, now, r["artifact_id"]))
             decayed += 1
         self.db.commit()
         return decayed

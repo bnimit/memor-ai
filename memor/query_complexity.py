@@ -85,7 +85,7 @@ def score_query(query: str) -> float:
 def route_query(query: str) -> Tier:
     """Route a query to a retrieval budget tier based on its complexity."""
     s = score_query(query)
-    if s < 0.15:
+    if s < 0.05:
         return Tier.SKIP
     if s < 0.45:
         return Tier.LIGHT

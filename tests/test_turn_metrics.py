@@ -84,6 +84,23 @@ def test_turn_metrics_correlates_with_recall(tmp_path):
     assert correlated[1].had_recall is False   # timestamp 1002.0, no recall nearby
 
 
+def test_parse_handles_iso8601_timestamps(tmp_path):
+    """Real Claude Code transcripts use ISO-8601 strings, not numeric timestamps."""
+    p = tmp_path / "s1.jsonl"
+    lines = [
+        json.dumps({"type": "user", "message": {"content": "hello"},
+                    "timestamp": "2026-06-07T10:00:00Z", "sessionId": "s1"}),
+        json.dumps({"type": "assistant",
+                    "message": {"content": [{"type": "tool_use", "name": "Read", "input": {}}]},
+                    "timestamp": "2026-06-07T10:00:05Z", "sessionId": "s1"}),
+    ]
+    p.write_text("\n".join(lines))
+    metrics = parse_turn_metrics(p, "s1")
+    assert len(metrics) == 1
+    assert metrics[0].user_timestamp > 1_000_000_000  # epoch, not 0
+    assert metrics[0].tool_call_count == 1
+
+
 def test_store_get_tool_call_roi(tmp_path):
     """The ROI metric compares avg tool calls per turn with vs without recall."""
     db_path = str(tmp_path / "m.db")
