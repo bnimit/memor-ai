@@ -207,7 +207,7 @@
     align-items: center; gap: 0; height: 100%;
     justify-content: flex-end;
   }
-  .bar-stack { display: flex; flex-direction: column-reverse; gap: 1px; width: 100%; max-width: 22px; }
+  .bar-stack { display: flex; flex-direction: column-reverse; gap: 1px; width: 100%; max-width: 22px; flex: 1; }
   .bar-hits { background: var(--accent); border-radius: 2px 2px 0 0; min-height: 0; transition: height 0.3s; }
   .bar-miss { background: var(--surface3); border-radius: 2px 2px 0 0; min-height: 0; transition: height 0.3s; }
   .bar-label {
@@ -539,7 +539,7 @@
   function badge(status) {
     var map = {
       ok:              ['badge-ok',        'Success'],
-      extractive_only: ['badge-extractive','Extractive'],
+      extractive_only: ['badge-extractive','No Distill'],
       no_hits:         ['badge-no_hits',   'No Hits'],
     };
     var m = map[status] || ['badge-no_hits', status];
@@ -725,7 +725,7 @@
       document.getElementById('th-col3').textContent = 'Avg Score';
       document.getElementById('th-col4').textContent = 'OK';
       document.getElementById('th-col5').textContent = 'No Hits';
-      document.getElementById('th-col6').textContent = 'Extractive';
+      document.getElementById('th-col6').textContent = 'No Distill';
     }
 
     sorted.forEach(function(row) {
