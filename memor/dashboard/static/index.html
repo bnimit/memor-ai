@@ -172,6 +172,7 @@
     background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius); padding: 22px 24px;
     box-shadow: var(--card-shadow);
+    display: flex; flex-direction: column;
   }
   .chart-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -199,7 +200,7 @@
 
   .bar-chart {
     display: flex; align-items: flex-end; gap: 4px;
-    height: 180px; padding-top: 8px;
+    flex: 1; min-height: 180px; padding-top: 8px;
     border-bottom: 1px solid var(--border-light);
   }
   .bar-group {
@@ -207,15 +208,16 @@
     align-items: center; gap: 0; height: 100%;
     justify-content: flex-end;
   }
-  .bar-stack { display: flex; flex-direction: column-reverse; gap: 1px; width: 100%; max-width: 22px; flex: 1; }
-  .bar-hits { background: var(--accent); border-radius: 2px 2px 0 0; min-height: 0; transition: height 0.3s; }
-  .bar-miss { background: var(--surface3); border-radius: 2px 2px 0 0; min-height: 0; transition: height 0.3s; }
+  .bar-stack { display: flex; flex-direction: column-reverse; gap: 2px; width: 100%; max-width: 28px; flex: 1; align-items: center; justify-content: flex-end; }
+  .bar-cell { width: 16px; height: 10px; border-radius: 2px; transition: opacity 0.3s; }
+  .bar-cell-hit { background: var(--accent); }
+  .bar-cell-miss { background: var(--surface3); }
   .bar-label {
     font-size: 9px; color: var(--text-muted); margin-top: 6px;
     text-align: center; white-space: nowrap;
   }
 
-  .bar-group:hover .bar-hits { background: #f0a030; }
+  .bar-group:hover .bar-cell-hit { background: #f0a030; }
   .bar-group { cursor: default; position: relative; }
   .bar-tooltip {
     display: none; position: absolute; bottom: calc(100% + 8px);
@@ -378,6 +380,33 @@
     </div>
   </section>
 
+  <!-- ── Token ROI hero ─────────────────────────────────── -->
+  <section>
+    <div class="chart-card" id="roi-card" style="display:none;">
+      <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
+        <div>
+          <div class="chart-title" style="margin-bottom:4px;">Token ROI</div>
+          <div style="font-size:32px;font-weight:700;color:var(--ok);letter-spacing:-1px;" id="roi-value">&ndash;</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;" id="roi-desc">fewer tool calls when Memor injects context</div>
+        </div>
+        <div style="display:flex;gap:24px;flex:1;justify-content:flex-end;">
+          <div style="text-align:center;">
+            <div style="font-size:18px;font-weight:600;color:var(--text);" id="roi-tools-with">&ndash;</div>
+            <div style="font-size:10px;color:var(--text-muted);">avg tools/turn<br>with recall</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:18px;font-weight:600;color:var(--text);" id="roi-tools-without">&ndash;</div>
+            <div style="font-size:10px;color:var(--text-muted);">avg tools/turn<br>without recall</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:18px;font-weight:600;color:var(--text);" id="roi-turns">&ndash;</div>
+            <div style="font-size:10px;color:var(--text-muted);" id="roi-turns-sub">turns measured</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Recall trend chart ─────────────────────────────── -->
   <section>
     <div class="chart-grid">
@@ -423,32 +452,6 @@
             <div class="side-stat-label">Sessions Tracked</div>
             <div class="side-stat-value" id="e-sessions">&ndash;</div>
             <div class="side-stat-sub" id="e-sessions-sub">with token data</div>
-          </div>
-        </div>
-      </div>
-      <div class="chart-card">
-        <div class="chart-header">
-          <div class="chart-title">Token ROI</div>
-        </div>
-        <div id="roi-banner" style="display:none;background:var(--ok-dim);border:1px solid rgba(61,214,140,0.2);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px;">
-          <div style="font-size:22px;font-weight:700;color:var(--ok);letter-spacing:-0.5px;" id="roi-value">&ndash;</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;" id="roi-desc">fewer tool calls when Memor injects context</div>
-        </div>
-        <div class="side-stats" id="roi-side">
-          <div class="side-stat">
-            <div class="side-stat-label">Avg Tools / Turn (with recall)</div>
-            <div class="side-stat-value" id="roi-tools-with">&ndash;</div>
-            <div class="side-stat-sub">when Memor injected context</div>
-          </div>
-          <div class="side-stat">
-            <div class="side-stat-label">Avg Tools / Turn (without)</div>
-            <div class="side-stat-value" id="roi-tools-without">&ndash;</div>
-            <div class="side-stat-sub">when no context was injected</div>
-          </div>
-          <div class="side-stat">
-            <div class="side-stat-label">Turns Measured</div>
-            <div class="side-stat-value" id="roi-turns">&ndash;</div>
-            <div class="side-stat-sub" id="roi-turns-sub">with vs. without recall</div>
           </div>
         </div>
       </div>
@@ -669,21 +672,20 @@
     var recallsByDay = data.map(function(d) { return d.recalls; });
     renderMiniBars('mb-recalls', recallsByDay);
 
+    var maxCells = 30;
     data.forEach(function(d) {
-      var pct = (d.recalls / maxRecalls) * 100;
-      var hitPct = d.hits ? (d.hits / d.recalls) * 100 : 0;
-      var missPct = 100 - hitPct;
-      var hitH = Math.max(0, pct * hitPct / 100);
-      var missH = Math.max(0, pct * missPct / 100);
+      var totalCells = Math.max(1, Math.round((d.recalls / maxRecalls) * maxCells));
+      var hitCells = Math.round((d.hits / d.recalls) * totalCells);
+      var missCells = totalCells - hitCells;
 
       var dayStr = d.day.slice(5);
       var group = el('div', {class: 'bar-group'});
+      var cells = '';
+      for (var i = 0; i < hitCells; i++) cells += '<div class="bar-cell bar-cell-hit"></div>';
+      for (var i = 0; i < missCells; i++) cells += '<div class="bar-cell bar-cell-miss"></div>';
       group.innerHTML =
         '<div class="bar-tooltip">' + esc(d.day) + '<br>' + d.recalls + ' recalls · ' + (d.hits||0) + ' hits</div>' +
-        '<div class="bar-stack">' +
-          '<div class="bar-hits" style="height:' + hitH + '%"></div>' +
-          '<div class="bar-miss" style="height:' + missH + '%"></div>' +
-        '</div>' +
+        '<div class="bar-stack">' + cells + '</div>' +
         '<div class="bar-label">' + dayStr + '</div>';
       container.appendChild(group);
     });
@@ -809,33 +811,27 @@
 
   /* ── ROI renderer ─────────────────────────────────────── */
   function renderROI(data) {
-    document.getElementById('roi-tools-with').textContent = data.avg_tools_with_recall;
-    document.getElementById('roi-tools-without').textContent = data.avg_tools_without_recall;
-    document.getElementById('roi-turns').textContent =
-      (data.turns_with_recall + data.turns_without_recall).toLocaleString();
-    document.getElementById('roi-turns-sub').textContent =
-      data.turns_with_recall + ' with recall · ' + data.turns_without_recall + ' without';
-
-    var banner = document.getElementById('roi-banner');
+    var card = document.getElementById('roi-card');
     var roiValue = document.getElementById('roi-value');
     var roiDesc = document.getElementById('roi-desc');
-    banner.style.display = 'none';
-    banner.style.background = 'var(--ok-dim)';
-    banner.style.borderColor = 'rgba(61,214,140,0.2)';
-    roiValue.style.color = 'var(--ok)';
-    roiValue.textContent = '–';
-    roiDesc.textContent = 'fewer tool calls when Memor injects context';
+
+    document.getElementById('roi-tools-with').textContent = data.avg_tools_with_recall;
+    document.getElementById('roi-tools-without').textContent = data.avg_tools_without_recall;
+    var totalTurns = data.turns_with_recall + data.turns_without_recall;
+    document.getElementById('roi-turns').textContent = totalTurns.toLocaleString();
+    document.getElementById('roi-turns-sub').textContent =
+      data.turns_with_recall + ' with · ' + data.turns_without_recall + ' without';
 
     if (data.tool_call_reduction_pct > 0 && data.turns_with_recall >= 5 && data.turns_without_recall >= 5) {
       roiValue.textContent = data.tool_call_reduction_pct + '% fewer';
-      banner.style.display = 'block';
+      roiValue.style.color = 'var(--ok)';
+      roiDesc.textContent = 'fewer tool calls when Memor injects context';
+      card.style.display = 'block';
     } else if (data.tool_call_reduction_pct < 0 && data.turns_with_recall >= 5) {
       roiValue.textContent = Math.abs(data.tool_call_reduction_pct) + '% more';
       roiValue.style.color = 'var(--warn)';
       roiDesc.textContent = 'tool calls with recall — investigating...';
-      banner.style.display = 'block';
-      banner.style.background = 'var(--warn-dim)';
-      banner.style.borderColor = 'rgba(232,147,32,0.2)';
+      card.style.display = 'block';
     }
   }
 
