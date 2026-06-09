@@ -19,9 +19,29 @@ _MIN_WORDS = 4
 _MATCH_RATIO = 0.10
 _SEMANTIC_SIM_THRESHOLD = 0.45
 
+_REJECTION_PATTERNS = [
+    "no that's wrong", "that's not right", "that's incorrect", "that's outdated",
+    "no, we", "no we", "actually we", "actually, we",
+    "we switched", "we moved", "we changed", "we no longer",
+    "that's not how", "not what i meant", "wrong approach",
+    "we don't use", "we stopped using", "we dropped",
+]
 
-def _extract_assistant_texts(transcript_path: Path) -> list[str]:
-    texts = []
+_CONTRADICTION_PATTERNS = [
+    "however, looking at the current code",
+    "but the current implementation",
+    "actually use", "actually uses",
+    "instead of what the memory",
+    "contrary to the recalled",
+    "the memory is outdated",
+    "this is no longer",
+]
+
+
+def _extract_texts(transcript_path: Path) -> tuple[list[str], list[str]]:
+    """Extract (assistant_texts, user_texts) from a transcript JSONL."""
+    assistant_texts = []
+    user_texts = []
     for line in transcript_path.read_text().splitlines():
         line = line.strip()
         if not line:
@@ -30,17 +50,40 @@ def _extract_assistant_texts(transcript_path: Path) -> list[str]:
             rec = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if rec.get("type") != "assistant":
-            continue
         msg = rec.get("message", {})
         content = msg.get("content", "")
+        parts = []
         if isinstance(content, str):
-            texts.append(content.lower())
+            parts.append(content.lower())
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    texts.append(block.get("text", "").lower())
-    return texts
+                    parts.append(block.get("text", "").lower())
+        if rec.get("type") == "assistant":
+            assistant_texts.extend(parts)
+        elif rec.get("type") == "human":
+            user_texts.extend(parts)
+    return assistant_texts, user_texts
+
+
+def _extract_assistant_texts(transcript_path: Path) -> list[str]:
+    assistant_texts, _ = _extract_texts(transcript_path)
+    return assistant_texts
+
+
+def _detect_negative_signals(assistant_texts: list[str], user_texts: list[str]) -> bool:
+    """Detect if user rejected or assistant contradicted recalled content."""
+    combined_user = " ".join(user_texts)
+    for pattern in _REJECTION_PATTERNS:
+        if pattern in combined_user:
+            return True
+
+    combined_assistant = " ".join(assistant_texts)
+    for pattern in _CONTRADICTION_PATTERNS:
+        if pattern in combined_assistant:
+            return True
+
+    return False
 
 
 def _text_was_used(memory_text: str, assistant_texts: list[str]) -> bool:
@@ -106,7 +149,7 @@ def analyze_session_feedback(
     if not recalled_ids:
         return 0
 
-    assistant_texts = _extract_assistant_texts(transcript_path)
+    assistant_texts, user_texts = _extract_texts(transcript_path)
     if not assistant_texts:
         return 0
 
@@ -125,5 +168,8 @@ def analyze_session_feedback(
 
     if used_ids:
         store.record_usage(used_ids)
+
+    if _detect_negative_signals(assistant_texts, user_texts) and recalled_ids:
+        store.record_negative(list(recalled_ids))
 
     return len(used_ids)

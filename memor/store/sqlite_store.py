@@ -21,6 +21,7 @@ class SqliteStore:
         self._check_dim(dim)
         self._migrate_fts()
         self._migrate_quality_decay()
+        self._migrate_negative_count()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -43,6 +44,7 @@ class SqliteStore:
           artifact_id TEXT PRIMARY KEY,
           recall_count INTEGER DEFAULT 0,
           use_count INTEGER DEFAULT 0,
+          negative_count INTEGER DEFAULT 0,
           last_recalled REAL,
           quality_score REAL DEFAULT 0.5,
           last_decayed_at REAL);
@@ -98,6 +100,17 @@ class SqliteStore:
             except Exception:
                 pass
 
+    def _migrate_negative_count(self):
+        """Add negative_count column to memory_quality if missing."""
+        cols = [r[1] for r in self.db.execute("PRAGMA table_info(memory_quality)").fetchall()]
+        if "negative_count" not in cols:
+            try:
+                self.db.execute(
+                    "ALTER TABLE memory_quality ADD COLUMN negative_count INTEGER DEFAULT 0")
+                self.db.commit()
+            except Exception:
+                pass
+
     def _migrate_fts(self):
         """One-time backfill of the FTS index for databases created before
         lexical search existed. Runs only when artifacts exist but the index is
@@ -135,18 +148,19 @@ class SqliteStore:
                         meta=json.loads(r["meta"]))
 
     def search(self, vector: list[float], scope: Scope, k: int) -> list[tuple[Artifact, float]]:
+        from memor.types import GLOBAL_PROJECT
         rows = self.db.execute(f"""
           SELECT a.*, v.distance AS distance
           FROM (SELECT rowid, distance FROM vec_artifacts
                 WHERE embedding MATCH ? AND k = ?) v
           JOIN artifacts a ON a.rowid = v.rowid
           WHERE a.active = 1
-            AND (? IS NULL OR a.project = ?)
+            AND (? IS NULL OR a.project = ? OR a.project = ?)
             AND (? IS NULL OR a.created_at >= ?)
             AND (? IS NULL OR a.created_at <= ?)
           ORDER BY v.distance ASC
         """, (_serialize(vector), max(k*20, 200),
-              scope.project, scope.project,
+              scope.project, scope.project, GLOBAL_PROJECT,
               scope.since, scope.since,
               scope.until, scope.until)).fetchall()
         out = []
@@ -173,6 +187,7 @@ class SqliteStore:
         (artifact, bm25_score) ordered best-first (lower bm25 = better match).
         Terms are OR-combined so partial matches still surface — the dense
         channel handles semantics, this channel recovers exact terms."""
+        from memor.types import GLOBAL_PROJECT
         terms = re.findall(r"[A-Za-z0-9_]+", query.lower())
         if not terms:
             return []
@@ -181,11 +196,11 @@ class SqliteStore:
           SELECT a.*, bm25(fts_artifacts) AS bm25_rank
           FROM fts_artifacts f JOIN artifacts a ON a.id = f.id
           WHERE fts_artifacts MATCH ? AND a.active = 1
-            AND (? IS NULL OR a.project = ?)
+            AND (? IS NULL OR a.project = ? OR a.project = ?)
             AND (? IS NULL OR a.created_at >= ?)
             AND (? IS NULL OR a.created_at <= ?)
           ORDER BY bm25_rank ASC LIMIT ?
-        """, (match, scope.project, scope.project,
+        """, (match, scope.project, scope.project, GLOBAL_PROJECT,
               scope.since, scope.since, scope.until, scope.until, k)).fetchall()
         out = []
         for r in rows:
@@ -322,15 +337,27 @@ class SqliteStore:
         self.db.commit()
         self._recompute_quality(artifact_ids)
 
+    def record_negative(self, artifact_ids: list[str]) -> None:
+        for aid in artifact_ids:
+            self.db.execute("""
+                INSERT INTO memory_quality(artifact_id, recall_count, use_count, negative_count, quality_score)
+                VALUES(?, 0, 0, 1, 0.5)
+                ON CONFLICT(artifact_id) DO UPDATE SET
+                  negative_count = negative_count + 1
+            """, (aid,))
+        self.db.commit()
+        self._recompute_quality(artifact_ids)
+
     def _recompute_quality(self, artifact_ids: list[str]) -> None:
         for aid in artifact_ids:
             row = self.db.execute(
-                "SELECT recall_count, use_count FROM memory_quality WHERE artifact_id=?",
+                "SELECT recall_count, use_count, negative_count FROM memory_quality WHERE artifact_id=?",
                 (aid,)).fetchone()
             if row:
                 rc = row["recall_count"] or 1
                 uc = row["use_count"] or 0
-                score = (uc + 1) / (rc + 2)
+                nc = row["negative_count"] or 0
+                score = max(0.0, (uc - nc + 1) / (rc + 2))
                 self.db.execute(
                     "UPDATE memory_quality SET quality_score=? WHERE artifact_id=?",
                     (round(score, 3), aid))
