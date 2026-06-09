@@ -78,9 +78,10 @@ MAINTENANCE
   memor version                    Print the installed version
 
 EVALUATION
-  memor eval <cases.json>          Run eval suite
-  memor eval-judge --project <name>  LLM-as-judge evaluation
-  memor bench-embed --project <name> Compare embedding models
+  memor eval <cases.json>              Run eval suite
+  memor eval-judge --project <name>    LLM-as-judge evaluation
+  memor eval-counterfactual --project  Win/tie/loss vs no-memory baseline
+  memor bench-embed --project <name>   Compare embedding models
 
 CONFIGURATION
   Everything works locally with zero API keys.
@@ -189,6 +190,38 @@ def eval_judge_cmd(project: str = typer.Option(...), db: str = "memor.db",
     typer.echo(json.dumps(summary, indent=2))
     s.save_eval_run({"type": "judge", "k": k, "project": project, "holdout": holdout}, summary)
     typer.echo(f"Judge eval complete: mean relevance = {summary['mean_relevance']:.3f}")
+
+
+@app.command("eval-counterfactual")
+def eval_counterfactual_cmd(project: str = typer.Option(...), db: str = "memor.db",
+                            k: int = 8, fake: bool = False,
+                            llm_provider: str = "anthropic",
+                            llm_model: str = "claude-sonnet-4-6",
+                            holdout: int = 2):
+    """Counterfactual eval: win/tie/loss vs no-memory baseline. Requires an LLM API key."""
+    from memor.eval.counterfactual import build_cases_from_store, run_suite
+    e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
+    cases = build_cases_from_store(s, project=project, holdout_turns=holdout)
+    if not cases:
+        typer.echo("No cases — need at least 2 sessions with >= 4 turns each.")
+        raise typer.Exit(1)
+    typer.echo(f"Built {len(cases)} counterfactual cases. Running evaluation...")
+    if llm_provider == "anthropic":
+        from memor.llm.anthropic import AnthropicLLM
+        llm = AnthropicLLM(model=llm_model)
+    else:
+        from memor.llm.openai_compat import OpenAICompatLLM
+        import os
+        llm = OpenAICompatLLM(base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:11434/v1"),
+                              api_key=os.environ.get("OPENAI_API_KEY", ""), model=llm_model)
+    summary = run_suite(cases, store=s, embedder=e, llm=llm, k=k)
+    typer.echo(json.dumps({k: v for k, v in summary.items() if k != "cases"}, indent=2))
+    typer.echo("")
+    typer.echo(f"  Win:  {summary['win_count']}/{summary['n_cases']} ({summary['win_pct']}%)")
+    typer.echo(f"  Tie:  {summary['tie_count']}/{summary['n_cases']} ({summary['tie_pct']}%)")
+    typer.echo(f"  Loss: {summary['loss_count']}/{summary['n_cases']} ({summary['loss_pct']}%)")
+    typer.echo(f"  Do-no-harm: {summary['do_no_harm_pct']}%")
+    s.save_eval_run({"type": "counterfactual", "k": k, "project": project, "holdout": holdout}, summary)
 
 
 @app.command("bench-embed")

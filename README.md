@@ -163,6 +163,7 @@ memor ingest-project <dir>           Bulk ingest a project directory
 memor ingest-doc <file>              Ingest a markdown document
 memor distill --project <name>       Run distillation manually
 memor eval <cases.json>              Run eval suite
+memor eval-counterfactual --project  Win/tie/loss vs no-memory baseline
 memor bench-embed --project <name>   Compare embedding models
 ```
 

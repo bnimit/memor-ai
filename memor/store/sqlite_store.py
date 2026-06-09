@@ -571,6 +571,43 @@ class SqliteStore:
             "tool_call_reduction_pct": reduction,
         }
 
+    def get_roi_trend(self, project: str | None = None,
+                      days: int = 30) -> list[dict]:
+        where = "WHERE user_timestamp > 0"
+        params: list = []
+        if project:
+            where += " AND project = ?"
+            params.append(project)
+
+        rows = self.db.execute(f"""
+            SELECT date(user_timestamp, 'unixepoch', 'localtime') AS day,
+                   AVG(CASE WHEN had_recall = 1 THEN tool_call_count END) AS avg_with,
+                   AVG(CASE WHEN had_recall = 0 THEN tool_call_count END) AS avg_without,
+                   COUNT(CASE WHEN had_recall = 1 THEN 1 END) AS turns_with,
+                   COUNT(CASE WHEN had_recall = 0 THEN 1 END) AS turns_without,
+                   COUNT(*) AS turns_total
+            FROM turn_metrics {where}
+            GROUP BY day
+            HAVING turns_with > 0 AND turns_without > 0
+            ORDER BY day
+        """, params).fetchall()
+
+        result = []
+        for r in rows:
+            avg_w = round(r["avg_with"], 2)
+            avg_wo = round(r["avg_without"], 2)
+            reduction = round((1 - avg_w / avg_wo) * 100, 1) if avg_wo > 0 else 0
+            result.append({
+                "day": r["day"],
+                "avg_with": avg_w,
+                "avg_without": avg_wo,
+                "reduction_pct": reduction,
+                "turns_with": r["turns_with"],
+                "turns_without": r["turns_without"],
+                "turns_total": r["turns_total"],
+            })
+        return result
+
     def get_onboarding_status(self) -> str:
         chunks = self.db.execute(
             "SELECT COUNT(*) as c FROM artifacts WHERE kind='session_chunk' AND active=1"

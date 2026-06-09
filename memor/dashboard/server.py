@@ -139,6 +139,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
         store = _store()
         return store.get_token_roi(project=project)
 
+    @app.get("/api/roi-trend")
+    def roi_trend(project: str | None = Query(None)):
+        store = _store()
+        return store.get_roi_trend(project=project)
+
     @app.get("/api/health")
     def health():
         store = _store()
