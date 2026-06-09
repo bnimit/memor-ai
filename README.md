@@ -9,13 +9,13 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-256%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-274%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
-**Automatic background memory for Claude Code.** Fire and forget — no API keys needed.
+**Automatic background memory for Claude Code, Codex, and Copilot.** Fire and forget — no API keys needed.
 
-Memor watches your coding sessions, extracts decisions and patterns, and recalls relevant context on every prompt. Zero configuration. One install. Your agent remembers everything.
+Memor watches your coding sessions, extracts decisions and patterns, and recalls relevant context on every prompt. Works with Claude Code, OpenAI Codex CLI, and GitHub Copilot CLI. Zero configuration. One install. Your agent remembers everything.
 
 ---
 
@@ -25,8 +25,9 @@ Memor watches your coding sessions, extracts decisions and patterns, and recalls
 # Install globally (recommended)
 pipx install memor-cli
 
-# Install the Claude Code hook + download embedding model (~60MB)
-memor install-hook
+# Install the hook + download embedding model (~60MB)
+memor install-hook                  # interactive — pick Claude Code, Codex, or Copilot
+memor install-hook --agent claude   # or pass directly
 
 # Start as a background service (macOS/Linux)
 memor service install
@@ -35,7 +36,7 @@ memor service install
 memor daemon
 ```
 
-That's it. Every Claude Code prompt now gets automatic context recall. Open the dashboard to see it working:
+That's it. Every prompt now gets automatic context recall. Open the dashboard to see it working:
 
 ```bash
 memor dashboard
@@ -49,10 +50,10 @@ memor dashboard
 ## How It Works
 
 ```
-  You type a prompt in Claude Code
+  You type a prompt (Claude Code / Codex / Copilot)
       |
       v
-  Hook fires (UserPromptSubmit)
+  Hook fires — auto-detects which agent
       |
       v
   Embed query locally (model2vec, ~2ms)
@@ -70,14 +71,26 @@ memor dashboard
   Inject relevant context into prompt
       |
       v
-  Claude sees your past decisions, bugfixes,
+  Your agent sees past decisions, bugfixes,
   architecture choices — without you re-explaining
 ```
+
+### Supported Agents
+
+| Agent | Hook protocol | Config location | Install |
+|---|---|---|---|
+| **Claude Code** | `UserPromptSubmit` + `additionalContext` | `~/.claude/settings.json` | `memor install-hook --agent claude` |
+| **Codex CLI** | `UserPromptSubmit` + `additionalContext` | `~/.codex/hooks/hooks.json` | `memor install-hook --agent codex` |
+| **Copilot CLI** | `userPromptSubmitted` + `additionalContext` | `~/.copilot/hooks/memor.json` | `memor install-hook --agent copilot` |
+
+A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. The dashboard tracks recalls per agent so you can see usage across all your environments.
+
+> **Note:** Cloud-hosted agents (Codex cloud, Copilot cloud agent) run in remote sandboxes and cannot reach local hooks. MCP server support for sandboxed agents is planned ([#26](https://github.com/bnimit/memor-ai/issues/26)).
 
 **Two background processes:**
 
 1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback (positive and negative), promotes cross-project patterns to global scope, compacts duplicates, tracks session-level token usage. All local.
-2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms.
+2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms. Works across Claude Code, Codex, and Copilot.
 
 **No API keys required.** Embeddings run locally via [model2vec](https://github.com/MinishLab/model2vec) (potion-base-8M, 256-dim). Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
 
@@ -151,10 +164,11 @@ memor dashboard
 
 Dark fintech-inspired UI showing:
 - **Hero metrics** — total memories, recall count, avg latency, coverage — with sparkline bars
+- **Agent breakdown** — per-agent recall stats (Claude, Codex, Copilot) with hit rates
 - **Daily recall activity** — stacked bar chart of hits vs misses over time
 - **Session efficiency** — real token savings measured from API usage data (avg tokens/turn with vs without recall)
 - **Per-project breakdown** — artifact counts, token totals, last activity
-- **Recent recalls** — every hook event with scores, latency, and status
+- **Recent recalls** — every hook event with agent badge, scores, latency, and status
 
 ---
 
@@ -162,7 +176,8 @@ Dark fintech-inspired UI showing:
 
 ```
 memor help                           Print the full manual
-memor install-hook                   Install Claude Code hook + download model
+memor install-hook                   Install hook + download model (interactive agent picker)
+  --agent claude|codex|copilot       Choose agent directly
 memor daemon                         Auto-ingest + distill (background watcher)
 memor dashboard                      Web dashboard on localhost:8420
 memor version                        Print installed version
@@ -227,7 +242,8 @@ memor/
     +-- judge.py           LLM-as-judge evaluation
     +-- embed_benchmark.py Embedding model comparison
 
-memor/hook_cli.py          Claude Code hook entry point (thin client)
+memor/hook_cli.py          Hook entry point — auto-detects Claude/Codex/Copilot
+memor/hook_server.py       Hook server with agent detection + response formatting
 skill/recall.py            Standalone recall script
 ```
 
@@ -274,7 +290,7 @@ cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest  # 251 tests
+pytest  # 274 tests
 ```
 
 ---
