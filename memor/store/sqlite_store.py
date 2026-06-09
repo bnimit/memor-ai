@@ -234,6 +234,19 @@ class SqliteStore:
         self.db.commit()
         return cur.lastrowid
 
+    def get_latest_eval(self, eval_type: str = "counterfactual") -> dict | None:
+        row = self.db.execute(
+            "SELECT * FROM eval_runs WHERE json_extract(config, '$.type') = ? "
+            "ORDER BY created_at DESC LIMIT 1", (eval_type,)).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "config": json.loads(row["config"]),
+            "metrics": json.loads(row["metrics"]),
+        }
+
     def log_recall(self, project: str, query_preview: str, hits_count: int,
                    top_score: float, tokens_injected: int, latency_ms: float,
                    status: str, session_id: str = "") -> None:
