@@ -329,6 +329,7 @@
   <div class="topbar-inner">
     <div class="breadcrumb">Dashboard &rsaquo; <span>Overview</span></div>
     <div class="topbar-right">
+      <span id="version-badge" class="mono" style="font-size:11px;color:var(--text-muted);margin-right:12px;"></span>
       <div class="topbar-time">
         <span class="refresh-dot"></span>
         <span id="last-updated">Live</span>
@@ -1036,6 +1037,12 @@
     });
   });
 
+  (async function() {
+    try {
+      var v = await api('/api/version');
+      document.getElementById('version-badge').textContent = 'v' + v.version;
+    } catch(e) {}
+  })();
   refresh();
   setInterval(refresh, 30000);
 })();

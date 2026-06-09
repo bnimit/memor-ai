@@ -168,6 +168,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return {"status": "no_runs"}
         return result
 
+    @app.get("/api/version")
+    def version():
+        from memor import __version__
+        return {"version": __version__}
+
     @app.get("/api/health")
     def health():
         store = _store()
