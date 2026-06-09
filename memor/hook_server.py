@@ -88,7 +88,8 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
                     project=project, query_preview=query[:100],
                     hits_count=0, top_score=0.0,
                     tokens_injected=0, latency_ms=0.0,
-                    status="skipped_trivial", session_id=session_id)
+                    status="skipped_trivial", session_id=session_id,
+                    agent=agent)
             except Exception:
                 pass
         return format_hook_response(agent, f"---\n{msg}")
@@ -125,7 +126,8 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
                 project=project, query_preview=query[:100],
                 hits_count=result.hits_count, top_score=result.top_score,
                 tokens_injected=result.tokens_injected, latency_ms=result.latency_ms,
-                status=result.status, session_id=session_id)
+                status=result.status, session_id=session_id,
+                agent=agent)
             if result.hit_ids:
                 store.record_recall(result.hit_ids)
         except Exception:

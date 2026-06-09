@@ -168,6 +168,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return {"status": "no_runs"}
         return result
 
+    @app.get("/api/agent-breakdown")
+    def agent_breakdown():
+        store = _store()
+        return store.get_agent_breakdown()
+
     @app.get("/api/version")
     def version():
         from memor import __version__
