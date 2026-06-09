@@ -1,6 +1,5 @@
 """Tests for multi-agent hook support (Claude Code, Codex, Copilot)."""
 import json
-import pytest
 from memor.hook_server import detect_agent, format_hook_response, handle_request
 from memor.store.sqlite_store import SqliteStore
 from memor.embed.fake import FakeEmbedder

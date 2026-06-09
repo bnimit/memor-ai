@@ -526,7 +526,7 @@ def _prompt_agent() -> str:
 
 
 @app.command("install-hook")
-def install_hook(agent: str = typer.Option(None, help="Agent: claude, codex, copilot (interactive if omitted)")):
+def install_hook(agent: str | None = typer.Option(None, help="Agent: claude, codex, copilot (interactive if omitted)")):
     """Install the recall hook for Claude Code, Codex, or Copilot."""
     import shutil
     agent_keys = {key for key, _, _ in AGENT_CHOICES}
