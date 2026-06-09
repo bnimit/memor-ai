@@ -404,6 +404,10 @@
           </div>
         </div>
       </div>
+      <div style="margin-top:16px;border-top:1px solid var(--border-light);padding-top:12px;position:relative;">
+        <div id="roi-sparkline" style="width:100%;height:80px;"></div>
+        <div id="roi-spark-tooltip" style="display:none;position:absolute;top:0;background:var(--surface3);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;color:var(--text);white-space:nowrap;pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,0.4);z-index:10;"></div>
+      </div>
     </div>
   </section>
 
@@ -835,6 +839,89 @@
     }
   }
 
+  function renderROITrend(data) {
+    var container = document.getElementById('roi-sparkline');
+    var tooltip = document.getElementById('roi-spark-tooltip');
+    if (!container || !data || !data.length) return;
+
+    var W = container.clientWidth || 400;
+    var H = 80;
+    var padL = 32, padR = 8, padT = 8, padB = 20;
+    var plotW = W - padL - padR;
+    var plotH = H - padT - padB;
+
+    var vals = data.map(function(d) { return d.reduction_pct; });
+    var minV = Math.min.apply(null, vals);
+    var maxV = Math.max.apply(null, vals);
+    var range = (maxV - minV) || 1;
+    var yFloor = Math.min(0, minV);
+    var yCeil = Math.max(maxV, 10);
+    range = (yCeil - yFloor) || 1;
+
+    function x(i) { return padL + (data.length > 1 ? (i / (data.length - 1)) * plotW : plotW / 2); }
+    function y(v) { return padT + plotH - ((v - yFloor) / range) * plotH; }
+
+    var lineColor = vals[vals.length - 1] >= 0 ? '#3dd68c' : '#e89320';
+    var gradId = 'roiGrad';
+
+    var pts = data.map(function(d, i) { return x(i) + ',' + y(d.reduction_pct); });
+    var linePath = 'M' + pts.join(' L');
+    var areaPath = linePath + ' L' + x(data.length - 1) + ',' + y(yFloor) + ' L' + x(0) + ',' + y(yFloor) + ' Z';
+
+    var gridLines = '';
+    var steps = [yFloor, Math.round((yFloor + yCeil) / 2), yCeil];
+    steps.forEach(function(v) {
+      var yy = y(v);
+      gridLines += '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="var(--border-light)" stroke-width="0.5" stroke-dasharray="3,3"/>';
+      gridLines += '<text x="' + (padL - 4) + '" y="' + (yy + 3) + '" fill="var(--text-muted)" font-size="8" text-anchor="end">' + v + '%</text>';
+    });
+
+    var xLabels = '';
+    data.forEach(function(d, i) {
+      xLabels += '<text x="' + x(i) + '" y="' + (H - 2) + '" fill="var(--text-muted)" font-size="8" text-anchor="middle">' + d.day.slice(5) + '</text>';
+    });
+
+    var dots = data.map(function(d, i) {
+      return '<circle cx="' + x(i) + '" cy="' + y(d.reduction_pct) + '" r="4" fill="' + lineColor + '" stroke="var(--surface)" stroke-width="2" style="opacity:0;" class="roi-dot" data-idx="' + i + '"/>';
+    }).join('');
+
+    var hitAreas = data.map(function(d, i) {
+      return '<rect x="' + (x(i) - plotW / data.length / 2) + '" y="' + padT + '" width="' + (plotW / data.length) + '" height="' + plotH + '" fill="transparent" class="roi-hit" data-idx="' + i + '"/>';
+    }).join('');
+
+    container.innerHTML = '<svg width="' + W + '" height="' + H + '" style="display:block;">' +
+      '<defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0%" stop-color="' + lineColor + '" stop-opacity="0.3"/>' +
+      '<stop offset="100%" stop-color="' + lineColor + '" stop-opacity="0.0"/>' +
+      '</linearGradient></defs>' +
+      gridLines + xLabels +
+      '<path d="' + areaPath + '" fill="url(#' + gradId + ')"/>' +
+      '<path d="' + linePath + '" fill="none" stroke="' + lineColor + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+      dots + hitAreas +
+      '</svg>';
+
+    container.querySelectorAll('.roi-hit').forEach(function(rect) {
+      rect.addEventListener('mouseenter', function() {
+        var i = parseInt(rect.getAttribute('data-idx'));
+        var d = data[i];
+        var dot = container.querySelectorAll('.roi-dot')[i];
+        if (dot) dot.style.opacity = '1';
+        tooltip.innerHTML = '<strong>' + d.day + '</strong><br>' +
+          d.reduction_pct + '% fewer tools<br>' +
+          d.turns_with + ' recall / ' + d.turns_without + ' no-recall turns';
+        tooltip.style.display = 'block';
+        var tx = Math.min(x(i), W - 160);
+        tooltip.style.left = tx + 'px';
+      });
+      rect.addEventListener('mouseleave', function() {
+        var i = parseInt(rect.getAttribute('data-idx'));
+        var dot = container.querySelectorAll('.roi-dot')[i];
+        if (dot) dot.style.opacity = '0';
+        tooltip.style.display = 'none';
+      });
+    });
+  }
+
   /* ── Data loaders ──────────────────────────────────────── */
   async function loadSummary()    { try { renderSummary(await api('/api/summary')); } catch(e) { console.warn('summary',e); } }
   async function loadProjects()   { try { renderProjects(await api('/api/projects')); } catch(e) { console.warn('projects',e); } }
@@ -843,6 +930,7 @@
   async function loadHealth()     { try { renderHealth(await api('/api/health')); } catch(e) { console.warn('health',e); } }
   async function loadTrend()      { try { renderTrend(await api('/api/recall-trend?days=30')); } catch(e) { console.warn('trend',e); } }
   async function loadROI()        { try { renderROI(await api('/api/roi')); } catch(e) { console.warn('roi',e); } }
+  async function loadROITrend()   { try { renderROITrend(await api('/api/roi-trend')); } catch(e) { console.warn('roi-trend',e); } }
   async function loadRecalls() {
     try {
       var url = '/api/recalls?limit=50' + (projectFilter ? '&project=' + encodeURIComponent(projectFilter) : '');
@@ -851,7 +939,7 @@
   }
 
   async function refresh() {
-    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls(), loadROI()]);
+    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend()]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 
     renderMiniBars('mb-chunks', null);

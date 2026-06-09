@@ -139,6 +139,19 @@ def create_app(db_path: str | None = None) -> FastAPI:
         store = _store()
         return store.get_token_roi(project=project)
 
+    @app.get("/api/roi-trend")
+    def roi_trend(project: str | None = Query(None)):
+        store = _store()
+        return store.get_roi_trend(project=project)
+
+    @app.get("/api/eval/latest")
+    def eval_latest(eval_type: str = Query("counterfactual")):
+        store = _store()
+        result = store.get_latest_eval(eval_type)
+        if not result:
+            return {"status": "no_runs"}
+        return result
+
     @app.get("/api/health")
     def health():
         store = _store()

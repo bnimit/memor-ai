@@ -234,6 +234,19 @@ class SqliteStore:
         self.db.commit()
         return cur.lastrowid
 
+    def get_latest_eval(self, eval_type: str = "counterfactual") -> dict | None:
+        row = self.db.execute(
+            "SELECT * FROM eval_runs WHERE json_extract(config, '$.type') = ? "
+            "ORDER BY created_at DESC LIMIT 1", (eval_type,)).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "config": json.loads(row["config"]),
+            "metrics": json.loads(row["metrics"]),
+        }
+
     def log_recall(self, project: str, query_preview: str, hits_count: int,
                    top_score: float, tokens_injected: int, latency_ms: float,
                    status: str, session_id: str = "") -> None:
@@ -570,6 +583,43 @@ class SqliteStore:
             "avg_tools_without_recall": avg_without,
             "tool_call_reduction_pct": reduction,
         }
+
+    def get_roi_trend(self, project: str | None = None,
+                      days: int = 30) -> list[dict]:
+        where = "WHERE user_timestamp > 0"
+        params: list = []
+        if project:
+            where += " AND project = ?"
+            params.append(project)
+
+        rows = self.db.execute(f"""
+            SELECT date(user_timestamp, 'unixepoch', 'localtime') AS day,
+                   AVG(CASE WHEN had_recall = 1 THEN tool_call_count END) AS avg_with,
+                   AVG(CASE WHEN had_recall = 0 THEN tool_call_count END) AS avg_without,
+                   COUNT(CASE WHEN had_recall = 1 THEN 1 END) AS turns_with,
+                   COUNT(CASE WHEN had_recall = 0 THEN 1 END) AS turns_without,
+                   COUNT(*) AS turns_total
+            FROM turn_metrics {where}
+            GROUP BY day
+            HAVING turns_with > 0 AND turns_without > 0
+            ORDER BY day
+        """, params).fetchall()
+
+        result = []
+        for r in rows:
+            avg_w = round(r["avg_with"], 2)
+            avg_wo = round(r["avg_without"], 2)
+            reduction = round((1 - avg_w / avg_wo) * 100, 1) if avg_wo > 0 else 0
+            result.append({
+                "day": r["day"],
+                "avg_with": avg_w,
+                "avg_without": avg_wo,
+                "reduction_pct": reduction,
+                "turns_with": r["turns_with"],
+                "turns_without": r["turns_without"],
+                "turns_total": r["turns_total"],
+            })
+        return result
 
     def get_onboarding_status(self) -> str:
         chunks = self.db.execute(
