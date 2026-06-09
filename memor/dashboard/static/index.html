@@ -300,6 +300,16 @@
   .badge-extractive::before { background: var(--warn); }
   .badge-no_hits { background: var(--neutral-dim); color: var(--neutral); }
   .badge-no_hits::before { background: var(--neutral); }
+  .badge-global { background: rgba(120,100,255,0.12); color: #a090ff; }
+  .badge-global::before { background: #a090ff; }
+  .badge-negative { background: rgba(232,84,84,0.12); color: var(--error); }
+  .badge-negative::before { background: var(--error); }
+
+  .quality-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--surface3); width: 100%; min-width: 60px; }
+  .quality-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+  .quality-fill-ok { background: var(--ok); }
+  .quality-fill-warn { background: var(--warn); }
+  .quality-fill-error { background: var(--error); }
 
   .empty-state {
     text-align: center; padding: 40px 20px;
@@ -368,6 +378,13 @@
           <div class="metric-sub">tracked projects</div>
         </div>
         <div class="mini-bars" id="mb-projects"></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-info">
+          <div class="metric-label">Global</div>
+          <div class="metric-value" id="m-global">&ndash;</div>
+          <div class="metric-sub">cross-project memories</div>
+        </div>
       </div>
       <div class="metric-card">
         <div class="metric-info">
@@ -481,6 +498,30 @@
           </tr>
         </thead>
         <tbody id="projects-body" class="projects-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Memory Quality ──────────────────────────────────── -->
+  <section>
+    <div class="table-card" id="quality-section" style="display:none;">
+      <div class="table-header">
+        <div class="table-title"><span class="dot"></span> Memory Quality</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Memory</th>
+            <th>Project</th>
+            <th>Type</th>
+            <th>Recalls</th>
+            <th>Used</th>
+            <th>Rejected</th>
+            <th>Score</th>
+            <th style="min-width:80px;"></th>
+          </tr>
+        </thead>
+        <tbody id="quality-body"></tbody>
       </table>
     </div>
   </section>
@@ -603,6 +644,7 @@
     document.getElementById('m-chunks').textContent = fmt(chunks);
     document.getElementById('m-memories').textContent = fmt(memories);
     document.getElementById('m-projects').textContent = fmt(d.project_count || 0);
+    document.getElementById('m-global').textContent = fmt(d.global_memories || 0);
     document.getElementById('m-recalls').textContent = fmt(d.total_recalls);
     if (d.total_recalls > 0) {
       document.getElementById('m-recalls-sub').textContent =
@@ -695,6 +737,39 @@
     });
   }
 
+  /* ── Quality ───────────────────────────────────────────── */
+  function renderQuality(data) {
+    var section = document.getElementById('quality-section');
+    var tbody = document.getElementById('quality-body');
+    tbody.innerHTML = '';
+    if (!data || !data.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    data.forEach(function(row) {
+      var neg = row.negative_count || 0;
+      var score = row.quality_score || 0;
+      var barClass = score >= 0.5 ? 'quality-fill-ok' : (score >= 0.25 ? 'quality-fill-warn' : 'quality-fill-error');
+      var barWidth = Math.max(2, Math.round(score * 100));
+      var projLabel = row.project === '_global'
+        ? '<span class="badge badge-global">Global</span>'
+        : esc(row.project);
+      var typeLabel = esc(row.mem_type || row.kind);
+      var negHtml = neg > 0
+        ? '<span style="color:var(--error);font-weight:600;">' + neg + '</span>'
+        : '<span style="color:var(--text-muted);">0</span>';
+      var tr = el('tr', {});
+      tr.innerHTML =
+        '<td class="truncate" style="max-width:260px" title="' + esc(row.preview) + '">' + esc(row.preview) + '</td>' +
+        '<td>' + projLabel + '</td>' +
+        '<td><span class="mono" style="font-size:11px;color:var(--text-muted);">' + typeLabel + '</span></td>' +
+        '<td>' + (row.recall_count || 0) + '</td>' +
+        '<td style="color:var(--ok);">' + (row.use_count || 0) + '</td>' +
+        '<td>' + negHtml + '</td>' +
+        '<td class="mono">' + fmtScore(score) + '</td>' +
+        '<td><div class="quality-bar"><div class="quality-fill ' + barClass + '" style="width:' + barWidth + '%;"></div></div></td>';
+      tbody.appendChild(tr);
+    });
+  }
+
   /* ── Projects ──────────────────────────────────────────── */
   function renderProjects(data) {
     projectsData = data;
@@ -737,9 +812,13 @@
     sorted.forEach(function(row) {
       var tr = el('tr', {});
       if (projectFilter === row.project) tr.classList.add('selected');
+      var isGlobal = row.project === '_global';
+      var projCell = isGlobal
+        ? '<td><span class="badge badge-global">Global</span></td>'
+        : '<td class="truncate mono" title="' + esc(row.project) + '">' + esc(row.project) + '</td>';
       if (isRecallMode) {
         tr.innerHTML =
-          '<td class="truncate mono" title="' + esc(row.project) + '">' + esc(row.project) + '</td>' +
+          projCell +
           '<td>' + fmt(row.recalls) + '</td><td>' + fmt(row.tokens) + '</td>' +
           '<td>' + fmtScore(row.avg_score) + '</td>' +
           '<td style="color:var(--ok)">' + (row.ok_count||0) + '</td>' +
@@ -747,10 +826,10 @@
           '<td style="color:var(--warn)">' + (row.extractive_count||0) + '</td>';
       } else {
         var hasMemories = (row.memories||0) > 0;
-        var badgeCls = hasMemories ? 'badge-ok' : 'badge-extractive';
-        var status = hasMemories ? 'Active' : 'Ingested';
+        var badgeCls = isGlobal ? 'badge-global' : (hasMemories ? 'badge-ok' : 'badge-extractive');
+        var status = isGlobal ? 'Global' : (hasMemories ? 'Active' : 'Ingested');
         tr.innerHTML =
-          '<td class="truncate mono" title="' + esc(row.project) + '">' + esc(row.project) + '</td>' +
+          projCell +
           '<td>' + fmt(row.chunks||0) + '</td><td>' + fmt(row.memories||0) + '</td>' +
           '<td>' + fmt(row.total_tokens||0) + '</td>' +
           '<td><span class="badge ' + badgeCls + '">' + status + '</span></td>' +
@@ -931,6 +1010,7 @@
   async function loadTrend()      { try { renderTrend(await api('/api/recall-trend?days=30')); } catch(e) { console.warn('trend',e); } }
   async function loadROI()        { try { renderROI(await api('/api/roi')); } catch(e) { console.warn('roi',e); } }
   async function loadROITrend()   { try { renderROITrend(await api('/api/roi-trend')); } catch(e) { console.warn('roi-trend',e); } }
+  async function loadQuality()    { try { renderQuality(await api('/api/quality')); } catch(e) { console.warn('quality',e); } }
   async function loadRecalls() {
     try {
       var url = '/api/recalls?limit=50' + (projectFilter ? '&project=' + encodeURIComponent(projectFilter) : '');
@@ -939,7 +1019,7 @@
   }
 
   async function refresh() {
-    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend()]);
+    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(), loadQuality()]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 
     renderMiniBars('mb-chunks', null);

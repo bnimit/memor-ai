@@ -27,6 +27,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.get("/api/summary")
     def summary():
+        from memor.types import GLOBAL_PROJECT
         store = _store()
         recall_stats = store.get_recall_stats()
         ingestion = {}
@@ -38,17 +39,22 @@ def create_app(db_path: str | None = None) -> FastAPI:
         project_count = store.db.execute(
             "SELECT COUNT(DISTINCT project) as c FROM artifacts"
         ).fetchone()["c"]
+        global_count = store.db.execute(
+            "SELECT COUNT(*) as c FROM artifacts WHERE active=1 AND project=? AND kind='memory'",
+            (GLOBAL_PROJECT,)
+        ).fetchone()["c"]
         recall_stats["ingestion"] = ingestion
         recall_stats["project_count"] = project_count
+        recall_stats["global_memories"] = global_count
         return recall_stats
 
     @app.get("/api/projects")
     def projects():
         store = _store()
         recall_stats = store.get_project_stats()
-        if recall_stats:
-            return recall_stats
-        rows = store.db.execute("""
+        recall_projects = {r["project"] for r in recall_stats} if recall_stats else set()
+
+        artifact_rows = store.db.execute("""
             SELECT project,
                    COUNT(*) as artifacts,
                    SUM(CASE WHEN kind='session_chunk' THEN 1 ELSE 0 END) as chunks,
@@ -59,7 +65,15 @@ def create_app(db_path: str | None = None) -> FastAPI:
             GROUP BY project
             ORDER BY artifacts DESC
         """).fetchall()
-        return [dict(r) for r in rows]
+
+        if not recall_stats:
+            return [dict(r) for r in artifact_rows]
+
+        result = list(recall_stats)
+        for r in artifact_rows:
+            if r["project"] not in recall_projects:
+                result.append(dict(r))
+        return result
 
     @app.get("/api/recalls")
     def recalls(limit: int = Query(50, ge=1, le=500),
@@ -71,7 +85,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def quality():
         store = _store()
         rows = store.db.execute("""
-            SELECT q.artifact_id, q.recall_count, q.use_count, q.quality_score,
+            SELECT q.artifact_id, q.recall_count, q.use_count,
+                   COALESCE(q.negative_count, 0) as negative_count,
+                   q.quality_score,
                    a.project, a.kind, json_extract(a.meta, '$.mem_type') as mem_type,
                    substr(a.text, 1, 100) as preview
             FROM memory_quality q
