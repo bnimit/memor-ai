@@ -12,6 +12,26 @@ PID_PATH = Path.home() / ".memor" / "hook.pid"
 DEFAULT_DB = str(Path.home() / ".memor" / "memor.db")
 IDLE_TIMEOUT_S = 600
 
+
+def detect_agent(req: dict) -> str:
+    event = req.get("hook_event_name", "")
+    if event == "userPromptSubmitted":
+        return "copilot"
+    if "model" in req or "permission_mode" in req:
+        return "codex"
+    return "claude"
+
+
+def format_hook_response(agent: str, additional_context: str) -> dict:
+    if agent == "copilot":
+        return {"additionalContext": additional_context}
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": additional_context,
+        }
+    }
+
 _embedder = None
 _last_activity = 0.0
 _session_injected: dict[str, set[str]] = {}
@@ -49,14 +69,11 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
 
     if embedder is _UNSET:
         embedder = _get_embedder()
+    agent = detect_agent(req)
+
     if embedder is None:
         msg = _status_message("no_embedder", project, 0, 0, 0.0)
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": f"---\n{msg}",
-            }
-        }
+        return format_hook_response(agent, f"---\n{msg}")
 
     from memor.query_complexity import route_query, Tier
 
@@ -74,12 +91,7 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
                     status="skipped_trivial", session_id=session_id)
             except Exception:
                 pass
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": f"---\n{msg}",
-            }
-        }
+        return format_hook_response(agent, f"---\n{msg}")
 
     try:
         env_max = int(os.environ.get("MEMOR_MAX_TOKENS", "0"))
@@ -120,12 +132,7 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
             pass
 
     additional_context = result.formatted_context or f"---\n{result.status_message}"
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": additional_context,
-        }
-    }
+    return format_hook_response(agent, additional_context)
 
 
 async def _handle_client(reader: asyncio.StreamReader,

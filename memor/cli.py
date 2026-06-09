@@ -44,9 +44,10 @@ HELP_TEXT = """\
 memor — measured memory for coding agents
 
 GETTING STARTED
-  memor install-hook        Install the Claude Code recall hook + download model
-  memor service install     Start the daemon as a background service
-  memor dashboard           Open the web dashboard at localhost:8420
+  memor install-hook            Install the recall hook + download model
+    --agent claude|codex|copilot  Choose your agent (default: claude)
+  memor service install         Start the daemon as a background service
+  memor dashboard               Open the web dashboard at localhost:8420
 
 SERVICE MANAGEMENT
   memor service install     Install and start as a background service (survives reboots)
@@ -88,7 +89,9 @@ CONFIGURATION
   No configuration needed — just install, hook, and run the daemon.
 
 EXAMPLES
-  memor install-hook && memor service install  # one-time setup
+  memor install-hook && memor service install          # Claude Code (default)
+  memor install-hook --agent codex && memor service install  # Codex CLI
+  memor install-hook --agent copilot && memor service install # Copilot CLI
   memor query "auth flow" --project my-app
   memor reingest --project my-app -y           # refresh one project
   memor dashboard                              # see stats at localhost:8420
@@ -456,20 +459,108 @@ def _install_hook_logic(settings_path: Path, hook_command: str) -> None:
     settings_path.write_text(json.dumps(data, indent=2))
 
 
+def _install_hook_logic_codex(hooks_path: Path, hook_command: str) -> None:
+    if hooks_path.exists():
+        data = json.loads(hooks_path.read_text())
+    else:
+        data = {}
+    hooks = data.setdefault("hooks", {})
+    prompt_hooks = hooks.setdefault("UserPromptSubmit", [])
+    entry = {"command": hook_command, "timeout": 5}
+    existing_idx = None
+    for i, h in enumerate(prompt_hooks):
+        if "memor-hook" in h.get("command", ""):
+            existing_idx = i
+            break
+    if existing_idx is not None:
+        prompt_hooks[existing_idx] = entry
+    else:
+        prompt_hooks.append(entry)
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(data, indent=2))
+
+
+def _install_hook_logic_copilot(hooks_path: Path, hook_command: str) -> None:
+    if hooks_path.exists():
+        data = json.loads(hooks_path.read_text())
+    else:
+        data = {"version": 1, "hooks": {}}
+    data.setdefault("version", 1)
+    hooks = data.setdefault("hooks", {})
+    prompt_hooks = hooks.setdefault("userPromptSubmitted", [])
+    entry = {"type": "command", "bash": hook_command, "timeoutSec": 5}
+    existing_idx = None
+    for i, h in enumerate(prompt_hooks):
+        if "memor-hook" in h.get("bash", ""):
+            existing_idx = i
+            break
+    if existing_idx is not None:
+        prompt_hooks[existing_idx] = entry
+    else:
+        prompt_hooks.append(entry)
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(data, indent=2))
+
+
+AGENT_CHOICES = [
+    ("claude", "~/.claude/settings.json", "Claude Code"),
+    ("codex", "~/.codex/hooks/hooks.json", "Codex CLI"),
+    ("copilot", "~/.copilot/hooks/memor.json", "Copilot CLI"),
+]
+
+
+def _prompt_agent() -> str:
+    typer.echo("Which agent do you want to install the recall hook for?\n")
+    for i, (key, _, label) in enumerate(AGENT_CHOICES, 1):
+        typer.echo(f"  {i}. {label}")
+    typer.echo()
+    while True:
+        choice = typer.prompt("Choose (1-3)", default="1")
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(AGENT_CHOICES):
+                return AGENT_CHOICES[idx][0]
+        except ValueError:
+            pass
+        typer.echo("Invalid choice. Enter 1, 2, or 3.")
+
+
 @app.command("install-hook")
-def install_hook():
-    """Install the Claude Code recall hook into ~/.claude/settings.json."""
+def install_hook(agent: str = typer.Option(None, help="Agent: claude, codex, copilot (interactive if omitted)")):
+    """Install the recall hook for Claude Code, Codex, or Copilot."""
     import shutil
+    agent_keys = {key for key, _, _ in AGENT_CHOICES}
+
+    if agent is None:
+        agent = _prompt_agent()
+    else:
+        agent = agent.lower()
+
+    if agent not in agent_keys:
+        typer.echo(f"Unknown agent '{agent}'. Choose: claude, codex, copilot", err=True)
+        raise typer.Exit(1)
+
     hook_bin = shutil.which("memor-hook")
     if not hook_bin:
         typer.echo("Error: 'memor-hook' not found on PATH.", err=True)
         typer.echo("  If you installed with pipx: pipx install memor-cli", err=True)
         typer.echo("  If developing locally: pip install -e .", err=True)
         raise typer.Exit(1)
-    settings_path = Path.home() / ".claude" / "settings.json"
-    _install_hook_logic(settings_path, hook_bin)
-    typer.echo(f"Hook installed: {hook_bin}")
-    typer.echo(f"Settings updated: {settings_path}")
+
+    config_path_str, agent_name = next(
+        (p, n) for k, p, n in AGENT_CHOICES if k == agent
+    )
+    config_path = Path(config_path_str).expanduser()
+
+    if agent == "claude":
+        _install_hook_logic(config_path, hook_bin)
+    elif agent == "codex":
+        _install_hook_logic_codex(config_path, hook_bin)
+    elif agent == "copilot":
+        _install_hook_logic_copilot(config_path, hook_bin)
+
+    typer.echo(f"\nHook installed for {agent_name}: {hook_bin}")
+    typer.echo(f"Config updated: {config_path}")
     typer.echo()
     typer.echo("Pre-downloading embedding model...")
     try:
