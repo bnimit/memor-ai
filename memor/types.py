@@ -27,6 +27,9 @@ class SessionUsage:
     last_turn_at: float = 0.0
 
 
+GLOBAL_PROJECT = "_global"
+
+
 @dataclass
 class Scope:
     project: str | None = None
@@ -35,7 +38,7 @@ class Scope:
     kinds: list[str] | None = None
 
     def matches(self, a: "Artifact") -> bool:
-        if self.project is not None and a.project != self.project:
+        if self.project is not None and a.project != self.project and a.project != GLOBAL_PROJECT:
             return False
         if self.since is not None and a.created_at < self.since:
             return False

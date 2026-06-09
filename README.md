@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-227%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-256%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -76,7 +76,7 @@ memor dashboard
 
 **Two background processes:**
 
-1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback, compacts duplicates, tracks session-level token usage. All local.
+1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback (positive and negative), promotes cross-project patterns to global scope, compacts duplicates, tracks session-level token usage. All local.
 2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms.
 
 **No API keys required.** Embeddings run locally via [model2vec](https://github.com/MinishLab/model2vec) (potion-base-8M, 256-dim). Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
@@ -109,7 +109,12 @@ This means a relevant decision from yesterday beats a vaguely-related chunk from
 
 ### Feedback Loop
 
-Memor tracks whether recalled memories actually get used by the agent. After each session, the daemon analyzes the transcript to detect if recalled content appeared in the agent's responses. Memories that consistently prove useful get quality boosts; memories never recalled in 30+ days get automatically deactivated. Near-duplicate memories are compacted into one.
+Memor tracks whether recalled memories actually get used by the agent — and whether they actively hurt. After each session, the daemon analyzes the transcript in both directions:
+
+- **Positive signal** — n-gram overlap or semantic similarity between recalled content and the agent's response. Memories that consistently prove useful get quality boosts.
+- **Negative signal** — user rejection ("no that's wrong", "we switched to X") or assistant contradiction ("however, looking at the current code, we actually use Y"). Memories that get corrected receive a quality penalty, making them less likely to be recalled next time.
+
+The quality formula is Bayesian: `(uses - negatives + 1) / (recalls + 2)`. One correction weighs as much as one positive use, so harmful memories drop fast. Memories never recalled in 30+ days get automatically deactivated. Near-duplicate memories are compacted into one.
 
 ---
 
@@ -121,6 +126,20 @@ Memor tracks whether recalled memories actually get used by the agent. After eac
 | `memory` | Extractive distillation | Key decisions, patterns, bugfixes per session |
 
 Memories are automatically classified as `decision`, `bugfix`, `lesson`, `snippet`, or generic `extract` based on content patterns. The daemon runs a signal filter that keeps decisions, bugfixes, lessons, and code rationale while skipping noise (tool calls, file listings, boilerplate).
+
+---
+
+## Global Memories
+
+Some patterns aren't project-specific — they're yours. "Always use type hints." "Structure FastAPI apps with a `routes/` directory." "Prefer composition over inheritance."
+
+Memor detects these automatically. When the same pattern appears in **3 or more projects** (measured by embedding similarity), the daemon promotes it to a `_global` scope:
+
+- **Global memories are recalled everywhere** — they show up in every project's search results alongside project-specific memories.
+- **Source duplicates are deactivated** — the per-project copies get superseded by the single global version, reducing clutter.
+- **No manual tagging** — promotion is fully automatic, based on cross-project clustering.
+
+This means your coding habits and preferences follow you into new projects from the first prompt, without you having to re-explain anything.
 
 ---
 
@@ -180,7 +199,8 @@ memor/
 +-- project.py            Git-root project resolver (filesystem-aware)
 +-- recall.py             Shared recall core (used by hook + skill)
 +-- redact.py             Secret detection and redaction at ingest
-+-- feedback.py           Implicit feedback analyzer (usage detection)
++-- feedback.py           Feedback analyzer (positive usage + negative signals)
++-- global_memories.py    Cross-project promotion to _global scope
 |
 +-- retrieve/
 |   +-- retriever.py      Hybrid retrieval (dense + BM25, RRF) + relevance gate + scoring
@@ -254,7 +274,7 @@ cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest  # 215 tests
+pytest  # 251 tests
 ```
 
 ---

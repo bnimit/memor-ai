@@ -267,6 +267,16 @@ def run_poll_cycle(
         except Exception:
             pass
 
+    # Promote cross-project patterns to global scope
+    if new_ingested:
+        try:
+            from memor.global_memories import run_promotion
+            promoted = run_promotion(store, embedder, min_projects=3)
+            if promoted > 0:
+                print(f"  promoted {promoted} memories to global scope")
+        except Exception:
+            pass
+
     # Compact near-duplicate memories (run occasionally, not every cycle)
     if new_ingested:
         try:
