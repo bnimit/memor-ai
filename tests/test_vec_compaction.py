@@ -80,3 +80,33 @@ def test_add_artifacts_re_add_no_extra_chunks(tmp_path):
 
     rowids_after = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
     assert rowids_after == 3
+
+
+def test_rebuild_vec_index(tmp_path):
+    s, e, arts = _make_store(tmp_path, n=10)
+    for a in arts[:5]:
+        s.deactivate(a.id, superseded_by=arts[5].id)
+
+    active_before = s.db.execute(
+        "SELECT COUNT(*) as c FROM artifacts WHERE active=1").fetchone()["c"]
+    assert active_before == 5
+
+    result = s.rebuild_vec_index(e)
+    assert result["vectors_reindexed"] == 5
+
+    vec_count = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
+    assert vec_count == 5
+
+    from memor.types import Scope
+    hits = s.search(e.embed(["topic 7"])[0], Scope(project="proj"), k=3)
+    assert len(hits) > 0
+
+
+def test_rebuild_chunk_size_selection(tmp_path):
+    from memor.store.sqlite_store import _choose_chunk_size
+    assert _choose_chunk_size(500) == 64
+    assert _choose_chunk_size(1000) == 256
+    assert _choose_chunk_size(5000) == 256
+    assert _choose_chunk_size(10000) == 512
+    assert _choose_chunk_size(50000) == 512
+    assert _choose_chunk_size(100000) == 1024

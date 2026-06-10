@@ -7,6 +7,15 @@ from memor.types import Artifact, Scope, SessionUsage
 def _serialize(v: list[float]) -> bytes:
     return struct.pack("%sf" % len(v), *v)
 
+def _choose_chunk_size(active_count: int) -> int:
+    if active_count < 1000:
+        return 64
+    if active_count < 10000:
+        return 256
+    if active_count < 100000:
+        return 512
+    return 1024
+
 class SqliteStore:
     def __init__(self, path: str, dim: int):
         self.dim = dim
@@ -184,6 +193,49 @@ class SqliteStore:
         n = self.db.execute("SELECT COUNT(*) AS c FROM fts_artifacts").fetchone()["c"]
         self.db.commit()
         return n
+
+    def rebuild_vec_index(self, embedder) -> dict:
+        import time as _time
+        start = _time.time()
+        chunk_count_before = self.db.execute(
+            "SELECT COUNT(*) as c FROM vec_artifacts_chunks").fetchone()["c"]
+
+        rows = self.db.execute(
+            "SELECT id, text, rowid FROM artifacts WHERE active=1"
+        ).fetchall()
+        texts = [r["text"] for r in rows]
+        rowids = [r["rowid"] for r in rows]
+
+        if texts:
+            vectors = embedder.embed(texts)
+        else:
+            vectors = []
+
+        self.db.execute("DROP TABLE IF EXISTS vec_artifacts")
+        chunk_size = _choose_chunk_size(len(rows))
+        self.db.execute(
+            f"CREATE VIRTUAL TABLE vec_artifacts USING vec0("
+            f"embedding float[{self.dim}], chunk_size={chunk_size})")
+
+        cur = self.db.cursor()
+        for rowid, vec in zip(rowids, vectors):
+            cur.execute("INSERT INTO vec_artifacts(rowid, embedding) VALUES(?,?)",
+                        (rowid, _serialize(vec)))
+        self.db.commit()
+
+        self.db.execute("VACUUM")
+
+        chunk_count_after = self.db.execute(
+            "SELECT COUNT(*) as c FROM vec_artifacts_chunks").fetchone()["c"]
+        elapsed = round((_time.time() - start) * 1000, 1)
+
+        return {
+            "before_chunks": chunk_count_before,
+            "after_chunks": chunk_count_after,
+            "vectors_reindexed": len(rows),
+            "chunk_size": chunk_size,
+            "duration_ms": elapsed,
+        }
 
     def search_lexical(self, query: str, scope: Scope, k: int) -> list[tuple[Artifact, float]]:
         """Lexical BM25 search over artifact text via FTS5. Returns
