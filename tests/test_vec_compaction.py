@@ -174,3 +174,29 @@ def test_dashboard_reuses_store(tmp_path):
     r2 = client.get("/api/health")
     assert r1.status_code == 200
     assert r2.status_code == 200
+
+
+def test_dashboard_projects_hides_inactive(tmp_path):
+    """Projects with only raw chunks and no recalls/memories should be hidden."""
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+
+    active_art = Artifact(id="m1", kind="memory", project="active-proj", source="distill",
+                          text="a distilled memory", token_count=5, created_at=100.0, meta={})
+    inactive_art = Artifact(id="c1", kind="session_chunk", project="dormant-proj", source="ingest",
+                            text="raw chunk only", token_count=10, created_at=100.0, meta={})
+    s.add_artifacts([active_art, inactive_art], e.embed(["a distilled memory", "raw chunk only"]))
+
+    from memor.dashboard.server import create_app
+    from starlette.testclient import TestClient
+
+    app = create_app(db_path)
+    client = TestClient(app)
+
+    resp = client.get("/api/projects")
+    assert resp.status_code == 200
+    projects = resp.json()
+    project_names = [p["project"] for p in projects]
+    assert "active-proj" in project_names
+    assert "dormant-proj" not in project_names

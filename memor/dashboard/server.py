@@ -67,6 +67,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
                    MAX(created_at) as last_activity
             FROM artifacts WHERE active=1
             GROUP BY project
+            HAVING memories > 0 OR project IN (
+                SELECT DISTINCT project FROM recall_log
+            )
             ORDER BY artifacts DESC
         """).fetchall()
 
