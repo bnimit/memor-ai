@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-285%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-274%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -89,7 +89,7 @@ A single `memor-hook` binary auto-detects which agent is calling it — no separ
 
 **Two background processes:**
 
-1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback (positive and negative), promotes cross-project patterns to global scope, compacts duplicates, auto-compacts the vector index when bloated, tracks session-level token usage. All local.
+1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback (positive and negative), promotes cross-project patterns to global scope, compacts duplicates, tracks session-level token usage. All local.
 2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms. Works across Claude Code, Codex, and Copilot.
 
 **No API keys required.** Embeddings run locally via [model2vec](https://github.com/MinishLab/model2vec) (potion-base-8M, 256-dim). Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
@@ -189,7 +189,6 @@ memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything
 memor reingest --project <name>      Re-ingest only one project
 memor forget-stale                   Deactivate memories unused for 30+ days
-memor compact                        Rebuild vector index, reclaim wasted space
 memor scan                           Audit DB for leaked secrets
 memor scan --purge                   Redact secrets in place
 memor setup-model                    Download/retry the embedding model
@@ -291,7 +290,7 @@ cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest  # 285 tests
+pytest  # 274 tests
 ```
 
 ---
