@@ -67,17 +67,19 @@ def create_app(db_path: str | None = None) -> FastAPI:
                    MAX(created_at) as last_activity
             FROM artifacts WHERE active=1
             GROUP BY project
-            HAVING memories > 0 OR project IN (
-                SELECT DISTINCT project FROM recall_log
-            )
             ORDER BY artifacts DESC
         """).fetchall()
 
+        active_rows = [
+            r for r in artifact_rows
+            if (r["memories"] or 0) > 0 or r["project"] in recall_projects
+        ]
+
         if not recall_stats:
-            return [dict(r) for r in artifact_rows]
+            return [dict(r) for r in active_rows]
 
         result = list(recall_stats)
-        for r in artifact_rows:
+        for r in active_rows:
             if r["project"] not in recall_projects:
                 result.append(dict(r))
         return result

@@ -192,7 +192,8 @@ def should_compact(store: SqliteStore) -> bool:
             "SELECT COUNT(*) as c FROM vec_artifacts_chunks").fetchone()["c"]
         active_count = store.db.execute(
             "SELECT COUNT(*) as c FROM artifacts WHERE active=1").fetchone()["c"]
-    except Exception:
+    except Exception as e:
+        print(f"  should_compact error: {e}")
         return False
     if chunk_count == 0 or active_count == 0:
         return False
@@ -205,7 +206,7 @@ def should_compact(store: SqliteStore) -> bool:
 def auto_compact(store: SqliteStore, embedder) -> dict | None:
     if not should_compact(store):
         return None
-    return store.rebuild_vec_index(embedder)
+    return store.rebuild_vec_index(embedder, vacuum=False)
 
 
 def run_poll_cycle(

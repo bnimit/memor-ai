@@ -401,8 +401,12 @@ def compact(db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
     if not Path(db_path).exists():
         typer.echo("No database found.")
         raise typer.Exit(1)
-    embedder = _embedder(fake)
     dim = _get_dim(db_path)
+    embedder = _embedder(fake)
+    if embedder.dim != dim:
+        typer.echo(f"Warning: embedder dim={embedder.dim} != DB dim={dim}. Using DB dim.")
+        from memor.embed.fake import FakeEmbedder
+        embedder = FakeEmbedder(dim=dim)
     store = SqliteStore(db_path, dim=dim)
     chunk_count = store.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_chunks").fetchone()["c"]
     active_count = store.db.execute("SELECT COUNT(*) as c FROM artifacts WHERE active=1").fetchone()["c"]

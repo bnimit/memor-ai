@@ -194,7 +194,7 @@ class SqliteStore:
         self.db.commit()
         return n
 
-    def rebuild_vec_index(self, embedder) -> dict:
+    def rebuild_vec_index(self, embedder, vacuum: bool = True) -> dict:
         import time as _time
         start = _time.time()
         chunk_count_before = self.db.execute(
@@ -223,7 +223,8 @@ class SqliteStore:
                         (rowid, _serialize(vec)))
         self.db.commit()
 
-        self.db.execute("VACUUM")
+        if vacuum:
+            self.db.execute("VACUUM")
 
         chunk_count_after = self.db.execute(
             "SELECT COUNT(*) as c FROM vec_artifacts_chunks").fetchone()["c"]
