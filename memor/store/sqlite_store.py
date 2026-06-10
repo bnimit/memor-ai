@@ -31,6 +31,7 @@ class SqliteStore:
         self._migrate_fts()
         self._migrate_quality_decay()
         self._migrate_negative_count()
+        self._migrate_recall_agent()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -116,6 +117,16 @@ class SqliteStore:
             try:
                 self.db.execute(
                     "ALTER TABLE memory_quality ADD COLUMN negative_count INTEGER DEFAULT 0")
+                self.db.commit()
+            except Exception:
+                pass
+
+    def _migrate_recall_agent(self):
+        """Add agent column to recall_log if missing."""
+        cols = [r[1] for r in self.db.execute("PRAGMA table_info(recall_log)").fetchall()]
+        if "agent" not in cols:
+            try:
+                self.db.execute("ALTER TABLE recall_log ADD COLUMN agent TEXT DEFAULT 'claude'")
                 self.db.commit()
             except Exception:
                 pass
@@ -328,14 +339,15 @@ class SqliteStore:
 
     def log_recall(self, project: str, query_preview: str, hits_count: int,
                    top_score: float, tokens_injected: int, latency_ms: float,
-                   status: str, session_id: str = "") -> None:
+                   status: str, session_id: str = "",
+                   agent: str = "claude") -> None:
         import time as _time
         self.db.execute(
             "INSERT INTO recall_log(timestamp,project,query_preview,hits_count,"
-            "top_score,tokens_injected,latency_ms,status,session_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
+            "top_score,tokens_injected,latency_ms,status,session_id,agent) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
             (_time.time(), project, query_preview[:100], hits_count, top_score,
-             tokens_injected, latency_ms, status, session_id))
+             tokens_injected, latency_ms, status, session_id, agent))
         self.db.commit()
 
     def get_recall_stats(self) -> dict:
@@ -365,6 +377,18 @@ class SqliteStore:
                    SUM(CASE WHEN status='extractive_only' THEN 1 ELSE 0 END) as extractive_count
             FROM recall_log
             GROUP BY project
+            ORDER BY recalls DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_agent_breakdown(self) -> list[dict]:
+        rows = self.db.execute("""
+            SELECT COALESCE(agent, 'claude') as agent,
+                   COUNT(*) as recalls,
+                   SUM(CASE WHEN hits_count > 0 THEN 1 ELSE 0 END) as hits,
+                   AVG(latency_ms) as avg_latency
+            FROM recall_log
+            GROUP BY COALESCE(agent, 'claude')
             ORDER BY recalls DESC
         """).fetchall()
         return [dict(r) for r in rows]

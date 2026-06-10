@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude Code UserPromptSubmit hook — thin client for Memor recall.
+"""Memor recall hook — works with Claude Code, Codex, and Copilot.
 
 Tries to connect to the warm sidecar at ~/.memor/hook.sock.
 Falls back to inline execution if sidecar is unavailable.
@@ -57,12 +57,8 @@ def _inline_fallback(request: dict) -> dict:
         return handle_request(request)
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": "",
-            }
-        }
+        from memor.hook_server import detect_agent, format_hook_response
+        return format_hook_response(detect_agent(request), "")
 
 
 def main():
