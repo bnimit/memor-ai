@@ -72,6 +72,7 @@ MAINTENANCE
   memor reingest --project <name>  Re-ingest only one project
   memor distill --project <name>   Run distillation manually
   memor forget-stale               Deactivate memories not recalled in 30 days
+  memor compact                    Rebuild vector index, reclaim space
   memor scan                       Audit DB for leaked secrets
   memor scan --purge               Redact secrets in place
   memor setup-model                Download/retry the embedding model (~60MB)
@@ -389,6 +390,32 @@ def forget_stale(days: int = typer.Option(30, help="Deactivate memories not reca
         typer.confirm(f"Deactivate {len(stale)} memories not recalled in {days} days?", abort=True)
     count = s.deactivate_stale(days)
     typer.echo(f"Deactivated {count} stale memories.")
+
+
+@app.command("compact")
+def compact(db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+            fake: bool = False,
+            confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation")):
+    """Rebuild the vector index to reclaim wasted space."""
+    db_path = _db_path(db)
+    if not Path(db_path).exists():
+        typer.echo("No database found.")
+        raise typer.Exit(1)
+    embedder = _embedder(fake)
+    dim = _get_dim(db_path)
+    store = SqliteStore(db_path, dim=dim)
+    chunk_count = store.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_chunks").fetchone()["c"]
+    active_count = store.db.execute("SELECT COUNT(*) as c FROM artifacts WHERE active=1").fetchone()["c"]
+    db_size_mb = round(Path(db_path).stat().st_size / 1_048_576, 1)
+    typer.echo(f"Current: {chunk_count} chunks, {active_count} active vectors, {db_size_mb} MB")
+    if not confirm:
+        typer.confirm("Rebuild vector index?", abort=True)
+    typer.echo("Compacting...")
+    result = store.rebuild_vec_index(embedder)
+    db_size_after = round(Path(db_path).stat().st_size / 1_048_576, 1)
+    typer.echo(f"Done: {result['vectors_reindexed']} vectors reindexed in {result['duration_ms']}ms")
+    typer.echo(f"Chunks: {result['before_chunks']} -> {result['after_chunks']} (chunk_size={result['chunk_size']})")
+    typer.echo(f"DB size: {db_size_mb} MB -> {db_size_after} MB")
 
 
 @app.command("scan")

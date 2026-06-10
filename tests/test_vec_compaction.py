@@ -110,3 +110,21 @@ def test_rebuild_chunk_size_selection(tmp_path):
     assert _choose_chunk_size(10000) == 512
     assert _choose_chunk_size(50000) == 512
     assert _choose_chunk_size(100000) == 1024
+
+
+def test_compact_cli_command(tmp_path):
+    from typer.testing import CliRunner
+    from memor.cli import app
+
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    arts = [Artifact(id=f"a{i}", kind="memory", project="p", source="distill",
+                     text=f"text {i}", token_count=3, created_at=100.0 + i,
+                     meta={"mem_type": "decision"}) for i in range(3)]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["compact", "--db", db_path, "--fake", "--yes"])
+    assert result.exit_code == 0
+    assert "reindexed" in result.output.lower()
