@@ -126,12 +126,15 @@ class SqliteStore:
     def add_artifacts(self, artifacts: list[Artifact], vectors: list[list[float]]) -> None:
         cur = self.db.cursor()
         for a, v in zip(artifacts, vectors):
+            old = cur.execute("SELECT rowid FROM artifacts WHERE id=?", (a.id,)).fetchone()
+            if old:
+                cur.execute("DELETE FROM vec_artifacts WHERE rowid=?", (old[0],))
             cur.execute(
               "INSERT OR REPLACE INTO artifacts(id,kind,project,source,text,token_count,created_at,meta,active,superseded_by)"
               " VALUES(?,?,?,?,?,?,?,?,1,NULL)",
               (a.id, a.kind, a.project, a.source, a.text, a.token_count, a.created_at, json.dumps(a.meta)))
             rowid = cur.execute("SELECT rowid FROM artifacts WHERE id=?", (a.id,)).fetchone()[0]
-            cur.execute("INSERT OR REPLACE INTO vec_artifacts(rowid, embedding) VALUES(?,?)",
+            cur.execute("INSERT INTO vec_artifacts(rowid, embedding) VALUES(?,?)",
                         (rowid, _serialize(v)))
             cur.execute("DELETE FROM fts_artifacts WHERE id=?", (a.id,))
             cur.execute("INSERT INTO fts_artifacts(id, text) VALUES(?,?)", (a.id, a.text))
@@ -225,7 +228,15 @@ class SqliteStore:
         """, (*ids, *types, hops, *types)).fetchall()
         return [self._row_to_artifact(r) for r in rows]
 
+    def _deactivate_artifact(self, artifact_id: str) -> None:
+        row = self.db.execute(
+            "SELECT rowid FROM artifacts WHERE id=?", (artifact_id,)).fetchone()
+        if row:
+            self.db.execute("DELETE FROM vec_artifacts WHERE rowid=?", (row[0],))
+            self.db.execute("DELETE FROM fts_artifacts WHERE id=?", (artifact_id,))
+
     def deactivate(self, artifact_id: str, superseded_by: str) -> None:
+        self._deactivate_artifact(artifact_id)
         self.db.execute("UPDATE artifacts SET active=0, superseded_by=? WHERE id=?",
                         (superseded_by, artifact_id))
         self.add_edge(superseded_by, artifact_id, "supersedes")
@@ -405,6 +416,7 @@ class SqliteStore:
         for r in rows:
             new_score = round(r["quality_score"] * factor, 4)
             if new_score < deactivate_floor:
+                self._deactivate_artifact(r["artifact_id"])
                 self.db.execute("UPDATE artifacts SET active=0 WHERE id=?",
                                 (r["artifact_id"],))
             self.db.execute(
@@ -417,6 +429,7 @@ class SqliteStore:
     def deactivate_stale(self, days: int = 30) -> int:
         ids = self.get_stale_memories(days)
         for aid in ids:
+            self._deactivate_artifact(aid)
             self.db.execute("UPDATE artifacts SET active=0 WHERE id=?", (aid,))
         self.db.commit()
         return len(ids)
