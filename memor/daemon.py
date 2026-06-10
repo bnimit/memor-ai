@@ -186,6 +186,28 @@ def compact_memories(store: SqliteStore, embedder) -> int:
     return deactivated
 
 
+def should_compact(store: SqliteStore) -> bool:
+    try:
+        chunk_count = store.db.execute(
+            "SELECT COUNT(*) as c FROM vec_artifacts_chunks").fetchone()["c"]
+        active_count = store.db.execute(
+            "SELECT COUNT(*) as c FROM artifacts WHERE active=1").fetchone()["c"]
+    except Exception:
+        return False
+    if chunk_count == 0 or active_count == 0:
+        return False
+    from memor.store.sqlite_store import _choose_chunk_size
+    chunk_size = _choose_chunk_size(active_count)
+    ideal_chunks = max(1, active_count // chunk_size + 1)
+    return chunk_count > ideal_chunks * 2
+
+
+def auto_compact(store: SqliteStore, embedder) -> dict | None:
+    if not should_compact(store):
+        return None
+    return store.rebuild_vec_index(embedder)
+
+
 def run_poll_cycle(
     state: dict[str, float],
     store: SqliteStore,
@@ -283,6 +305,16 @@ def run_poll_cycle(
             compacted = compact_memories(store, embedder)
             if compacted > 0:
                 print(f"  compacted {compacted} near-duplicate memories")
+        except Exception:
+            pass
+
+    # Auto-compact vec index if bloated
+    if new_ingested:
+        try:
+            result = auto_compact(store, embedder)
+            if result:
+                print(f"  vec compact: {result['before_chunks']} -> {result['after_chunks']} chunks "
+                      f"({result['vectors_reindexed']} vectors, {result['duration_ms']}ms)")
         except Exception:
             pass
 

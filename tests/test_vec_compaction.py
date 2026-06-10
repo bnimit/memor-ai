@@ -128,3 +128,29 @@ def test_compact_cli_command(tmp_path):
     result = runner.invoke(app, ["compact", "--db", db_path, "--fake", "--yes"])
     assert result.exit_code == 0
     assert "reindexed" in result.output.lower()
+
+
+def test_auto_compact_skips_when_healthy(tmp_path):
+    from memor.daemon import should_compact
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    arts = [Artifact(id=f"a{i}", kind="memory", project="p", source="distill",
+                     text=f"text {i}", token_count=3, created_at=100.0 + i,
+                     meta={"mem_type": "decision"}) for i in range(3)]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+
+    assert should_compact(s) is False
+
+
+def test_auto_compact_returns_none_when_healthy(tmp_path):
+    from memor.daemon import auto_compact
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    arts = [Artifact(id=f"a{i}", kind="memory", project="p", source="distill",
+                     text=f"text {i}", token_count=3, created_at=100.0 + i,
+                     meta={"mem_type": "decision"}) for i in range(3)]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+
+    assert auto_compact(s, e) is None
