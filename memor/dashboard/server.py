@@ -14,9 +14,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     app = FastAPI(title="Memor Dashboard")
     _db_path = db_path
+    _cached_store: SqliteStore | None = None
 
     def _store() -> SqliteStore:
-        return SqliteStore(_db_path, dim=_get_dim(_db_path))
+        nonlocal _cached_store
+        if _cached_store is None:
+            _cached_store = SqliteStore(_db_path, dim=_get_dim(_db_path))
+        return _cached_store
 
     @app.get("/", response_class=HTMLResponse)
     def index():
@@ -66,11 +70,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
             ORDER BY artifacts DESC
         """).fetchall()
 
+        active_rows = [
+            r for r in artifact_rows
+            if (r["memories"] or 0) > 0 or r["project"] in recall_projects
+        ]
+
         if not recall_stats:
-            return [dict(r) for r in artifact_rows]
+            return [dict(r) for r in active_rows]
 
         result = list(recall_stats)
-        for r in artifact_rows:
+        for r in active_rows:
             if r["project"] not in recall_projects:
                 result.append(dict(r))
         return result

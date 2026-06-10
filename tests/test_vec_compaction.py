@@ -1,0 +1,202 @@
+"""Tests for vec storage bloat fix: deactivation cleanup, rebuild, auto-compact."""
+from memor.store.sqlite_store import SqliteStore, _serialize
+from memor.embed.fake import FakeEmbedder
+from memor.types import Artifact
+
+
+def _make_store(tmp_path, n=5):
+    """Create a store with n artifacts and return (store, embedder, artifacts)."""
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    arts = []
+    for i in range(n):
+        a = Artifact(
+            id=f"art-{i}", kind="memory", project="proj", source="distill",
+            text=f"memory about topic {i}", token_count=5,
+            created_at=100.0 + i, meta={"mem_type": "decision", "session_id": "s1"})
+        arts.append(a)
+    vecs = e.embed([a.text for a in arts])
+    s.add_artifacts(arts, vecs)
+    return s, e, arts
+
+
+def test_deactivate_cleans_vec_and_fts(tmp_path):
+    s, e, arts = _make_store(tmp_path)
+    vec_count_before = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
+    fts_count_before = s.db.execute("SELECT COUNT(*) as c FROM fts_artifacts").fetchone()["c"]
+    assert vec_count_before == 5
+    assert fts_count_before == 5
+
+    s.deactivate("art-2", superseded_by="art-3")
+
+    vec_count_after = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
+    fts_count_after = s.db.execute("SELECT COUNT(*) as c FROM fts_artifacts").fetchone()["c"]
+    assert vec_count_after == 4
+    assert fts_count_after == 4
+
+    row = s.db.execute("SELECT active FROM artifacts WHERE id='art-2'").fetchone()
+    assert row["active"] == 0
+
+
+def test_deactivate_stale_cleans_vec(tmp_path):
+    s, e, arts = _make_store(tmp_path)
+    vec_before = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
+    assert vec_before == 5
+
+    count = s.deactivate_stale(days=0)
+    assert count > 0
+
+    vec_after = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
+    assert vec_after < vec_before
+
+
+def test_decay_quality_cleans_vec(tmp_path):
+    s, e, arts = _make_store(tmp_path)
+    for a in arts[:2]:
+        s.db.execute(
+            "INSERT INTO memory_quality(artifact_id, recall_count, use_count, quality_score, last_recalled) "
+            "VALUES(?, 10, 0, 0.02, ?)", (a.id, 1.0))
+    s.db.commit()
+
+    vec_before = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
+    assert vec_before == 5
+
+    decayed = s.decay_quality(stale_days=0, factor=0.5, deactivate_floor=0.03)
+    assert decayed >= 2
+
+    vec_after = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
+    assert vec_after < vec_before
+
+
+def test_add_artifacts_re_add_no_extra_chunks(tmp_path):
+    """Re-adding the same artifact should not leak extra vec0 chunk slots."""
+    s, e, arts = _make_store(tmp_path, n=3)
+    rowids_before = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
+    assert rowids_before == 3
+
+    vecs = e.embed([a.text for a in arts])
+    s.add_artifacts(arts, vecs)
+
+    rowids_after = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
+    assert rowids_after == 3
+
+
+def test_rebuild_vec_index(tmp_path):
+    s, e, arts = _make_store(tmp_path, n=10)
+    for a in arts[:5]:
+        s.deactivate(a.id, superseded_by=arts[5].id)
+
+    active_before = s.db.execute(
+        "SELECT COUNT(*) as c FROM artifacts WHERE active=1").fetchone()["c"]
+    assert active_before == 5
+
+    result = s.rebuild_vec_index(e)
+    assert result["vectors_reindexed"] == 5
+
+    vec_count = s.db.execute("SELECT COUNT(*) as c FROM vec_artifacts_rowids").fetchone()["c"]
+    assert vec_count == 5
+
+    from memor.types import Scope
+    hits = s.search(e.embed(["topic 7"])[0], Scope(project="proj"), k=3)
+    assert len(hits) > 0
+
+
+def test_rebuild_chunk_size_selection(tmp_path):
+    from memor.store.sqlite_store import _choose_chunk_size
+    assert _choose_chunk_size(500) == 64
+    assert _choose_chunk_size(1000) == 256
+    assert _choose_chunk_size(5000) == 256
+    assert _choose_chunk_size(10000) == 512
+    assert _choose_chunk_size(50000) == 512
+    assert _choose_chunk_size(100000) == 1024
+
+
+def test_compact_cli_command(tmp_path):
+    from typer.testing import CliRunner
+    from memor.cli import app
+
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    arts = [Artifact(id=f"a{i}", kind="memory", project="p", source="distill",
+                     text=f"text {i}", token_count=3, created_at=100.0 + i,
+                     meta={"mem_type": "decision"}) for i in range(3)]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["compact", "--db", db_path, "--fake", "--yes"])
+    assert result.exit_code == 0
+    assert "reindexed" in result.output.lower()
+
+
+def test_auto_compact_skips_when_healthy(tmp_path):
+    from memor.daemon import should_compact
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    arts = [Artifact(id=f"a{i}", kind="memory", project="p", source="distill",
+                     text=f"text {i}", token_count=3, created_at=100.0 + i,
+                     meta={"mem_type": "decision"}) for i in range(3)]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+
+    assert should_compact(s) is False
+
+
+def test_auto_compact_returns_none_when_healthy(tmp_path):
+    from memor.daemon import auto_compact
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    arts = [Artifact(id=f"a{i}", kind="memory", project="p", source="distill",
+                     text=f"text {i}", token_count=3, created_at=100.0 + i,
+                     meta={"mem_type": "decision"}) for i in range(3)]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+
+    assert auto_compact(s, e) is None
+
+
+def test_dashboard_reuses_store(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    a = Artifact(id="a1", kind="memory", project="p", source="distill",
+                 text="test", token_count=1, created_at=100.0, meta={})
+    s.add_artifacts([a], e.embed(["test"]))
+
+    from memor.dashboard.server import create_app
+    from starlette.testclient import TestClient
+
+    app = create_app(db_path)
+    client = TestClient(app)
+
+    r1 = client.get("/api/health")
+    r2 = client.get("/api/health")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+
+
+def test_dashboard_projects_hides_inactive(tmp_path):
+    """Projects with only raw chunks and no recalls/memories should be hidden."""
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+
+    active_art = Artifact(id="m1", kind="memory", project="active-proj", source="distill",
+                          text="a distilled memory", token_count=5, created_at=100.0, meta={})
+    inactive_art = Artifact(id="c1", kind="session_chunk", project="dormant-proj", source="ingest",
+                            text="raw chunk only", token_count=10, created_at=100.0, meta={})
+    s.add_artifacts([active_art, inactive_art], e.embed(["a distilled memory", "raw chunk only"]))
+
+    from memor.dashboard.server import create_app
+    from starlette.testclient import TestClient
+
+    app = create_app(db_path)
+    client = TestClient(app)
+
+    resp = client.get("/api/projects")
+    assert resp.status_code == 200
+    projects = resp.json()
+    project_names = [p["project"] for p in projects]
+    assert "active-proj" in project_names
+    assert "dormant-proj" not in project_names

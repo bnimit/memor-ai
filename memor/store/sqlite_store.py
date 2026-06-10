@@ -7,6 +7,15 @@ from memor.types import Artifact, Scope, SessionUsage
 def _serialize(v: list[float]) -> bytes:
     return struct.pack("%sf" % len(v), *v)
 
+def _choose_chunk_size(active_count: int) -> int:
+    if active_count < 1000:
+        return 64
+    if active_count < 10000:
+        return 256
+    if active_count < 100000:
+        return 512
+    return 1024
+
 class SqliteStore:
     def __init__(self, path: str, dim: int):
         self.dim = dim
@@ -126,12 +135,15 @@ class SqliteStore:
     def add_artifacts(self, artifacts: list[Artifact], vectors: list[list[float]]) -> None:
         cur = self.db.cursor()
         for a, v in zip(artifacts, vectors):
+            old = cur.execute("SELECT rowid FROM artifacts WHERE id=?", (a.id,)).fetchone()
+            if old:
+                cur.execute("DELETE FROM vec_artifacts WHERE rowid=?", (old[0],))
             cur.execute(
               "INSERT OR REPLACE INTO artifacts(id,kind,project,source,text,token_count,created_at,meta,active,superseded_by)"
               " VALUES(?,?,?,?,?,?,?,?,1,NULL)",
               (a.id, a.kind, a.project, a.source, a.text, a.token_count, a.created_at, json.dumps(a.meta)))
             rowid = cur.execute("SELECT rowid FROM artifacts WHERE id=?", (a.id,)).fetchone()[0]
-            cur.execute("INSERT OR REPLACE INTO vec_artifacts(rowid, embedding) VALUES(?,?)",
+            cur.execute("INSERT INTO vec_artifacts(rowid, embedding) VALUES(?,?)",
                         (rowid, _serialize(v)))
             cur.execute("DELETE FROM fts_artifacts WHERE id=?", (a.id,))
             cur.execute("INSERT INTO fts_artifacts(id, text) VALUES(?,?)", (a.id, a.text))
@@ -182,6 +194,50 @@ class SqliteStore:
         self.db.commit()
         return n
 
+    def rebuild_vec_index(self, embedder, vacuum: bool = True) -> dict:
+        import time as _time
+        start = _time.time()
+        chunk_count_before = self.db.execute(
+            "SELECT COUNT(*) as c FROM vec_artifacts_chunks").fetchone()["c"]
+
+        rows = self.db.execute(
+            "SELECT id, text, rowid FROM artifacts WHERE active=1"
+        ).fetchall()
+        texts = [r["text"] for r in rows]
+        rowids = [r["rowid"] for r in rows]
+
+        if texts:
+            vectors = embedder.embed(texts)
+        else:
+            vectors = []
+
+        self.db.execute("DROP TABLE IF EXISTS vec_artifacts")
+        chunk_size = _choose_chunk_size(len(rows))
+        self.db.execute(
+            f"CREATE VIRTUAL TABLE vec_artifacts USING vec0("
+            f"embedding float[{self.dim}], chunk_size={chunk_size})")
+
+        cur = self.db.cursor()
+        for rowid, vec in zip(rowids, vectors):
+            cur.execute("INSERT INTO vec_artifacts(rowid, embedding) VALUES(?,?)",
+                        (rowid, _serialize(vec)))
+        self.db.commit()
+
+        if vacuum:
+            self.db.execute("VACUUM")
+
+        chunk_count_after = self.db.execute(
+            "SELECT COUNT(*) as c FROM vec_artifacts_chunks").fetchone()["c"]
+        elapsed = round((_time.time() - start) * 1000, 1)
+
+        return {
+            "before_chunks": chunk_count_before,
+            "after_chunks": chunk_count_after,
+            "vectors_reindexed": len(rows),
+            "chunk_size": chunk_size,
+            "duration_ms": elapsed,
+        }
+
     def search_lexical(self, query: str, scope: Scope, k: int) -> list[tuple[Artifact, float]]:
         """Lexical BM25 search over artifact text via FTS5. Returns
         (artifact, bm25_score) ordered best-first (lower bm25 = better match).
@@ -225,7 +281,15 @@ class SqliteStore:
         """, (*ids, *types, hops, *types)).fetchall()
         return [self._row_to_artifact(r) for r in rows]
 
+    def _deactivate_artifact(self, artifact_id: str) -> None:
+        row = self.db.execute(
+            "SELECT rowid FROM artifacts WHERE id=?", (artifact_id,)).fetchone()
+        if row:
+            self.db.execute("DELETE FROM vec_artifacts WHERE rowid=?", (row[0],))
+            self.db.execute("DELETE FROM fts_artifacts WHERE id=?", (artifact_id,))
+
     def deactivate(self, artifact_id: str, superseded_by: str) -> None:
+        self._deactivate_artifact(artifact_id)
         self.db.execute("UPDATE artifacts SET active=0, superseded_by=? WHERE id=?",
                         (superseded_by, artifact_id))
         self.add_edge(superseded_by, artifact_id, "supersedes")
@@ -405,6 +469,7 @@ class SqliteStore:
         for r in rows:
             new_score = round(r["quality_score"] * factor, 4)
             if new_score < deactivate_floor:
+                self._deactivate_artifact(r["artifact_id"])
                 self.db.execute("UPDATE artifacts SET active=0 WHERE id=?",
                                 (r["artifact_id"],))
             self.db.execute(
@@ -417,6 +482,7 @@ class SqliteStore:
     def deactivate_stale(self, days: int = 30) -> int:
         ids = self.get_stale_memories(days)
         for aid in ids:
+            self._deactivate_artifact(aid)
             self.db.execute("UPDATE artifacts SET active=0 WHERE id=?", (aid,))
         self.db.commit()
         return len(ids)
