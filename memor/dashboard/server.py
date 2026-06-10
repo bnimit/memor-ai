@@ -14,9 +14,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     app = FastAPI(title="Memor Dashboard")
     _db_path = db_path
+    _cached_store: SqliteStore | None = None
 
     def _store() -> SqliteStore:
-        return SqliteStore(_db_path, dim=_get_dim(_db_path))
+        nonlocal _cached_store
+        if _cached_store is None:
+            _cached_store = SqliteStore(_db_path, dim=_get_dim(_db_path))
+        return _cached_store
 
     @app.get("/", response_class=HTMLResponse)
     def index():

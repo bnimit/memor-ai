@@ -154,3 +154,23 @@ def test_auto_compact_returns_none_when_healthy(tmp_path):
     s.add_artifacts(arts, e.embed([a.text for a in arts]))
 
     assert auto_compact(s, e) is None
+
+
+def test_dashboard_reuses_store(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    a = Artifact(id="a1", kind="memory", project="p", source="distill",
+                 text="test", token_count=1, created_at=100.0, meta={})
+    s.add_artifacts([a], e.embed(["test"]))
+
+    from memor.dashboard.server import create_app
+    from starlette.testclient import TestClient
+
+    app = create_app(db_path)
+    client = TestClient(app)
+
+    r1 = client.get("/api/health")
+    r2 = client.get("/api/health")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
