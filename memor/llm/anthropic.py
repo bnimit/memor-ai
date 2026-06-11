@@ -6,7 +6,10 @@ class AnthropicLLM:
                  *, max_retries: int = 8):
         import anthropic
 
-        self.client = anthropic.Anthropic(api_key=api_key)
+        # Disable the SDK's own (silent) retries so our visible backoff below
+        # is the single source of waiting — otherwise the SDK sleeps on 429
+        # internally before raising, which looks like a hang.
+        self.client = anthropic.Anthropic(api_key=api_key, max_retries=0)
         self.model = model
         self.max_retries = max_retries
 

@@ -139,8 +139,11 @@ def run_case(case: CounterfactualCase, *, store, embedder, llm,
 def run_suite(cases: list[CounterfactualCase], *, store, embedder, llm,
               k: int = 8) -> dict:
     verdicts = []
-    for c in cases:
+    n = len(cases)
+    for i, c in enumerate(cases, 1):
+        print(f"  [{i}/{n}] judging case...", end="", flush=True)
         v = run_case(c, store=store, embedder=embedder, llm=llm, k=k)
+        print(f" {v.outcome.value}", flush=True)
         verdicts.append((c, v))
     verdict_list = [v for _, v in verdicts]
     summary = summarize_verdicts(verdict_list)
