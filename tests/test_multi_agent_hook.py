@@ -21,6 +21,23 @@ def test_detect_codex():
     assert detect_agent(req) == "codex"
 
 
+def test_detect_codex_by_turn_id():
+    # Codex sends a Codex-specific `turn_id` extension; this alone identifies it.
+    req = {"cwd": "/proj", "prompt": "auth flow", "session_id": "s1",
+           "hook_event_name": "UserPromptSubmit", "turn_id": "t-42"}
+    assert detect_agent(req) == "codex"
+
+
+def test_claude_with_permission_mode_is_not_codex():
+    # Regression: Claude Code sends `permission_mode` on every hook input
+    # (default|plan|acceptEdits|dontAsk|bypassPermissions). It must NOT be
+    # mistaken for Codex, which is distinguished by `model`/`turn_id`.
+    req = {"cwd": "/proj", "prompt": "auth flow", "session_id": "s1",
+           "transcript_path": "/p/t.jsonl",
+           "hook_event_name": "UserPromptSubmit", "permission_mode": "default"}
+    assert detect_agent(req) == "claude"
+
+
 def test_detect_copilot():
     req = {"cwd": "/proj", "prompt": "auth flow", "session_id": "s1",
            "hook_event_name": "userPromptSubmitted"}

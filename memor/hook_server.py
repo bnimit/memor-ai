@@ -17,7 +17,10 @@ def detect_agent(req: dict) -> str:
     event = req.get("hook_event_name", "")
     if event == "userPromptSubmitted":
         return "copilot"
-    if "model" in req or "permission_mode" in req:
+    # Codex sends `model` and a Codex-specific `turn_id` extension on its hook
+    # input; Claude Code sends neither. Do NOT key on `permission_mode` — it is
+    # a base field on every Claude Code hook input, so it is not a discriminator.
+    if "turn_id" in req or "model" in req:
         return "codex"
     return "claude"
 
