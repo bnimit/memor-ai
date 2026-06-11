@@ -17,9 +17,11 @@ def detect_agent(req: dict) -> str:
     event = req.get("hook_event_name", "")
     if event == "userPromptSubmitted":
         return "copilot"
-    # Codex sends `model` and a Codex-specific `turn_id` extension on its hook
-    # input; Claude Code sends neither. Do NOT key on `permission_mode` — it is
-    # a base field on every Claude Code hook input, so it is not a discriminator.
+    # A real Codex payload carries both `model` and a Codex-specific `turn_id`
+    # extension; Claude Code sends neither. We match on EITHER (not both) so
+    # detection still holds if a Codex version drops one field. Do NOT key on
+    # `permission_mode`: it is a base field on every Claude Code hook input, so
+    # it cannot discriminate between the two.
     if "turn_id" in req or "model" in req:
         return "codex"
     return "claude"
