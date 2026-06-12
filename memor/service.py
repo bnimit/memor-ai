@@ -76,7 +76,7 @@ def _units(memor_bin: str, *, with_dashboard: bool = True, port: int | None = No
             "label": DASHBOARD_LABEL,
             "systemd_name": "memor-dashboard",
             "description": "Memor dashboard — web UI for memory metrics",
-            "args": [memor_bin, "dashboard", "--port", str(port)],
+            "args": [memor_bin, "dashboard", "--port", str(port), "--no-open"],
             "log": DASHBOARD_LOG,
         })
     return units

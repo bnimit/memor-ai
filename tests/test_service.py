@@ -54,6 +54,8 @@ def test_units_includes_dashboard_by_default():
     assert keys == {"daemon", "dashboard"}
     dash = next(u for u in units if u["key"] == "dashboard")
     assert "dashboard" in dash["args"] and "8420" in dash["args"]
+    # As a KeepAlive background service it must never pop a browser tab.
+    assert "--no-open" in dash["args"]
     daemon = next(u for u in units if u["key"] == "daemon")
     assert daemon["args"][-1] == "daemon"
 
