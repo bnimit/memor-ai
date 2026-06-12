@@ -13,8 +13,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from memor.types import Artifact, Scope
-from memor.retrieve.retriever import Retriever
+from memor.types import Artifact
 
 
 class Outcome(enum.Enum):
@@ -114,20 +113,38 @@ def parse_verdict_json(raw: str) -> CounterfactualVerdict:
     )
 
 
-def run_case(case: CounterfactualCase, *, store, embedder, llm,
+def run_case(case: CounterfactualCase, *, store, embedder, llm, db_path,
              k: int = 8) -> CounterfactualVerdict:
-    scope = Scope(project=case.scope_project)
-    r = Retriever(store, embedder, k=k)
-    trace = r.query(case.query, scope)
+    """Judge a case using the PRODUCTION recall() path, not a bare Retriever.
 
-    if not trace.hits:
+    This mirrors what the hook actually injects: same-session exclusion,
+    the 0.3/0.15 score threshold, the per-tier token budget, and 600-char
+    truncation. Without this, the eval over-recalls (self-recall echoes and
+    sub-threshold hits production would never inject), inflating ties and
+    producing same-session "losses" that cannot happen in production.
+    """
+    from memor.query_complexity import route_query, Tier
+    from memor.recall import recall
+
+    tier = route_query(case.query)
+    if tier == Tier.SKIP:
         return CounterfactualVerdict(
             outcome=Outcome.TIE,
-            reasoning="No context recalled — nothing to evaluate",
+            reasoning="Production routes this query to SKIP — no recall would occur",
             confidence=1.0)
 
-    recalled = "\n\n".join(
-        f"[{h.artifact.kind}] {h.artifact.text}" for h in trace.hits)
+    result = recall(case.query, case.scope_project, db_path, embedder=embedder,
+                    k=tier.k, threshold=0.15, max_tokens=tier.max_tokens,
+                    session_id=case.session_id)
+
+    if not result.hit_ids:
+        return CounterfactualVerdict(
+            outcome=Outcome.TIE,
+            reasoning="No context recalled via production path — nothing to evaluate",
+            confidence=1.0)
+
+    # Judge exactly what production injects (post-exclusion/threshold/budget/truncation).
+    recalled = result.formatted_context
     holdout = "\n".join(case.holdout_texts)
 
     prompt = COUNTERFACTUAL_PROMPT.format(
@@ -136,11 +153,14 @@ def run_case(case: CounterfactualCase, *, store, embedder, llm,
     return parse_verdict_json(raw)
 
 
-def run_suite(cases: list[CounterfactualCase], *, store, embedder, llm,
+def run_suite(cases: list[CounterfactualCase], *, store, embedder, llm, db_path,
               k: int = 8) -> dict:
     verdicts = []
-    for c in cases:
-        v = run_case(c, store=store, embedder=embedder, llm=llm, k=k)
+    n = len(cases)
+    for i, c in enumerate(cases, 1):
+        print(f"  [{i}/{n}] judging case...", end="", flush=True)
+        v = run_case(c, store=store, embedder=embedder, llm=llm, db_path=db_path, k=k)
+        print(f" {v.outcome.value}", flush=True)
         verdicts.append((c, v))
     verdict_list = [v for _, v in verdicts]
     summary = summarize_verdicts(verdict_list)

@@ -218,7 +218,7 @@ def eval_counterfactual_cmd(project: str = typer.Option(...), db: str = "memor.d
         import os
         llm = OpenAICompatLLM(base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:11434/v1"),
                               api_key=os.environ.get("OPENAI_API_KEY", ""), model=llm_model)
-    summary = run_suite(cases, store=s, embedder=e, llm=llm, k=k)
+    summary = run_suite(cases, store=s, embedder=e, llm=llm, db_path=_db_path(db), k=k)
     typer.echo(json.dumps({k: v for k, v in summary.items() if k != "cases"}, indent=2))
     typer.echo("")
     typer.echo(f"  Win:  {summary['win_count']}/{summary['n_cases']} ({summary['win_pct']}%)")
