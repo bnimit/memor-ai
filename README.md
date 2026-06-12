@@ -187,6 +187,7 @@ memor service restart                Restart both services (use after `pipx upgr
 memor service stop                   Stop both background services
 memor service uninstall              Remove both background services
 memor service status                 Show daemon + dashboard status
+  (dashboard port: set MEMOR_DASHBOARD_PORT, default 8420)
 memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything
 memor reingest --project <name>      Re-ingest only one project
@@ -293,7 +294,7 @@ cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest  # 287 tests
+pytest  # 298 tests
 ```
 
 ---
