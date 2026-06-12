@@ -46,15 +46,18 @@ memor — measured memory for coding agents
 GETTING STARTED
   memor install-hook            Install the recall hook + download model
     --agent claude|codex|copilot  Choose your agent (default: claude)
-  memor service install         Start the daemon as a background service
+  memor service install         Start the daemon + dashboard as background services
   memor dashboard               Open the web dashboard at localhost:8420
 
 SERVICE MANAGEMENT
-  memor service install     Install and start as a background service (survives reboots)
-  memor service status      Check if the daemon is running
-  memor service stop        Stop the service (restarts on next login)
-  memor service uninstall   Stop and remove the service completely
+  memor service install     Install/start daemon + dashboard (survives reboots)
+    --no-dashboard            Install only the daemon
+  memor service status      Show daemon + dashboard status
+  memor service restart     Restart both (use after `pipx upgrade`)
+  memor service stop        Stop both services (restart on next login)
+  memor service uninstall   Stop and remove both services completely
   memor daemon              Run the daemon in the foreground (alternative to service)
+  (dashboard port: set MEMOR_DASHBOARD_PORT, default 8420)
 
 QUERYING
   memor query <text>        Search memories from the command line
@@ -638,11 +641,14 @@ def version():
 
 
 @service_app.command("install")
-def service_install():
-    """Install and start the daemon as a background service (survives reboots)."""
+def service_install(
+    no_dashboard: bool = typer.Option(
+        False, "--no-dashboard", help="Install only the daemon, not the dashboard."),
+):
+    """Install and start the daemon + dashboard as background services (survives reboots)."""
     from memor.service import install
     try:
-        typer.echo(install())
+        typer.echo(install(with_dashboard=not no_dashboard))
     except FileNotFoundError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1)
@@ -651,9 +657,23 @@ def service_install():
         raise typer.Exit(1)
 
 
+@service_app.command("restart")
+def service_restart():
+    """Restart both services (use after `pipx upgrade` to run the new version)."""
+    from memor.service import restart
+    try:
+        typer.echo(restart())
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Failed to restart service: {e}", err=True)
+        raise typer.Exit(1)
+
+
 @service_app.command("uninstall")
 def service_uninstall():
-    """Stop and remove the background service."""
+    """Stop and remove the background services (daemon + dashboard)."""
     from memor.service import uninstall
     typer.echo(uninstall())
 

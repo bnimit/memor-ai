@@ -36,7 +36,7 @@ memor service install
 memor daemon
 ```
 
-That's it. Every prompt now gets automatic context recall. Open the dashboard to see it working:
+That's it. Every prompt now gets automatic context recall. `memor service install` also starts the dashboard as a background service, so it's already live at http://localhost:8420 (and is recycled whenever you stop/restart/uninstall the service). To run it in the foreground instead:
 
 ```bash
 memor dashboard
@@ -181,10 +181,13 @@ memor install-hook                   Install hook + download model (interactive 
 memor daemon                         Auto-ingest + distill (background watcher)
 memor dashboard                      Web dashboard on localhost:8420
 memor version                        Print installed version
-memor service install                Run daemon as background service (launchd/systemd)
-memor service stop                   Stop the background service
-memor service uninstall              Remove the background service
-memor service status                 Check if the service is running
+memor service install                Run daemon + dashboard as background services (launchd/systemd)
+  --no-dashboard                     Install only the daemon
+memor service restart                Restart both services (use after `pipx upgrade`)
+memor service stop                   Stop both background services
+memor service uninstall              Remove both background services
+memor service status                 Show daemon + dashboard status
+  (dashboard port: set MEMOR_DASHBOARD_PORT, default 8420)
 memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything
 memor reingest --project <name>      Re-ingest only one project
@@ -291,7 +294,7 @@ cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest  # 287 tests
+pytest  # 298 tests
 ```
 
 ---
