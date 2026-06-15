@@ -1,29 +1,44 @@
 # Distilled-aware retrieval — design
 
-**Date:** 2026-06-15
+**Date:** 2026-06-15 (revised after miss autopsy)
 **Status:** Approved (design), pending implementation plan
 **Author:** Nimit Bhandari (with Claude)
 
 ## Problem
 
-Memor's retrieval surfaces a helpful prior memory in ~65% of eval cases, but in
-~20% of cases a helpful memory **exists in the store and is not surfaced**
-(RETRIEVAL_MISS). Separately, *wins* in the counterfactual eval correlate almost
-entirely with **distilled memories** (`kind='memory'`) being injected, while
-*ties* are dominated by raw `session_chunk`s. The corpus is ~85–90% raw chunks,
-so the more-valuable distilled memories get crowded out.
+Memor's retrieval fails to surface a helpful prior memory that demonstrably
+exists in the store in a meaningful fraction of cases (RETRIEVAL_MISS).
+Separately, *wins* in the counterfactual eval correlate almost entirely with
+**distilled memories** (`kind='memory'`) being injected, while *ties* are
+dominated by raw `session_chunk`s. The corpus is ~85–90% raw chunks.
 
-### Evidence (live DB, run 2026-06-14)
+### Evidence — miss autopsy (live DB, 2026-06-15)
 
-Retrieval-gap diagnostic (`scratch_retrieval_gap.py`, n=153, oracle sim ≥0.4):
+`scratch_miss_autopsy.py` traces, for each miss, where the helpful memory fell
+out of the pipeline. Helpful = top in-project artifact by **pure cosine** to the
+holdout (independent of the blended Retriever we change — see Eval gate). n=165
+cases, **77 misses**:
 
-| Bucket | Count | Share |
-|---|---|---|
-| RETRIEVED (helpful existed and found) | 99 | 65% |
-| RETRIEVAL_MISS (helpful existed, missed) | 30 | 20% |
-| VALUE_GAP (no helpful memory existed) | 24 | 16% |
+| Bucket | Count | Share | Meaning |
+|---|---|---|---|
+| **KNN_TRUNCATED** | 47 | **61%** | helpful in-project cosine-rank ~9–60, cut by `rows[:8]` |
+| **ABSENT_FROM_KNN** | 23 | 30% | global cosine-rank ≫ 200 (and in-project rank also deep) |
+| **CANDIDATE_DROPPED** | 7 | 9% | was in the top-8 candidates yet not returned |
+| LOW_SIM_TO_QUERY | 0 | 0% | — |
 
-LeverB diagnostic (`scratch_leverb_premise.py`, faithful qwen outcomes):
+Key reading of the per-miss detail:
+
+- **The dominant cause (61%) is plain truncation at the `rows[:k]` handoff, not
+  kind crowd-out and not project scoping.** In KNN_TRUNCATED, global rank ≈
+  in-project rank everywhere (e.g. 13/13, 24/24, 33/33) at high similarity
+  (0.77–0.90) — the helpful item is just past the top-8 cutoff. Returning more
+  than 8 candidates recovers these; project-scoped KNN does nothing for them.
+- **Project-scoped KNN is not worth it.** ABSENT cases have deep *in-project*
+  ranks too (214, 326, 499, 557, 1255…); a 200-deep project KNN would recover
+  only ~5 of 77 misses (~6.5%). Widening the *global* fetch catches the few with
+  global rank in the low hundreds far more cheaply.
+
+### Why distilled still matters (leverb diagnostic)
 
 | Outcome | n | % cases w/ distilled | avg distilled/case | avg raw/case |
 |---|---|---|---|---|
@@ -31,112 +46,135 @@ LeverB diagnostic (`scratch_leverb_premise.py`, faithful qwen outcomes):
 | tie | 91 | 52% | 0.74 | 3.79 |
 | loss | 25 | 60% | 1.00 | 3.04 |
 
-Corpus composition (active artifacts) is ~10% distilled, e.g. Memorable: 107
-distilled vs 986 session_chunk.
+Wins carry the most distilled and fewest raw chunks; ties the reverse. So once
+the pool is widened, biasing the *ranking* toward distilled memories is the lever
+most associated with converting ties → wins. (n=8 wins — directional only; the
+counterfactual n=148 is the real gate.)
 
-> Note: the leverb table's 25 "losses" are a small premise-check subset (sessions
-> with stored faithful-qwen outcomes) using a per-case win/tie/loss split. It is
-> **not** the authoritative do-no-harm figure. The merge guardrail below uses the
-> authoritative counterfactual eval (n=148, do-no-harm 96.6% → loss rate ~3.4%).
+> Note: the leverb "losses" are a small premise-check subset, **not** the
+> authoritative do-no-harm figure (counterfactual n=148, do-no-harm 96.6% → loss
+> rate ~3.4%), which the merge guardrail uses.
 
 ### Root cause (confirmed in code)
 
 `SqliteStore.search()` fetches `max(k*20, 200)` KNN candidates ordered by cosine,
 then returns only `rows[:k]` (k=8) **before** the retriever's kind/recency/quality
-blend runs. The kind weight (`KIND_WEIGHTS[memory]=1.3`, `kind_weight=0.15`) that
-is supposed to favor distilled memories therefore only ever operates on 8
-already-cosine-filtered items. A helpful distilled memory ranked #12 by raw cosine
-is discarded at the handoff and can never be promoted. We fetch ~200 candidates
-and throw away ~192, including the distilled ones we want.
+blend runs. So the blend — including the kind weight meant to favor distilled
+memories — only ever sees 8 already-cosine-truncated items. The autopsy confirms
+the helpful memory is typically rank ~9–60: fetched, then discarded at the
+handoff.
 
 ## Goal
 
-Stop distilled memories from being crowded out by raw session_chunks — at both the
-candidate-selection stage and the ranking stage — without regressing do-no-harm.
+Recover the helpful memories the store already holds — primarily by not
+discarding the fetched candidate pool — and bias ranking toward distilled
+memories, without regressing do-no-harm.
 
-Non-goals (explicitly out of scope): temporal supersession / staleness handling
-(#2), distillation coverage for VALUE_GAP cases, any change to ingestion or
-distillation, MCP, or the dashboard.
+Non-goals (explicitly out of scope, with reasons):
+- **Project-scoped KNN** — autopsy shows ≤6.5% payoff for high complexity.
+- Temporal supersession / staleness (#2); distillation coverage for VALUE_GAP;
+  ingestion/distillation changes; MCP.
 
 ## Design
 
-Two layers change; no new modules.
+Two layers change; no new modules. Ordered by measured leverage.
 
-### Store layer (`memor/store/sqlite_store.py`)
+### 1. Widen the candidate handoff — primary fix (store)
 
-`search()` and `search_lexical()` return a **widened, kind-stratified candidate
-pool** instead of `rows[:k]`:
+`SqliteStore.search()` / `search_lexical()` return a wider pool instead of
+`rows[:k]`:
+- Return up to `candidate_pool` (default **128**) candidates to the retriever,
+  which then blends and cuts to the final `k`. Recovers the 61% KNN_TRUNCATED
+  bucket: observed in-project ranks there run ~9–130, so 128 covers ~45 of 47;
+  the ablation tunes the exact value against latency.
+- Widen the KNN fetch from `max(k*20, 200)` to `max(k*40, 1000)` (capped at
+  sqlite-vec's 4096 limit) to also catch ABSENT cases whose global rank is in the
+  low hundreds.
+- **Batch the quality lookup.** The retriever currently calls
+  `get_quality_score()` per candidate (N+1 queries); with a 128-wide pool that
+  is the main latency risk. Replace it with a single `get_quality_scores(ids)`
+  query over the candidate set so a wider pool stays within the hook's <15ms
+  budget. This is a prerequisite for widening, not an optional extra.
+- Existing project/active/since/until/`scope.kinds` filters unchanged.
 
-1. **Widen the KNN fetch** from `max(k*20, 200)` to `max(k*40, 400)` so distilled
-   memories are well-represented in the raw candidate pool even when chunks
-   dominate by cosine.
-2. **Partition fetched rows into `memory` vs non-`memory`** and return up to
-   `pool_per_kind` (default **20**) of each. Distilled candidates are guaranteed
-   present whenever ≥1 distilled item is in the KNN fetch, regardless of how many
-   chunks outrank it by cosine. Same partition logic in `search_lexical()` (BM25).
-3. Existing project/active/since/until/`scope.kinds` filters are preserved
-   unchanged. When `scope.kinds` restricts kinds, partitioning respects it.
+### 2. Kind-stratify + reweight — secondary (store + retriever)
 
-A new `pool_per_kind` (and the widened `knn_fetch`) are parameters with the
-defaults above; callers may override.
+- In the widened pool, guarantee distilled (`kind='memory'`) representation:
+  partition the fetched rows and keep up to `pool_per_kind` (default **64**) of
+  `memory` and of non-`memory`, so distilled candidates are present whenever ≥1
+  is in the fetch. (With the pool widened to 128, this mostly matters for projects
+  where chunks dominate the near-neighbors.)
+- Raise `kind_weight` 0.15 → **0.25** so distilled candidates in the pool are
+  promoted. `KIND_WEIGHTS[memory]` stays 1.3 for the first pass.
+- The `min_similarity` cosine gate continues to run on the dense pool before
+  fusion, so weakly-relevant distilled memories are still dropped — the do-harm
+  guardrail. Because widening (not reweighting) is now the primary lever, the
+  reweight is deliberately modest to limit do-harm risk.
 
-### Retriever layer (`memor/retrieve/retriever.py`)
+### 3. CANDIDATE_DROPPED follow-up (investigate, not pre-built)
 
-- Raise `kind_weight` default 0.15 → **0.25** so distilled candidates now present
-  in the pool are promoted in the blend. `KIND_WEIGHTS[memory]` stays 1.3 for the
-  first eval pass — tuned only if the eval calls for it.
-- Add an **optional final-cut distilled floor** `min_distilled_final` (default
-  **0 = off**): a backstop that reserves up to N of the final `k` slots for the
-  top-scoring distilled memories that pass the similarity gate. Ships disabled;
-  enabled only if eval shows candidate-stage stratification + reweight did not
-  lift distilled-into-final.
-- The existing `min_similarity` cosine gate continues to run on the dense pool
-  before fusion, so irrelevant distilled memories (negative cosine) are still
-  dropped. This is the do-no-harm guardrail against injecting weak distilled
-  memories purely because they are distilled.
+The 9% that were top-8 yet dropped (sim 0.82–0.93) are most likely token-budget
+eviction or blend demotion. The implementation plan includes a short
+investigation; a fix only ships if the cause is clear and low-risk. No
+speculative knob.
 
 ### Recall layer (`memor/recall.py`)
 
-No contract change. `recall()` threads the new knobs through to `Retriever`
-(`pool_per_kind`, `kind_weight`, `min_distilled_final`) with the defaults above.
-Threshold (0.3), token budget (1500), 600-char truncation, same-session
-exclusion, and `exclude_ids` all continue to apply downstream unchanged.
+No contract change. `recall()` threads the new knobs (`candidate_pool`,
+`pool_per_kind`, `kind_weight`) to `Retriever`. Threshold (0.3 / hook 0.15),
+token budget (1500), 600-char truncation, same-session exclusion, `exclude_ids`
+all apply downstream unchanged.
 
 ### Config knobs (all eval-tunable)
 
 | Knob | Default | Where |
 |---|---|---|
-| `knn_fetch` | `max(k*40, 400)` | store search |
-| `pool_per_kind` | 20 | store search / search_lexical |
+| `knn_fetch` | `min(max(k*40, 1000), 4096)` | store search |
+| `candidate_pool` | 128 | store search → retriever |
+| `pool_per_kind` | 64 | store search / search_lexical |
 | `kind_weight` | 0.25 | retriever blend |
-| `min_distilled_final` | 0 (off) | retriever final cut |
+
+(`min_distilled_final` from the prior draft is **dropped** — widening makes a
+final-cut floor unnecessary; YAGNI.)
 
 ## Eval gate (must pass before merge)
 
-Re-run both diagnostics and the authoritative counterfactual eval:
+The diagnostics must be reproducible, so they move into `memor/eval/` (out of
+`scratch_*.py`) and pin `threshold=0.15` to match the hook. This is a **local**
+gate run against the developer corpus, not CI (it needs a populated DB).
 
-- **Primary (must improve):** RETRIEVAL_MISS drops from ~20% — the helpful memory
-  now surfaces.
-- **Mechanism check:** avg distilled-per-case rises in the RETRIEVED / win buckets
-  (`leverb`).
-- **Guardrail (hard, blocks merge):** counterfactual **do-no-harm does not
-  regress** — loss rate stays ≤ current (~3.4%). Any increase blocks merge even if
-  RETRIEVAL_MISS improves. If boosting distilled raises losses, reject the change
-  or tighten `min_similarity`.
+- **Frozen oracle (fixes a methodology bug):** "helpful memory exists" is
+  computed by **pure cosine** (`store.search` dense, no blend) and snapshotted
+  **once before** the change. The same frozen oracle scores both the before and
+  after runs, so changing the Retriever cannot move the denominator.
+- **Primary (must improve):** RETRIEVAL_MISS drops, driven by the KNN_TRUNCATED
+  bucket shrinking.
+- **Mechanism check:** avg distilled-per-case rises in the RETRIEVED / win
+  buckets (leverb). Directional (n=8 wins).
+- **Latency guardrail (hard):** recall p50/p95 must stay within budget — the hook
+  runs on every prompt (<15ms target). The widened pool adds blend work and
+  per-candidate quality lookups; measure and cap.
+- **Do-no-harm guardrail (hard):** counterfactual loss rate stays ≤ current
+  (~3.4%). Any increase blocks merge.
+- **Ablation:** report the metrics for baseline → +widen → +stratify → +reweight
+  so each knob's contribution is attributable.
 
 ## Testing
 
-- Store unit tests: stratified pool returns a distilled item even when N chunks
-  rank higher by cosine; widened KNN fetch honored; `pool_per_kind` respected;
-  project/active/since/until/`scope.kinds` filters still honored; `search_lexical`
-  partitions the same way.
-- Retriever unit test: a distilled item present in-pool but low cosine reaches the
-  final cut once `kind_weight` is raised; `min_distilled_final` reserves slots when
-  enabled and is a no-op at default 0.
-- Existing 298 tests stay green.
+- Store unit tests: widened pool returns a candidate at cosine-rank > k (the
+  truncation fix); `candidate_pool` / `pool_per_kind` honored; stratified pool
+  returns a distilled item even when N chunks rank higher; project/active/
+  since/until/`scope.kinds` filters still honored; `search_lexical` matches.
+- Retriever unit test: a candidate present in-pool but below the old top-8 cosine
+  rank reaches the final cut; distilled item with low cosine promoted once
+  `kind_weight` is raised.
+- Store unit test: `get_quality_scores(ids)` returns the same scores as the old
+  per-id `get_quality_score()` in one query (and 0.5 default for unknown ids).
+- Existing 298 tests stay green; new diagnostics importable from `memor/eval/`.
 
 ## Rollout
 
-Single feature branch, single PR. Eval results (before/after RETRIEVAL_MISS, win
-rate, loss rate) included in the PR description. Defaults conservative so the
-change is measured, not assumed.
+Single feature branch (`feat/distilled-aware-retrieval`), single PR, separate
+from the Cursor fix (#34). PR description includes the ablation table
+(before/after RETRIEVAL_MISS, distilled-per-win, loss rate, latency). Conservative
+defaults so the change is measured, not assumed.
