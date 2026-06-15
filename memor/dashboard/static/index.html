@@ -310,6 +310,8 @@
   .badge-codex::before { background: #3dd68c; }
   .badge-copilot { background: rgba(100,160,255,0.12); color: #64a0ff; }
   .badge-copilot::before { background: #64a0ff; }
+  .badge-cursor { background: rgba(192,132,252,0.12); color: #c084fc; }
+  .badge-cursor::before { background: #c084fc; }
 
   .quality-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--surface3); width: 100%; min-width: 60px; }
   .quality-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
@@ -613,6 +615,7 @@
       claude:  ['badge-claude',  'Claude'],
       codex:   ['badge-codex',   'Codex'],
       copilot: ['badge-copilot', 'Copilot'],
+      cursor:  ['badge-cursor',  'Cursor'],
     };
     var m = map[agent || 'claude'] || ['badge-claude', agent || 'claude'];
     return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';
