@@ -34,11 +34,16 @@ def rrf_fuse(ranked_lists: list[list[str]], k: int = RRF_K) -> dict[str, float]:
 class Retriever:
     def __init__(self, store: MemoryStore, embedder: Embedder, *,
                  k: int = 8, recency_weight: float = 0.25,
-                 kind_weight: float = 0.15, quality_weight: float = 0.10,
-                 min_similarity: float = 0.0, edge_expand: bool = True):
+                 kind_weight: float = 0.25, quality_weight: float = 0.10,
+                 min_similarity: float = 0.0, edge_expand: bool = True,
+                 candidate_pool: int = 128, pool_per_kind: int = 64):
         self.store, self.embedder = store, embedder
         self.k, self.edge_expand = k, edge_expand
         self.min_similarity = min_similarity
+        # The blend ranks over this many candidates (then cuts to k); pool_per_kind
+        # reserves distilled-memory slots so chunks can't crowd them out.
+        self.candidate_pool = candidate_pool
+        self.pool_per_kind = pool_per_kind
         self.w_sim = 1.0 - recency_weight - kind_weight - quality_weight
         self.w_rec = recency_weight
         self.w_kind = kind_weight
@@ -48,7 +53,8 @@ class Retriever:
         t0 = time.perf_counter()
         now = time.time()
         qv = self.embedder.embed([text])[0]
-        dense = self.store.search(qv, scope, self.k)
+        dense = self.store.search(qv, scope, self.candidate_pool,
+                                  pool_per_kind=self.pool_per_kind)
 
         # Absolute-similarity gate: drop anti-correlated candidates BEFORE
         # fusion/blending. Min-max normalization forces the top hit to a
@@ -68,7 +74,8 @@ class Retriever:
         # when nothing in the project is actually relevant.
         lexical = []
         if dense and hasattr(self.store, 'search_lexical'):
-            lexical = self.store.search_lexical(text, scope, self.k)
+            lexical = self.store.search_lexical(text, scope, self.candidate_pool,
+                                                pool_per_kind=self.pool_per_kind)
 
         arts_by_id: dict[str, object] = {}
         sim_by_id: dict[str, float] = {}
@@ -86,8 +93,10 @@ class Retriever:
         rel_min = min(rel_vals) if rel_vals else 0.0
         rel_range = ((max(rel_vals) - rel_min) if rel_vals else 1.0) or 1.0
 
-        quality_cache = {}
-        has_quality = hasattr(self.store, 'get_quality_score')
+        if hasattr(self.store, 'get_quality_scores'):
+            quality_scores = self.store.get_quality_scores(list(arts_by_id))
+        else:
+            quality_scores = {}
 
         for aid, a in arts_by_id.items():
             norm_rel = (fused.get(aid, 0.0) - rel_min) / rel_range
@@ -97,9 +106,7 @@ class Retriever:
 
             kind_boost = KIND_WEIGHTS.get(a.kind, 1.0) - 1.0
 
-            if has_quality and aid not in quality_cache:
-                quality_cache[aid] = self.store.get_quality_score(aid)
-            quality = quality_cache.get(aid, 0.5)
+            quality = quality_scores.get(aid, 0.5)
 
             score = (self.w_sim * norm_rel + self.w_rec * recency
                      + self.w_kind * kind_boost + self.w_qual * quality)

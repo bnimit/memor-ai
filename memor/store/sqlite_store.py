@@ -170,8 +170,34 @@ class SqliteStore:
                         text=r["text"], token_count=r["token_count"], created_at=r["created_at"],
                         meta=json.loads(r["meta"]))
 
-    def search(self, vector: list[float], scope: Scope, k: int) -> list[tuple[Artifact, float]]:
+    # sqlite-vec caps the KNN `k` parameter at this value.
+    _VEC_KNN_LIMIT = 4096
+
+    @staticmethod
+    def _stratify(cand: list[tuple[Artifact, float]], k: int,
+                  pool_per_kind: int | None) -> list[tuple[Artifact, float]]:
+        """`cand` is ordered best-first. Return up to `k`, reserving up to
+        `pool_per_kind` slots for distilled ('memory') items so the majority
+        kind (raw session_chunks) can't crowd them out. The majority kind still
+        fills every remaining slot, so widening is never sacrificed for the
+        reservation. When `pool_per_kind` is None this is a plain top-k cut."""
+        if pool_per_kind is None:
+            return cand[:k]
+        mem = [c for c in cand if c[0].kind == "memory"]
+        n_mem = min(len(mem), pool_per_kind)
+        n_oth = max(k - n_mem, 0)
+        keep_ids = {c[0].id for c in mem[:n_mem]}
+        oth_taken = 0
+        for c in cand:
+            if c[0].kind != "memory" and oth_taken < n_oth:
+                keep_ids.add(c[0].id)
+                oth_taken += 1
+        return [c for c in cand if c[0].id in keep_ids][:k]
+
+    def search(self, vector: list[float], scope: Scope, k: int, *,
+               pool_per_kind: int | None = None) -> list[tuple[Artifact, float]]:
         from memor.types import GLOBAL_PROJECT
+        fetch = min(max(k * 20, 200), self._VEC_KNN_LIMIT)
         rows = self.db.execute(f"""
           SELECT a.*, v.distance AS distance
           FROM (SELECT rowid, distance FROM vec_artifacts
@@ -182,17 +208,17 @@ class SqliteStore:
             AND (? IS NULL OR a.created_at >= ?)
             AND (? IS NULL OR a.created_at <= ?)
           ORDER BY v.distance ASC
-        """, (_serialize(vector), max(k*20, 200),
+        """, (_serialize(vector), fetch,
               scope.project, scope.project, GLOBAL_PROJECT,
               scope.since, scope.since,
               scope.until, scope.until)).fetchall()
-        out = []
-        for r in rows[:k]:
+        cand = []
+        for r in rows:
             if scope.kinds is not None and r["kind"] not in scope.kinds:
                 continue
             sim = 1.0 - float(r["distance"])
-            out.append((self._row_to_artifact(r), sim))
-        return out
+            cand.append((self._row_to_artifact(r), sim))
+        return self._stratify(cand, k, pool_per_kind)
 
     def rebuild_fts(self) -> int:
         """Backfill the FTS index from the artifacts table. Idempotent — used to
@@ -249,7 +275,8 @@ class SqliteStore:
             "duration_ms": elapsed,
         }
 
-    def search_lexical(self, query: str, scope: Scope, k: int) -> list[tuple[Artifact, float]]:
+    def search_lexical(self, query: str, scope: Scope, k: int, *,
+                       pool_per_kind: int | None = None) -> list[tuple[Artifact, float]]:
         """Lexical BM25 search over artifact text via FTS5. Returns
         (artifact, bm25_score) ordered best-first (lower bm25 = better match).
         Terms are OR-combined so partial matches still surface — the dense
@@ -259,6 +286,7 @@ class SqliteStore:
         if not terms:
             return []
         match = " OR ".join(terms)
+        fetch = max(k * 20, 200)
         rows = self.db.execute(f"""
           SELECT a.*, bm25(fts_artifacts) AS bm25_rank
           FROM fts_artifacts f JOIN artifacts a ON a.id = f.id
@@ -268,13 +296,13 @@ class SqliteStore:
             AND (? IS NULL OR a.created_at <= ?)
           ORDER BY bm25_rank ASC LIMIT ?
         """, (match, scope.project, scope.project, GLOBAL_PROJECT,
-              scope.since, scope.since, scope.until, scope.until, k)).fetchall()
-        out = []
+              scope.since, scope.since, scope.until, scope.until, fetch)).fetchall()
+        cand = []
         for r in rows:
             if scope.kinds is not None and r["kind"] not in scope.kinds:
                 continue
-            out.append((self._row_to_artifact(r), float(r["bm25_rank"])))
-        return out
+            cand.append((self._row_to_artifact(r), float(r["bm25_rank"])))
+        return self._stratify(cand, k, pool_per_kind)
 
     def neighbors(self, ids: list[str], types: list[str], hops: int = 1) -> list[Artifact]:
         qmarks_ids = ",".join("?" * len(ids))
@@ -456,6 +484,19 @@ class SqliteStore:
             "SELECT quality_score FROM memory_quality WHERE artifact_id=?",
             (artifact_id,)).fetchone()
         return row["quality_score"] if row else 0.5
+
+    def get_quality_scores(self, artifact_ids: list[str]) -> dict[str, float]:
+        """Batch form of get_quality_score: one query for the whole candidate
+        set (callers default missing ids to 0.5). Keeps the widened retrieval
+        pool off the N+1-query path on the per-prompt hot path."""
+        ids = list(artifact_ids)
+        if not ids:
+            return {}
+        qmarks = ",".join("?" * len(ids))
+        rows = self.db.execute(
+            f"SELECT artifact_id, quality_score FROM memory_quality "
+            f"WHERE artifact_id IN ({qmarks})", ids).fetchall()
+        return {r["artifact_id"]: r["quality_score"] for r in rows}
 
     def get_stale_memories(self, days: int = 30) -> list[str]:
         import time as _time

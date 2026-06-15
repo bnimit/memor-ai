@@ -32,3 +32,54 @@ def test_deactivate_excludes_from_search(tmp_path):
     s.deactivate("old", superseded_by="new")
     ids = [a.id for a, _ in s.search(e.embed(["use library"])[0], Scope(project="p"), k=5)]
     assert "old" not in ids and "new" in ids
+
+
+# --- widened + kind-stratified candidate pool (distilled-aware retrieval) ---
+
+def test_search_knn_fetch_capped(tmp_path):
+    # A large k must not exceed sqlite-vec's internal knn limit (4096).
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    s.add_artifacts([make("a", "p", "hello world", 1)], e.embed(["hello world"]))
+    hits = s.search(e.embed(["hello world"])[0], Scope(project="p"), k=300)
+    assert len(hits) <= 1  # no OperationalError, returns what's available
+
+
+def test_search_stratifies_distilled_into_pool(tmp_path):
+    e = FakeEmbedder(dim=64)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=64)
+    arts = [make(f"c{i}", "stablex", f"auth token refresh path{i}", 100)
+            for i in range(12)]
+    arts.append(make("mem1", "stablex", "auth session lifecycle", 100, kind="memory"))
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+    q = e.embed(["auth token"])[0]
+    # 12 chunks outrank the 1 memory by cosine; plain top-8 crowds it out.
+    plain = [a.id for a, _ in s.search(q, Scope(project="stablex"), k=8)]
+    assert "mem1" not in plain
+    # With a per-kind reservation, the distilled memory is guaranteed a slot.
+    strat = [a.id for a, _ in s.search(q, Scope(project="stablex"), k=8, pool_per_kind=2)]
+    assert "mem1" in strat
+    assert len(strat) <= 8
+
+
+def test_search_lexical_stratifies_distilled(tmp_path):
+    e = FakeEmbedder(dim=64)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=64)
+    arts = [make(f"c{i}", "stablex", f"auth token refresh path{i}", 100)
+            for i in range(12)]
+    arts.append(make("mem1", "stablex", "auth token session lifecycle", 100, kind="memory"))
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+    strat = [a.id for a, _ in s.search_lexical("auth token", Scope(project="stablex"),
+                                               k=8, pool_per_kind=2)]
+    assert "mem1" in strat
+
+
+def test_get_quality_scores_batch_matches_per_id(tmp_path):
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    s.record_recall(["a", "b"])
+    s.record_usage(["a"])
+    scores = s.get_quality_scores(["a", "b", "missing"])
+    assert scores["a"] == s.get_quality_score("a")
+    assert scores["b"] == s.get_quality_score("b")
+    assert "missing" not in scores
+    assert s.get_quality_scores([]) == {}

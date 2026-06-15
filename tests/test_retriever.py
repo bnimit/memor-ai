@@ -31,3 +31,23 @@ def test_edge_expansion_pulls_linked(tmp_path):
     trace = r.query("emscripten sync crash", Scope(project="stablex"))
     ids = [h.artifact.id for h in trace.hits]
     assert "fix" in ids        # surfaced via edge even though query didn't match its words
+
+
+# --- distilled-aware retrieval: widened candidate pool ---
+
+def test_default_kind_weight_is_raised(tmp_path):
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    r = Retriever(s, e, k=2)
+    assert abs(r.w_kind - 0.25) < 1e-9
+
+
+def test_widened_pool_exposes_more_candidates(tmp_path):
+    e = FakeEmbedder(dim=64)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=64)
+    arts = [make(f"c{i}", f"auth token item{i}", 100) for i in range(30)]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+    r = Retriever(s, e, k=2, edge_expand=False)
+    trace = r.query("auth token", Scope(project="stablex"))
+    # Final cut is k=2, but the blend must see a wide pool, not just top-2.
+    assert trace.candidates >= 10
