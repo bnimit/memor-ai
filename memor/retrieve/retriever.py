@@ -34,7 +34,7 @@ def rrf_fuse(ranked_lists: list[list[str]], k: int = RRF_K) -> dict[str, float]:
 class Retriever:
     def __init__(self, store: MemoryStore, embedder: Embedder, *,
                  k: int = 8, recency_weight: float = 0.25,
-                 kind_weight: float = 0.25, quality_weight: float = 0.10,
+                 kind_weight: float = 0.15, quality_weight: float = 0.10,
                  min_similarity: float = 0.0, edge_expand: bool = True,
                  candidate_pool: int = 128, pool_per_kind: int = 64):
         self.store, self.embedder = store, embedder

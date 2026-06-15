@@ -67,12 +67,20 @@ def _injected_token_count(artifact) -> int:
 DEFAULT_MIN_SIMILARITY = 0.0
 
 
+DEFAULT_CANDIDATE_POOL = 128
+DEFAULT_POOL_PER_KIND = 64
+DEFAULT_KIND_WEIGHT = 0.15
+
+
 def recall(query: str, project: str, db_path: str, *,
            embedder=None, k: int = 8, threshold: float = 0.3,
            max_tokens: int = DEFAULT_MAX_TOKENS,
            min_similarity: float = DEFAULT_MIN_SIMILARITY,
            exclude_ids: set[str] | None = None,
-           session_id: str = "") -> RecallResult:
+           session_id: str = "",
+           candidate_pool: int = DEFAULT_CANDIDATE_POOL,
+           pool_per_kind: int | None = DEFAULT_POOL_PER_KIND,
+           kind_weight: float = DEFAULT_KIND_WEIGHT) -> RecallResult:
     t0 = time.perf_counter()
 
     if not Path(db_path).exists():
@@ -87,7 +95,9 @@ def recall(query: str, project: str, db_path: str, *,
     from memor.retrieve.retriever import Retriever
 
     store = SqliteStore(db_path, dim=embedder.dim)
-    retriever = Retriever(store, embedder, k=k, min_similarity=min_similarity)
+    retriever = Retriever(store, embedder, k=k, min_similarity=min_similarity,
+                          candidate_pool=candidate_pool, pool_per_kind=pool_per_kind,
+                          kind_weight=kind_weight)
     trace = retriever.query(query, Scope(project=project))
 
     hits = list(trace.hits)

@@ -35,11 +35,13 @@ def test_edge_expansion_pulls_linked(tmp_path):
 
 # --- distilled-aware retrieval: widened candidate pool ---
 
-def test_default_kind_weight_is_raised(tmp_path):
+def test_default_kind_weight_is_conservative(tmp_path):
+    # Widening the pool is the proven lever; the kind reweight stays a tunable
+    # knob, off by default (raising it regressed RETRIEVAL_MISS in the ablation).
     e = FakeEmbedder(dim=16)
     s = SqliteStore(str(tmp_path / "m.db"), dim=16)
     r = Retriever(s, e, k=2)
-    assert abs(r.w_kind - 0.25) < 1e-9
+    assert abs(r.w_kind - 0.15) < 1e-9
 
 
 def test_widened_pool_exposes_more_candidates(tmp_path):
