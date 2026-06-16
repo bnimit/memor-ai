@@ -170,8 +170,13 @@ class SqliteStore:
                         text=r["text"], token_count=r["token_count"], created_at=r["created_at"],
                         meta=json.loads(r["meta"]))
 
+    # sqlite-vec caps the KNN `k` parameter at this value.
+    _VEC_KNN_LIMIT = 4096
+
     def search(self, vector: list[float], scope: Scope, k: int) -> list[tuple[Artifact, float]]:
         from memor.types import GLOBAL_PROJECT
+        # Cap the KNN fetch at sqlite-vec's hard limit so large k can't error.
+        fetch = min(max(k * 20, 200), self._VEC_KNN_LIMIT)
         rows = self.db.execute(f"""
           SELECT a.*, v.distance AS distance
           FROM (SELECT rowid, distance FROM vec_artifacts
@@ -182,7 +187,7 @@ class SqliteStore:
             AND (? IS NULL OR a.created_at >= ?)
             AND (? IS NULL OR a.created_at <= ?)
           ORDER BY v.distance ASC
-        """, (_serialize(vector), max(k*20, 200),
+        """, (_serialize(vector), fetch,
               scope.project, scope.project, GLOBAL_PROJECT,
               scope.since, scope.since,
               scope.until, scope.until)).fetchall()
@@ -456,6 +461,19 @@ class SqliteStore:
             "SELECT quality_score FROM memory_quality WHERE artifact_id=?",
             (artifact_id,)).fetchone()
         return row["quality_score"] if row else 0.5
+
+    def get_quality_scores(self, artifact_ids: list[str]) -> dict[str, float]:
+        """Batch form of get_quality_score: one query for the whole candidate
+        set (callers default missing ids to 0.5). Keeps the widened retrieval
+        pool off the N+1-query path on the per-prompt hot path."""
+        ids = list(artifact_ids)
+        if not ids:
+            return {}
+        qmarks = ",".join("?" * len(ids))
+        rows = self.db.execute(
+            f"SELECT artifact_id, quality_score FROM memory_quality "
+            f"WHERE artifact_id IN ({qmarks})", ids).fetchall()
+        return {r["artifact_id"]: r["quality_score"] for r in rows}
 
     def get_stale_memories(self, days: int = 30) -> list[str]:
         import time as _time

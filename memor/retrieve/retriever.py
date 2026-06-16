@@ -86,8 +86,10 @@ class Retriever:
         rel_min = min(rel_vals) if rel_vals else 0.0
         rel_range = ((max(rel_vals) - rel_min) if rel_vals else 1.0) or 1.0
 
-        quality_cache = {}
-        has_quality = hasattr(self.store, 'get_quality_score')
+        if hasattr(self.store, 'get_quality_scores'):
+            quality_scores = self.store.get_quality_scores(list(arts_by_id))
+        else:
+            quality_scores = {}
 
         for aid, a in arts_by_id.items():
             norm_rel = (fused.get(aid, 0.0) - rel_min) / rel_range
@@ -97,9 +99,7 @@ class Retriever:
 
             kind_boost = KIND_WEIGHTS.get(a.kind, 1.0) - 1.0
 
-            if has_quality and aid not in quality_cache:
-                quality_cache[aid] = self.store.get_quality_score(aid)
-            quality = quality_cache.get(aid, 0.5)
+            quality = quality_scores.get(aid, 0.5)
 
             score = (self.w_sim * norm_rel + self.w_rec * recency
                      + self.w_kind * kind_boost + self.w_qual * quality)

@@ -32,3 +32,25 @@ def test_deactivate_excludes_from_search(tmp_path):
     s.deactivate("old", superseded_by="new")
     ids = [a.id for a, _ in s.search(e.embed(["use library"])[0], Scope(project="p"), k=5)]
     assert "old" not in ids and "new" in ids
+
+
+# --- KNN-fetch cap + batched quality lookup (safe retrieval wins) ---
+
+def test_search_knn_fetch_capped(tmp_path):
+    # A large k must not exceed sqlite-vec's internal knn limit (4096).
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    s.add_artifacts([make("a", "p", "hello world", 1)], e.embed(["hello world"]))
+    hits = s.search(e.embed(["hello world"])[0], Scope(project="p"), k=300)
+    assert len(hits) <= 1  # no OperationalError, returns what's available
+
+
+def test_get_quality_scores_batch_matches_per_id(tmp_path):
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    s.record_recall(["a", "b"])
+    s.record_usage(["a"])
+    scores = s.get_quality_scores(["a", "b", "missing"])
+    assert scores["a"] == s.get_quality_score("a")
+    assert scores["b"] == s.get_quality_score("b")
+    assert "missing" not in scores
+    assert s.get_quality_scores([]) == {}
