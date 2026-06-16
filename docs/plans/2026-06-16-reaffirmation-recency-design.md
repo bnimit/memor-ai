@@ -30,21 +30,57 @@ separately from creation time.
 
 ## Goal
 
-Make genuinely stale memories sink in recall while keeping old-but-still-relevant
-memories ranked — by decaying from **last reaffirmation**, not creation time —
-without a new ranking weight and without an LLM on the recall hot path.
+**Rescue old-but-still-relevant memories** from age decay — keep them ranked
+when their content keeps reappearing in new work — by decaying recency from
+**last reaffirmation** instead of creation time, without a new ranking weight and
+without an LLM on the recall hot path.
+
+> Honest scoping (corrected after the premise check): `max(created_at,
+> last_reaffirmed)` can only move a timestamp *forward*, so it **boosts reaffirmed
+> memories; it does not sink un-reaffirmed ones** (a stale memory keeps decaying
+> exactly as today). The do-no-harm benefit is therefore *indirect*: a rescued
+> valid memory can out-rank a stale one for a top-k slot. This is a "rescue valid"
+> change, not a "sink stale" change. Sinking stale memories would require a
+> staleness *penalty* (effective age = time since last reaffirmation), which
+> carries more do-harm risk and is deferred.
 
 Non-goals: general contradiction detection / Mem0-style ADD/UPDATE/DELETE/NOOP
-(write-side, deferred); bi-temporal knowledge graph (no graph DB); any recall-time
-LLM; changes to the distiller's existing cue-based supersession (reused as-is).
+(write-side, deferred); a staleness penalty (boost-only for v1); bi-temporal
+knowledge graph (no graph DB); any recall-time LLM; changes to the distiller's
+existing cue-based supersession (reused as-is).
+
+## Effect-size evidence (premise check, 2026-06-16)
+
+`scratch_reaffirm_premise.py` simulated `last_reaffirmed` over the live corpus
+(11,694 active artifacts; 1,293 memories) to confirm the signal isn't inert:
+
+| reaffirm thresh | memories reaffirmed | "rescued" (old created + fresh reaffirm) |
+|---|---|---|
+| 0.6 | 1168/1293 (90%) | 318 (25%) |
+| 0.7 | 1058/1293 (82%) | 260 (20%) |
+| **0.8** | **616/1293 (48%)** | **105 (8%)** |
+
+Effect size at 0.6: **23/173 eval cases (13%)** had a "rescued" memory already in
+the candidate set (i.e. cases the change could plausibly move).
+
+Conclusions that shaped this spec:
+- **Threshold must be 0.8, not 0.6.** At 0.6, 90% of memories are "reaffirmed" —
+  the signal is non-discriminative. 0.8 (matching `SUPERSEDE_SIM_THRESHOLD`) gives
+  a meaningful 48%/8% split.
+- **The effect is modest** — ~13% case-touch at the loose threshold, lower (~4–6%)
+  at 0.8. It's live (unlike the shelved widening) but near the lower edge of what
+  the eval can resolve, so the powered eval is a real gate, not a formality.
 
 ## Design
 
 **Core idea:** the recency term decays from
 `effective_ts = max(created_at, last_reaffirmed)` instead of `created_at`. A memory
-whose content keeps reappearing in new work stays "fresh"; one that goes quiet
-decays and sinks. No new blend weight — we change *which timestamp* the existing
-recency decay reads.
+whose content keeps reappearing in new work stays "fresh" (boosted); one that goes
+quiet decays as today (not penalised — see Goal). No new blend weight — we change
+*which timestamp* the existing recency decay reads. (Effect is bounded by
+`recency_weight=0.25`: a full freshness boost shifts a memory's blended score by at
+most ~0.25, so this re-ranks among near-similar candidates, it doesn't override
+similarity.)
 
 ### Store (`memor/store/sqlite_store.py`)
 - Add nullable `last_reaffirmed REAL` to `artifacts` via a `_migrate_*` step
@@ -58,15 +94,21 @@ recency decay reads.
 ### Ingest (`memor/daemon.py` / distill path)
 A reaffirmation pass over each newly-ingested session's chunks:
 1. For a new chunk, find active `kind='memory'` artifacts in the same project with
-   cosine ≥ `REAFFIRM_SIM_THRESHOLD` (reuse `store.search` with a kind filter).
-2. **Guard:** if the chunk text matches the distiller's `SUPERSEDE_REGEX`, do NOT
+   cosine ≥ `REAFFIRM_SIM_THRESHOLD` (reuse `store.search` with `scope.kinds={'memory'}`).
+2. **Guard:** if the chunk text matches the distiller's `_REPLACEMENT_RE`, do NOT
    reaffirm — that's a (potential) contradiction; leave it to the existing
    supersession path.
 3. Otherwise `reaffirm(matched_memory_ids, chunk.created_at)`.
 
-Cost is ingest-time/background only. `REAFFIRM_SIM_THRESHOLD` is a tunable constant
-(start ~0.6; below the 0.80 supersede threshold since reaffirmation is a looser
-"same topic, still active" signal).
+- **Threshold:** `REAFFIRM_SIM_THRESHOLD = 0.80` — set from the premise check: at
+  0.6, 90% of memories get reaffirmed (non-discriminative); 0.80 gives a meaningful
+  48% split and matches `SUPERSEDE_SIM_THRESHOLD`.
+- **Cost bound:** this is a per-chunk vec search over project *memories* only
+  (~1.3k total, hundreds per project), background in the daemon. To bound it, run
+  the pass per *session* (batch the session's new chunk vectors, dedupe matched
+  memory-ids, one `reaffirm()` write) rather than per-chunk-per-commit. Only new
+  chunks from the session being ingested are scanned, so it does not re-scan
+  history.
 
 ### Retriever (`memor/retrieve/retriever.py`)
 One change to the recency computation:
@@ -93,11 +135,34 @@ Run the now-validated local eval, made trustworthy this cycle:
   loss rates.
 
 Gates:
-- **Primary:** stale-memory losses decrease (cases flipping loss→tie/win
-  significantly outnumber the reverse, by McNemar).
+- **Primary:** cases flipping loss→tie/win outnumber the reverse (McNemar).
 - **Hard guard:** do-no-harm does not regress; memories with `NULL last_reaffirmed`
   are provably unchanged (regression test).
 - **Deterministic check:** recall latency flat (one extra batched column read).
+- **Shelve criterion (explicit):** the premise check showed the effect is modest
+  (~4–6% of cases touched at thresh 0.80). If the powered eval shows **no
+  significant favorable flip** (discordant pairs too few, or McNemar p not
+  significant), **shelve it** — do not ship on faith. We've already learned this
+  cycle that a clean mechanism with a sub-resolution effect isn't worth shipping.
+  If the boost-only version is inert, the documented next option is the staleness
+  *penalty* variant (re-run the premise check for it first).
+
+## Reconciliation with existing decay (avoid double-counting)
+
+memor already has `decay_quality` (halves quality_score for un-recalled memories)
+and `deactivate_stale(days)` (age-based hard deactivation). Those key off **recall**
+activity; reaffirmation keys off **new-content** activity — different signals, so
+they are complementary, not redundant. For v1 they stay independent: reaffirmation
+only feeds the recency term and does **not** reset `quality_score` or
+`last_recalled`. (A future option: let a reaffirmation also bump `last_recalled` so
+a reaffirmed memory escapes quality decay too — deferred until the recency-only
+version is measured, to keep one change at a time.)
+
+A reaffirmed memory's `effective_ts` can stay ~now indefinitely if it keeps being
+reaffirmed (no decay cap). That is intended — a continuously-reaffirmed memory is,
+by this signal, continuously relevant. Hard contradictions are still handled by the
+existing cue-based supersession (which deactivates, removing it from recall
+entirely).
 
 ## Testing
 - Store: migration adds `last_reaffirmed`; `reaffirm` takes the max (never moves a
