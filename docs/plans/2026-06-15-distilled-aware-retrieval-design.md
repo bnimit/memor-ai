@@ -1,8 +1,35 @@
 # Distilled-aware retrieval — design
 
 **Date:** 2026-06-15 (revised after miss autopsy)
-**Status:** Approved (design), pending implementation plan
+**Status:** Implemented, then **SHELVED after eval** (2026-06-16). See Outcome below.
 **Author:** Nimit Bhandari (with Claude)
+
+## Outcome (2026-06-16) — shelved on eval
+
+The widen + kind-stratify + reweight change was implemented and measured. It did
+**not** earn its way in:
+
+- The no-LLM cosine proxy showed it *regressing* RETRIEVAL_MISS — but that proxy
+  rewards pure cosine and penalizes the recency/kind blend, so it was the wrong
+  target.
+- The counterfactual A/B (qwen-14b judge, n=77) first looked positive
+  (do-no-harm 81.8%→89.5%) but a token-budget sweep exposed the signal as **judge
+  noise**: the *identical baseline config* swung 81.8%↔88.2% do-no-harm
+  (loss 14↔9) across two runs. Every widen-vs-baseline delta (Δ2–6 losses) sits
+  inside that noise floor. n=77 with a stochastic local judge cannot rank these
+  configs.
+- The only deterministic effect was **token cost**, which widening *increased*
+  (646→1131 avg injected, uncapped).
+
+Decision: do not ship the behavior change on a noise-level signal. **Kept only the
+two unambiguous wins** (batched `get_quality_scores`, KNN-fetch cap); reverted
+widen/stratify/reweight. Properly resolving widening would need a much larger,
+multi-seed eval and a less noisy judge — revisit only if a better-evidenced method
+emerges (e.g. from the long-term-memory research).
+
+The original design is preserved below for the record.
+
+---
 
 ## Problem
 

@@ -35,15 +35,10 @@ class Retriever:
     def __init__(self, store: MemoryStore, embedder: Embedder, *,
                  k: int = 8, recency_weight: float = 0.25,
                  kind_weight: float = 0.15, quality_weight: float = 0.10,
-                 min_similarity: float = 0.0, edge_expand: bool = True,
-                 candidate_pool: int = 128, pool_per_kind: int = 64):
+                 min_similarity: float = 0.0, edge_expand: bool = True):
         self.store, self.embedder = store, embedder
         self.k, self.edge_expand = k, edge_expand
         self.min_similarity = min_similarity
-        # The blend ranks over this many candidates (then cuts to k); pool_per_kind
-        # reserves distilled-memory slots so chunks can't crowd them out.
-        self.candidate_pool = candidate_pool
-        self.pool_per_kind = pool_per_kind
         self.w_sim = 1.0 - recency_weight - kind_weight - quality_weight
         self.w_rec = recency_weight
         self.w_kind = kind_weight
@@ -53,8 +48,7 @@ class Retriever:
         t0 = time.perf_counter()
         now = time.time()
         qv = self.embedder.embed([text])[0]
-        dense = self.store.search(qv, scope, self.candidate_pool,
-                                  pool_per_kind=self.pool_per_kind)
+        dense = self.store.search(qv, scope, self.k)
 
         # Absolute-similarity gate: drop anti-correlated candidates BEFORE
         # fusion/blending. Min-max normalization forces the top hit to a
@@ -74,8 +68,7 @@ class Retriever:
         # when nothing in the project is actually relevant.
         lexical = []
         if dense and hasattr(self.store, 'search_lexical'):
-            lexical = self.store.search_lexical(text, scope, self.candidate_pool,
-                                                pool_per_kind=self.pool_per_kind)
+            lexical = self.store.search_lexical(text, scope, self.k)
 
         arts_by_id: dict[str, object] = {}
         sim_by_id: dict[str, float] = {}

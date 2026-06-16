@@ -173,30 +173,9 @@ class SqliteStore:
     # sqlite-vec caps the KNN `k` parameter at this value.
     _VEC_KNN_LIMIT = 4096
 
-    @staticmethod
-    def _stratify(cand: list[tuple[Artifact, float]], k: int,
-                  pool_per_kind: int | None) -> list[tuple[Artifact, float]]:
-        """`cand` is ordered best-first. Return up to `k`, reserving up to
-        `pool_per_kind` slots for distilled ('memory') items so the majority
-        kind (raw session_chunks) can't crowd them out. The majority kind still
-        fills every remaining slot, so widening is never sacrificed for the
-        reservation. When `pool_per_kind` is None this is a plain top-k cut."""
-        if pool_per_kind is None:
-            return cand[:k]
-        mem = [c for c in cand if c[0].kind == "memory"]
-        n_mem = min(len(mem), pool_per_kind)
-        n_oth = max(k - n_mem, 0)
-        keep_ids = {c[0].id for c in mem[:n_mem]}
-        oth_taken = 0
-        for c in cand:
-            if c[0].kind != "memory" and oth_taken < n_oth:
-                keep_ids.add(c[0].id)
-                oth_taken += 1
-        return [c for c in cand if c[0].id in keep_ids][:k]
-
-    def search(self, vector: list[float], scope: Scope, k: int, *,
-               pool_per_kind: int | None = None) -> list[tuple[Artifact, float]]:
+    def search(self, vector: list[float], scope: Scope, k: int) -> list[tuple[Artifact, float]]:
         from memor.types import GLOBAL_PROJECT
+        # Cap the KNN fetch at sqlite-vec's hard limit so large k can't error.
         fetch = min(max(k * 20, 200), self._VEC_KNN_LIMIT)
         rows = self.db.execute(f"""
           SELECT a.*, v.distance AS distance
@@ -212,13 +191,13 @@ class SqliteStore:
               scope.project, scope.project, GLOBAL_PROJECT,
               scope.since, scope.since,
               scope.until, scope.until)).fetchall()
-        cand = []
-        for r in rows:
+        out = []
+        for r in rows[:k]:
             if scope.kinds is not None and r["kind"] not in scope.kinds:
                 continue
             sim = 1.0 - float(r["distance"])
-            cand.append((self._row_to_artifact(r), sim))
-        return self._stratify(cand, k, pool_per_kind)
+            out.append((self._row_to_artifact(r), sim))
+        return out
 
     def rebuild_fts(self) -> int:
         """Backfill the FTS index from the artifacts table. Idempotent — used to
@@ -275,8 +254,7 @@ class SqliteStore:
             "duration_ms": elapsed,
         }
 
-    def search_lexical(self, query: str, scope: Scope, k: int, *,
-                       pool_per_kind: int | None = None) -> list[tuple[Artifact, float]]:
+    def search_lexical(self, query: str, scope: Scope, k: int) -> list[tuple[Artifact, float]]:
         """Lexical BM25 search over artifact text via FTS5. Returns
         (artifact, bm25_score) ordered best-first (lower bm25 = better match).
         Terms are OR-combined so partial matches still surface — the dense
@@ -286,7 +264,6 @@ class SqliteStore:
         if not terms:
             return []
         match = " OR ".join(terms)
-        fetch = max(k * 20, 200)
         rows = self.db.execute(f"""
           SELECT a.*, bm25(fts_artifacts) AS bm25_rank
           FROM fts_artifacts f JOIN artifacts a ON a.id = f.id
@@ -296,13 +273,13 @@ class SqliteStore:
             AND (? IS NULL OR a.created_at <= ?)
           ORDER BY bm25_rank ASC LIMIT ?
         """, (match, scope.project, scope.project, GLOBAL_PROJECT,
-              scope.since, scope.since, scope.until, scope.until, fetch)).fetchall()
-        cand = []
+              scope.since, scope.since, scope.until, scope.until, k)).fetchall()
+        out = []
         for r in rows:
             if scope.kinds is not None and r["kind"] not in scope.kinds:
                 continue
-            cand.append((self._row_to_artifact(r), float(r["bm25_rank"])))
-        return self._stratify(cand, k, pool_per_kind)
+            out.append((self._row_to_artifact(r), float(r["bm25_rank"])))
+        return out
 
     def neighbors(self, ids: list[str], types: list[str], hops: int = 1) -> list[Artifact]:
         qmarks_ids = ",".join("?" * len(ids))
