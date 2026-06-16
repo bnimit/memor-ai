@@ -17,11 +17,17 @@ def detect_agent(req: dict) -> str:
     event = req.get("hook_event_name", "")
     if event == "userPromptSubmitted":
         return "copilot"
-    # A real Codex payload carries both `model` and a Codex-specific `turn_id`
-    # extension; Claude Code sends neither. We match on EITHER (not both) so
-    # detection still holds if a Codex version drops one field. Do NOT key on
-    # `permission_mode`: it is a base field on every Claude Code hook input, so
-    # it cannot discriminate between the two.
+    # Cursor fires a `beforeSubmitPrompt` hook and stamps every payload with a
+    # `cursor_version` field. It must be matched BEFORE the codex check below,
+    # because Cursor also sends `model` (e.g. "composer-2.5-fast") which would
+    # otherwise be mistaken for Codex.
+    if event == "beforeSubmitPrompt" or "cursor_version" in req:
+        return "cursor"
+    # A real Codex payload carries `model` and/or a Codex-specific `turn_id`
+    # extension; Claude Code sends neither. We match on EITHER so detection still
+    # holds if a Codex version drops one field. Do NOT key on `permission_mode`:
+    # it is a base field on every Claude Code hook input, so it cannot
+    # discriminate between the two.
     if "turn_id" in req or "model" in req:
         return "codex"
     return "claude"
@@ -68,6 +74,12 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
     from memor.project import resolve_project
 
     cwd = req.get("cwd", "")
+    if not cwd:
+        # Cursor sends `workspace_roots` (a list) instead of `cwd`; fall back to
+        # the first root so the recall is scoped to the real project.
+        roots = req.get("workspace_roots") or []
+        if roots:
+            cwd = roots[0]
     project = resolve_project(cwd) if cwd else "unknown"
     query = req.get("prompt", "")
     session_id = req.get("session_id", "")

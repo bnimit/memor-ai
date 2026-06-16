@@ -13,9 +13,9 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
-**Automatic background memory for Claude Code, Codex, and Copilot.** Fire and forget — no API keys needed.
+**Automatic background memory for Claude Code, Cursor, Codex, and Copilot.** Fire and forget — no API keys needed.
 
-Memor watches your coding sessions, extracts decisions and patterns, and recalls relevant context on every prompt. Works with Claude Code, OpenAI Codex CLI, and GitHub Copilot CLI. Zero configuration. One install. Your agent remembers everything.
+Memor watches your coding sessions, extracts decisions and patterns, and recalls relevant context on every prompt. Works with Claude Code, Cursor, OpenAI Codex CLI, and GitHub Copilot CLI. Zero configuration. One install. Your agent remembers everything.
 
 ---
 
@@ -82,15 +82,16 @@ memor dashboard
 | **Claude Code** | `UserPromptSubmit` + `additionalContext` | `~/.claude/settings.json` | `memor install-hook --agent claude` |
 | **Codex CLI** | `UserPromptSubmit` + `additionalContext` | `~/.codex/hooks/hooks.json` | `memor install-hook --agent codex` |
 | **Copilot CLI** | `userPromptSubmitted` + `additionalContext` | `~/.copilot/hooks/memor.json` | `memor install-hook --agent copilot` |
+| **Cursor** | `beforeSubmitPrompt` + `additionalContext` | `~/.claude/settings.json` (loaded as Claude user hooks) | automatic — covered by the Claude install |
 
-A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. The dashboard tracks recalls per agent so you can see usage across all your environments.
+A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. The dashboard tracks recalls per agent so you can see usage across all your environments.
 
 > **Note:** Cloud-hosted agents (Codex cloud, Copilot cloud agent) run in remote sandboxes and cannot reach local hooks. MCP server support for sandboxed agents is planned ([#26](https://github.com/bnimit/memor-ai/issues/26)).
 
 **Two background processes:**
 
 1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback (positive and negative), promotes cross-project patterns to global scope, compacts duplicates, auto-compacts the vector index when bloated, tracks session-level token usage. All local.
-2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms. Works across Claude Code, Codex, and Copilot.
+2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms. Works across Claude Code, Cursor, Codex, and Copilot.
 
 **No API keys required.** Embeddings run locally via [model2vec](https://github.com/MinishLab/model2vec) (potion-base-8M, 256-dim). Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
 
@@ -164,7 +165,7 @@ memor dashboard
 
 Dark fintech-inspired UI showing:
 - **Hero metrics** — total memories, recall count, avg latency, coverage — with sparkline bars
-- **Agent breakdown** — per-agent recall stats (Claude, Codex, Copilot) with hit rates
+- **Agent breakdown** — per-agent recall stats (Claude, Cursor, Codex, Copilot) with hit rates
 - **Daily recall activity** — stacked bar chart of hits vs misses over time
 - **Session efficiency** — real token savings measured from API usage data (avg tokens/turn with vs without recall)
 - **Per-project breakdown** — artifact counts, token totals, last activity
@@ -246,7 +247,7 @@ memor/
     +-- judge.py           LLM-as-judge evaluation
     +-- embed_benchmark.py Embedding model comparison
 
-memor/hook_cli.py          Hook entry point — auto-detects Claude/Codex/Copilot
+memor/hook_cli.py          Hook entry point — auto-detects Claude/Cursor/Codex/Copilot
 memor/hook_server.py       Hook server with agent detection + response formatting
 skill/recall.py            Standalone recall script
 ```

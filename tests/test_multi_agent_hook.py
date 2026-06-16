@@ -44,6 +44,34 @@ def test_detect_copilot():
     assert detect_agent(req) == "copilot"
 
 
+def test_detect_cursor():
+    # Real Cursor 3.7.36 beforeSubmitPrompt payload (captured from cursor.hooks
+    # log). Note it carries `model` ("composer-2.5-fast") and a unique
+    # `cursor_version`, and uses `workspace_roots` instead of `cwd`.
+    req = {"conversation_id": "c1", "generation_id": "g1",
+           "model": "composer-2.5-fast", "composer_mode": "agent",
+           "prompt": "kill the background terminals please", "session_id": "c1",
+           "hook_event_name": "beforeSubmitPrompt", "cursor_version": "3.7.36",
+           "workspace_roots": ["/proj"]}
+    assert detect_agent(req) == "cursor"
+
+
+def test_detect_cursor_by_version_field():
+    # Defensive: cursor_version alone identifies Cursor even if the event name
+    # ever changes.
+    req = {"prompt": "x", "session_id": "c1", "cursor_version": "3.8.0",
+           "hook_event_name": "UserPromptSubmit", "model": "composer-2.5"}
+    assert detect_agent(req) == "cursor"
+
+
+def test_cursor_model_is_not_mistaken_for_codex():
+    # Regression: Cursor sends `model`, but it must NOT fall into the codex
+    # branch — the cursor markers win.
+    req = {"prompt": "x", "hook_event_name": "beforeSubmitPrompt",
+           "model": "composer-2.5-fast", "workspace_roots": ["/proj"]}
+    assert detect_agent(req) == "cursor"
+
+
 def test_detect_unknown_defaults_to_claude():
     req = {"cwd": "/proj", "prompt": "hello"}
     assert detect_agent(req) == "claude"
@@ -113,6 +141,22 @@ def test_handle_request_copilot_format(tmp_path):
     resp = handle_request(req, db_path=db_path, embedder=e)
     assert "additionalContext" in resp
     assert "hookSpecificOutput" not in resp
+
+
+def test_handle_request_cursor_resolves_project_from_workspace_roots(tmp_path):
+    """Cursor sends `workspace_roots` instead of `cwd`. handle_request must fall
+    back to it so the recall is scoped to the real project (not 'unknown') and
+    logged as the cursor agent."""
+    db_path, e = _make_db(tmp_path)
+    req = {"prompt": "password hashing", "session_id": "c1",
+           "hook_event_name": "beforeSubmitPrompt", "cursor_version": "3.7.36",
+           "model": "composer-2.5-fast", "workspace_roots": ["/proj"]}
+    handle_request(req, db_path=db_path, embedder=e)
+    store = SqliteStore(db_path, dim=16)
+    row = store.db.execute(
+        "SELECT project, agent FROM recall_log ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["project"] == "proj"
+    assert row["agent"] == "cursor"
 
 
 # --- install-hook config generation ---
