@@ -54,3 +54,45 @@ def test_get_quality_scores_batch_matches_per_id(tmp_path):
     assert scores["b"] == s.get_quality_score("b")
     assert "missing" not in scores
     assert s.get_quality_scores([]) == {}
+
+
+# --- reaffirmation (temporal-validity recency) ---
+
+def test_migrate_last_reaffirmed_column(tmp_path):
+    import sqlite3
+    db_path = str(tmp_path / "m.db")
+    db = sqlite3.connect(db_path)
+    db.execute("CREATE TABLE artifacts(id TEXT PRIMARY KEY, kind TEXT, project TEXT, "
+               "source TEXT, text TEXT, token_count INTEGER, created_at REAL, meta TEXT, "
+               "active INTEGER DEFAULT 1, superseded_by TEXT)")
+    db.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
+    db.execute("INSERT INTO meta(key,value) VALUES('dim','16')")
+    db.commit(); db.close()
+    s = SqliteStore(db_path, dim=16)
+    cols = [r[1] for r in s.db.execute("PRAGMA table_info(artifacts)").fetchall()]
+    assert "last_reaffirmed" in cols
+
+
+def test_reaffirm_sets_max_never_backward(tmp_path):
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    s.add_artifacts([make("m1", "p", "use argon2", 100, kind="memory")], e.embed(["use argon2"]))
+    s.reaffirm(["m1"], 500.0)
+    assert s.get_reaffirmed_timestamps(["m1"])["m1"] == 500.0
+    s.reaffirm(["m1"], 300.0)            # older — must not move backward
+    assert s.get_reaffirmed_timestamps(["m1"])["m1"] == 500.0
+    s.reaffirm(["m1"], 900.0)            # newer — advances
+    assert s.get_reaffirmed_timestamps(["m1"])["m1"] == 900.0
+
+
+def test_get_reaffirmed_timestamps_batch(tmp_path):
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    s.add_artifacts([make("m1", "p", "a", 1, kind="memory"),
+                     make("m2", "p", "b", 1, kind="memory")], e.embed(["a", "b"]))
+    s.reaffirm(["m1"], 700.0)
+    got = s.get_reaffirmed_timestamps(["m1", "m2", "missing"])
+    assert got["m1"] == 700.0
+    assert "m2" not in got           # never reaffirmed -> absent (caller defaults to 0)
+    assert "missing" not in got
+    assert s.get_reaffirmed_timestamps([]) == {}

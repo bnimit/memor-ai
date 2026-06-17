@@ -94,6 +94,14 @@ def ingest_file(path: Path, project: str, store: SqliteStore, embedder) -> int:
     vecs = embedder.embed([a.text for a in arts])
     store.add_artifacts(arts, vecs)
 
+    # Reaffirm prior memories this new content re-observes (keeps their recency
+    # fresh); reuses the chunk vectors, so no extra embedding.
+    try:
+        from memor.distill.reaffirm import reaffirm_from_chunks
+        reaffirm_from_chunks(store, arts, vecs)
+    except Exception:
+        pass
+
     from memor.ingest.claude_code import parse_session_usage
     try:
         usage = parse_session_usage(path, project)

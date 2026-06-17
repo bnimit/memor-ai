@@ -32,6 +32,7 @@ class SqliteStore:
         self._migrate_quality_decay()
         self._migrate_negative_count()
         self._migrate_recall_agent()
+        self._migrate_reaffirmed()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -127,6 +128,18 @@ class SqliteStore:
         if "agent" not in cols:
             try:
                 self.db.execute("ALTER TABLE recall_log ADD COLUMN agent TEXT DEFAULT 'claude'")
+                self.db.commit()
+            except Exception:
+                pass
+
+    def _migrate_reaffirmed(self):
+        """Add last_reaffirmed column to artifacts if missing (NULL on existing
+        rows). Stamped at ingest when new content re-observes a memory; the
+        retriever decays recency from max(created_at, last_reaffirmed)."""
+        cols = [r[1] for r in self.db.execute("PRAGMA table_info(artifacts)").fetchall()]
+        if "last_reaffirmed" not in cols:
+            try:
+                self.db.execute("ALTER TABLE artifacts ADD COLUMN last_reaffirmed REAL")
                 self.db.commit()
             except Exception:
                 pass
@@ -474,6 +487,30 @@ class SqliteStore:
             f"SELECT artifact_id, quality_score FROM memory_quality "
             f"WHERE artifact_id IN ({qmarks})", ids).fetchall()
         return {r["artifact_id"]: r["quality_score"] for r in rows}
+
+    def reaffirm(self, artifact_ids: list[str], ts: float) -> None:
+        """Mark memories as reaffirmed at time `ts` (new content re-observed them).
+        Only advances last_reaffirmed (never moves it backward)."""
+        ids = list(artifact_ids)
+        if not ids:
+            return
+        qmarks = ",".join("?" * len(ids))
+        self.db.execute(
+            f"UPDATE artifacts SET last_reaffirmed = MAX(COALESCE(last_reaffirmed, 0), ?) "
+            f"WHERE id IN ({qmarks})", (ts, *ids))
+        self.db.commit()
+
+    def get_reaffirmed_timestamps(self, artifact_ids: list[str]) -> dict[str, float]:
+        """Batch reader for last_reaffirmed over a candidate set (one query;
+        hot-path-cheap). Ids never reaffirmed are absent — callers default to 0."""
+        ids = list(artifact_ids)
+        if not ids:
+            return {}
+        qmarks = ",".join("?" * len(ids))
+        rows = self.db.execute(
+            f"SELECT id, last_reaffirmed FROM artifacts "
+            f"WHERE id IN ({qmarks}) AND last_reaffirmed IS NOT NULL", ids).fetchall()
+        return {r["id"]: r["last_reaffirmed"] for r in rows}
 
     def get_stale_memories(self, days: int = 30) -> list[str]:
         import time as _time

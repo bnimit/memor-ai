@@ -91,10 +91,19 @@ class Retriever:
         else:
             quality_scores = {}
 
+        # Reaffirmation recency: decay from max(created_at, last_reaffirmed) so a
+        # memory whose content keeps reappearing in new work stays "fresh".
+        # Absent (never reaffirmed) ⇒ falls back to created_at, i.e. unchanged.
+        if hasattr(self.store, 'get_reaffirmed_timestamps'):
+            reaffirmed = self.store.get_reaffirmed_timestamps(list(arts_by_id))
+        else:
+            reaffirmed = {}
+
         for aid, a in arts_by_id.items():
             norm_rel = (fused.get(aid, 0.0) - rel_min) / rel_range
 
-            age_days = (now - a.created_at) / 86400
+            eff_ts = max(a.created_at, reaffirmed.get(aid, 0.0))
+            age_days = (now - eff_ts) / 86400
             recency = math.exp(-0.693 * age_days / RECENCY_HALF_LIFE_DAYS)
 
             kind_boost = KIND_WEIGHTS.get(a.kind, 1.0) - 1.0
