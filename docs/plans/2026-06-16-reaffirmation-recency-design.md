@@ -1,8 +1,30 @@
 # Reaffirmation-recency temporal ranking — design
 
 **Date:** 2026-06-16
-**Status:** Approved (design), pending implementation plan
+**Status:** Implemented, then **SHELVED on eval** (2026-06-17). Not merged. See Outcome.
 **Author:** Nimit Bhandari (with Claude)
+
+## Outcome (2026-06-17) — shelved: net-negative on the powered eval
+
+Built fully (store `last_reaffirmed` + `reaffirm`/reader, ingest reaffirmation
+pass, retriever `effective_ts`; 313 tests green) and run through the powered eval
+(temp=0 judge, paired, on a backfilled copy of the live corpus, ~175 cases).
+
+Result: the loss-flips ran **net-negative** — roughly **1 improved (loss→better)
+vs 4 worsened (better→loss)** at ~70% through (final McNemar appended below once
+the run closes). Every WORSENED was a `tie → loss`: reaffirmation lifted a
+stale/contradicted memory into a recall slot the judge ruled misleading —
+exactly the **cue-less-contradiction / migration-chatter false-reaffirm** risk
+this spec flagged as the residual danger.
+
+Decision: **do not ship.** The feature is left unmerged (local branch
+`feat/reaffirmation-recency`); `main` is untouched. This is the third recall/
+ranking change to fail its eval gate (after widening and λ-fusion), reinforcing
+that the bottleneck is not recall ranking — the next experiments move to recall
+*matching* (ingest keyphrase enrichment) and a strong-signal reranker
+(FlashRank, latency-gated), and ultimately write-side quality.
+
+> Final McNemar (appended on run completion): _pending_
 
 ## Problem
 
