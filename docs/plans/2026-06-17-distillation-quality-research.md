@@ -1,7 +1,8 @@
 # Write-side (distillation) quality — research patterns & testable hypotheses
 
-**Date:** 2026-06-17
-**Status:** Research synthesized; hypotheses pending sequential eval-gated tests
+**Date:** 2026-06-17 (results appended 2026-06-24)
+**Status:** Tested and closed — every hypothesis came back sub-resolution or
+net-negative on the temp=0 paired counterfactual. See **Results** below.
 **Author:** Nimit Bhandari (with Claude)
 
 ## Why we're here
@@ -119,6 +120,41 @@ redundancy, sharper store. Highest LLM cost + quality sensitivity; test last.
 3. Then H2/H3 as cheap ablation arms; H4 (do-no-harm lever); H5/H6 if warranted.
 Every step behind the temp=0 paired eval; ship only what clears it; shelve the rest
 (as we did with the five recall experiments).
+
+## Results (2026-06-24) — tested and closed
+
+Every hypothesis was premise- or eval-tested against the temp=0 paired
+counterfactual on real coding sessions. **None cleared resolution.** Conclusion:
+memor is at its practical ceiling on this corpus (recall ~65%, do-no-harm ~96.6%,
+both genuinely good); the remaining misses are **query-side fundamental** (the
+recall trigger is the session's opening prompt, which doesn't share enough signal
+with the specific memory needed) and cannot be fixed from the write or rank side.
+
+- **Local distiller validation:** qwen2.5-14b produced crisp, well-typed memories
+  in the sanity check — the local model is *not* the bottleneck.
+- **H1 — enriched embedding (A-MEM):** ~5% candidacy rescue, no better than the
+  free no-LLM keyphrase floor (6–9%). The 23% "full-source" ceiling was an
+  artifact (it re-injects the raw session = what `session_chunk`s already are).
+  Conversational-QA enrichment gains (LoCoMo) did **not** transfer to
+  coding-session-opening recall.
+- **H2 (self-contained rewrite):** subsumed by H1; no separable gain.
+- **Re-distillation A/B (the write-side payoff test):** re-distilled all 496
+  extractive-memory sessions with the local LLM into a copy DB; on the 20 cases
+  where recall differed, **extractive and LLM-distilled tied** — win=1 tie=16
+  loss=3 (do-no-harm 85%) in *both* arms; flips 1 improved / 1 worsened. A wash.
+  Extractive blobs are a real store-hygiene defect but re-distilling them did not
+  move eval outcomes.
+- **H4 (consolidation) premise:** contradiction-candidate pairs existed but the
+  earlier reaffirmation-recency experiment (the same temporal-validity lever from
+  the recall side) was already net-negative on the paired eval (~1 improved vs 4
+  worsened), so this was not pursued to a full build.
+- **H3/H5/H6:** not built — the H1 + re-distillation washes removed the rationale.
+
+**Net:** the only lever that could move matching is query-side expansion *at
+recall*, which requires an LLM at recall and breaks the no-key / sub-15ms rule.
+Do not invest further in recall ranking or write-side distillation quality on this
+corpus without a different eval surface. The `temperature` param added here (for
+the deterministic judge) is the one durable artifact from this arc.
 
 ## Sources (primary unless noted)
 Nemori 2508.03341 · A-MEM 2502.12110 · Mem0 2504.19413 · Generative Agents
