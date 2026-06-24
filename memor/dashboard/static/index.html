@@ -1036,7 +1036,7 @@
     if (!data || data.length <= 1) { section.style.display = 'none'; return; }
     section.style.display = '';
     grid.innerHTML = '';
-    var colors = { claude: 'var(--accent)', codex: '#3dd68c', copilot: '#64a0ff' };
+    var colors = { claude: 'var(--accent)', codex: '#3dd68c', copilot: '#64a0ff', cursor: '#c084fc' };
     data.forEach(function(row) {
       var agent = row.agent || 'claude';
       var color = colors[agent] || 'var(--text-muted)';
