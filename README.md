@@ -295,7 +295,7 @@ cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest  # 298 tests
+pytest  # 304 tests
 ```
 
 ---
