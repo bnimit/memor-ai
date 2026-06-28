@@ -32,6 +32,7 @@ class SqliteStore:
         self._migrate_quality_decay()
         self._migrate_negative_count()
         self._migrate_recall_agent()
+        self._migrate_validity()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -86,6 +87,12 @@ class SqliteStore:
           tool_call_count INTEGER DEFAULT 0,
           had_recall INTEGER DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_turn_metrics_session ON turn_metrics(session_id);
+        CREATE TABLE IF NOT EXISTS disputes(
+          disputed_id TEXT, disputer_id TEXT, created_at REAL,
+          affirmations INTEGER DEFAULT 0, dormant INTEGER DEFAULT 0,
+          PRIMARY KEY(disputed_id, disputer_id));
+        CREATE INDEX IF NOT EXISTS idx_disputes_disputed ON disputes(disputed_id);
+        CREATE INDEX IF NOT EXISTS idx_disputes_disputer ON disputes(disputer_id);
         """)
         self.db.commit()
 
@@ -127,6 +134,16 @@ class SqliteStore:
         if "agent" not in cols:
             try:
                 self.db.execute("ALTER TABLE recall_log ADD COLUMN agent TEXT DEFAULT 'claude'")
+                self.db.commit()
+            except Exception:
+                pass
+
+    def _migrate_validity(self):
+        """Add validity column to memory_quality if missing."""
+        cols = [r[1] for r in self.db.execute("PRAGMA table_info(memory_quality)").fetchall()]
+        if "validity" not in cols:
+            try:
+                self.db.execute("ALTER TABLE memory_quality ADD COLUMN validity REAL DEFAULT 1.0")
                 self.db.commit()
             except Exception:
                 pass
@@ -474,6 +491,58 @@ class SqliteStore:
             f"SELECT artifact_id, quality_score FROM memory_quality "
             f"WHERE artifact_id IN ({qmarks})", ids).fetchall()
         return {r["artifact_id"]: r["quality_score"] for r in rows}
+
+    def add_dispute(self, disputed_id: str, disputer_id: str, created_at: float) -> None:
+        self.db.execute(
+            "INSERT OR IGNORE INTO disputes(disputed_id, disputer_id, created_at) VALUES(?,?,?)",
+            (disputed_id, disputer_id, created_at))
+        self.db.commit()
+
+    def active_disputers(self, disputed_id: str) -> list[str]:
+        """Disputers that still count: not dormant, and not themselves disputed
+        by an active dispute (transitivity)."""
+        rows = self.db.execute("""
+            SELECT d.disputer_id FROM disputes d
+            WHERE d.disputed_id = ? AND d.dormant = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM disputes d2
+                WHERE d2.disputed_id = d.disputer_id AND d2.dormant = 0)
+        """, (disputed_id,)).fetchall()
+        return [r["disputer_id"] for r in rows]
+
+    def recompute_validity(self, artifact_id: str) -> float:
+        from memor.supersession import validity_for
+        v = validity_for(len(self.active_disputers(artifact_id)))
+        self.db.execute("""
+            INSERT INTO memory_quality(artifact_id, validity) VALUES(?, ?)
+            ON CONFLICT(artifact_id) DO UPDATE SET validity = ?
+        """, (artifact_id, v, v))
+        self.db.commit()
+        return v
+
+    def get_validity_scores(self, artifact_ids: list[str]) -> dict[str, float]:
+        ids = list(artifact_ids)
+        if not ids:
+            return {}
+        qmarks = ",".join("?" * len(ids))
+        rows = self.db.execute(
+            f"SELECT artifact_id, validity FROM memory_quality "
+            f"WHERE artifact_id IN ({qmarks})", ids).fetchall()
+        result = {r["artifact_id"]: (r["validity"] if r["validity"] is not None else 1.0)
+                  for r in rows}
+        # Default 1.0 for any requested IDs not yet in memory_quality
+        for aid in ids:
+            if aid not in result:
+                result[aid] = 1.0
+        return result
+
+    def get_active_disputers(self, artifact_ids: list[str]) -> dict[str, list[str]]:
+        out: dict[str, list[str]] = {}
+        for aid in artifact_ids:
+            d = self.active_disputers(aid)
+            if d:
+                out[aid] = d
+        return out
 
     def get_stale_memories(self, days: int = 30) -> list[str]:
         import time as _time
