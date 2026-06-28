@@ -284,7 +284,7 @@ def run_poll_cycle(
     # Soft quality decay: unused memories lose quality over time
     if new_ingested:
         try:
-            decayed = store.decay_quality(stale_days=14, factor=0.5, deactivate_floor=0.03)
+            decayed = store.decay_quality(factor=0.5, deactivate_floor=0.03)
             if decayed > 0:
                 print(f"  decayed quality for {decayed} stale memories")
         except Exception:

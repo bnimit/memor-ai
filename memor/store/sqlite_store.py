@@ -487,28 +487,40 @@ class SqliteStore:
         """, (cutoff, cutoff)).fetchall()
         return [r["id"] for r in rows]
 
-    def decay_quality(self, stale_days: int = 14, factor: float = 0.5,
+    def decay_quality(self, stale_days: int | None = None, factor: float = 0.5,
                       deactivate_floor: float = 0.03) -> int:
-        """Halve quality_score for memories not recalled in stale_days.
-        Only decays each memory once per stale_days interval (tracked via
-        last_decayed_at). Also catches memories with NULL last_recalled
-        that are old enough. If the decayed score drops below
-        deactivate_floor, deactivate the memory.
-        Returns number of memories decayed."""
+        """Halve quality_score for memories not recalled within their staleness
+        window. stale_days=None (daemon default) uses each memory's per-type
+        half-life (memor.temporal.half_life_days); an explicit int forces a
+        uniform window for all types (backward-compatible with existing callers).
+        Decays each memory at most once per window (last_decayed_at). Deactivates
+        if it drops below deactivate_floor. Returns number decayed."""
         import time as _time
+        from memor.temporal import half_life_days, mem_type_of
         now = _time.time()
-        recall_cutoff = now - (stale_days * 86400)
-        decay_cutoff = now - (stale_days * 86400)
         rows = self.db.execute("""
-            SELECT q.artifact_id, q.quality_score
+            SELECT q.artifact_id, q.quality_score, q.last_recalled, q.last_decayed_at,
+                   a.id, a.kind, a.project, a.source, a.text, a.token_count,
+                   a.created_at, a.meta
             FROM memory_quality q
             JOIN artifacts a ON a.id = q.artifact_id
             WHERE a.kind = 'memory' AND a.active = 1
-              AND (q.last_recalled IS NULL OR q.last_recalled < ?)
-              AND (q.last_decayed_at IS NULL OR q.last_decayed_at < ?)
-        """, (recall_cutoff, decay_cutoff)).fetchall()
+        """).fetchall()
         decayed = 0
         for r in rows:
+            art = self._row_to_artifact(r)
+            window_days = stale_days if stale_days is not None \
+                else half_life_days(mem_type_of(art))
+            window = window_days * 86400
+            cutoff = now - window
+            recalled = r["last_recalled"]
+            last_decayed = r["last_decayed_at"]
+            # Effective last-use: last_recalled if known, else created_at
+            last_use = recalled if recalled is not None else art.created_at
+            if last_use >= cutoff:
+                continue   # not yet stale for its type
+            if last_decayed is not None and last_decayed >= cutoff:
+                continue   # already decayed this window
             new_score = round(r["quality_score"] * factor, 4)
             if new_score < deactivate_floor:
                 self._deactivate_artifact(r["artifact_id"])
