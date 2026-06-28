@@ -4,6 +4,7 @@ from memor.types import Artifact, Scope
 from memor.llm.base import DISTILL_PROMPT
 from memor.distill.extractive import extract_key_chunks
 from memor.tokencount import count_tokens
+from memor.supersession import find_disputes
 
 DEDUP_SIM_THRESHOLD = 0.92
 SUPERSEDE_SIM_THRESHOLD = 0.80
@@ -50,6 +51,7 @@ def _store_memory(store, embedder, text: str, mem_type: str, session_id: str,
     store.add_artifacts([art], [vec])
     for c in source_chunks:
         store.add_edge(mid, c.id, "derived_from")
+    find_disputes(store, embedder, art, vec=vec)
     return mid
 
 
