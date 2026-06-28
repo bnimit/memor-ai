@@ -89,8 +89,9 @@ def recall(query: str, project: str, db_path: str, *,
     store = SqliteStore(db_path, dim=embedder.dim)
     import os
     type_halflife = os.environ.get("MEMOR_TYPE_HALFLIFE", "0") == "1"
+    supersession = os.environ.get("MEMOR_SUPERSESSION", "0") == "1"
     retriever = Retriever(store, embedder, k=k, min_similarity=min_similarity,
-                          type_halflife=type_halflife)
+                          type_halflife=type_halflife, supersession=supersession)
     trace = retriever.query(query, Scope(project=project))
 
     hits = list(trace.hits)

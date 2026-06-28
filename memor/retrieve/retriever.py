@@ -37,11 +37,12 @@ class Retriever:
                  k: int = 8, recency_weight: float = 0.25,
                  kind_weight: float = 0.15, quality_weight: float = 0.10,
                  min_similarity: float = 0.0, edge_expand: bool = True,
-                 type_halflife: bool = False):
+                 type_halflife: bool = False, supersession: bool = False):
         self.store, self.embedder = store, embedder
         self.k, self.edge_expand = k, edge_expand
         self.min_similarity = min_similarity
         self.type_halflife = type_halflife
+        self.supersession = supersession
         self.w_sim = 1.0 - recency_weight - kind_weight - quality_weight
         self.w_rec = recency_weight
         self.w_kind = kind_weight
@@ -94,6 +95,12 @@ class Retriever:
         else:
             quality_scores = {}
 
+        if self.supersession and hasattr(self.store, 'get_validity_scores'):
+            validity_by_id = self.store.get_validity_scores(list(arts_by_id))
+            disputers_by_id = self.store.get_active_disputers(list(arts_by_id))
+        else:
+            validity_by_id, disputers_by_id = {}, {}
+
         for aid, a in arts_by_id.items():
             norm_rel = (fused.get(aid, 0.0) - rel_min) / rel_range
 
@@ -106,22 +113,32 @@ class Retriever:
 
             quality = quality_scores.get(aid, 0.5)
 
+            validity = validity_by_id.get(aid, 1.0) if self.supersession else 1.0
             score = (self.w_sim * norm_rel + self.w_rec * recency
-                     + self.w_kind * kind_boost + self.w_qual * quality)
+                     + self.w_kind * kind_boost + self.w_qual * quality) * validity
             hits[aid] = Hit(a, score, {
                 "sim": sim_by_id.get(aid, 0.0), "rel": round(norm_rel, 3),
                 "recency": round(recency, 3), "kind": a.kind,
-                "quality": round(quality, 3), "edge": 0.0,
+                "quality": round(quality, 3), "validity": round(validity, 3), "edge": 0.0,
             })
 
         if self.edge_expand and arts_by_id:
             seed_ids = list(arts_by_id.keys())
             for nb in self.store.neighbors(seed_ids, EDGE_TYPES, hops=1):
                 if nb.id not in hits:
-                    hits[nb.id] = Hit(nb, 0.5 * max(h.score for h in hits.values()),
-                                      {"sim": 0.0, "rel": 0.0,
-                                       "recency": 0.0, "kind": nb.kind, "edge": 1.0})
+                    nb_validity = validity_by_id.get(nb.id, 1.0) if self.supersession else 1.0
+                    base = 0.5 * max(h.score for h in hits.values())
+                    hits[nb.id] = Hit(nb, base * nb_validity,
+                                      {"sim": 0.0, "rel": 0.0, "recency": 0.0,
+                                       "kind": nb.kind, "validity": round(nb_validity, 3),
+                                       "edge": 1.0})
 
         ranked = sorted(hits.values(), key=lambda h: h.score, reverse=True)[:self.k]
+
+        if self.supersession and disputers_by_id:
+            present = {h.artifact.id for h in ranked}
+            ranked = [h for h in ranked
+                      if not any(d in present for d in disputers_by_id.get(h.artifact.id, []))]
+
         return RetrievalTrace(query=text, scope=scope, candidates=candidates,
                               hits=ranked, latency_ms=(time.perf_counter()-t0)*1000)
