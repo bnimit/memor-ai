@@ -3,6 +3,7 @@ owns persistence and the distiller owns detection wiring."""
 from __future__ import annotations
 
 VALIDITY_FLOOR = 0.25
+AFFIRM_THRESHOLD = 2
 
 def validity_for(n_active_disputers: int) -> float:
     if n_active_disputers <= 0:

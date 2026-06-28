@@ -439,6 +439,33 @@ class SqliteStore:
             """, (aid, now, now))
         self.db.commit()
 
+    def affirm_disputes(self, artifact_ids: list[str]) -> None:
+        """A use signal on a disputed memory accrues affirmations on its newest
+        active dispute; at threshold that dispute goes dormant and validity
+        recovers. Recall alone never calls this — only record_usage does."""
+        from memor.supersession import AFFIRM_THRESHOLD
+        for aid in artifact_ids:
+            row = self.db.execute("""
+                SELECT disputer_id, affirmations FROM disputes
+                WHERE disputed_id = ? AND dormant = 0
+                ORDER BY created_at DESC LIMIT 1
+            """, (aid,)).fetchone()
+            if not row:
+                continue
+            n = (row["affirmations"] or 0) + 1
+            if n >= AFFIRM_THRESHOLD:
+                self.db.execute(
+                    "UPDATE disputes SET affirmations=?, dormant=1 "
+                    "WHERE disputed_id=? AND disputer_id=?",
+                    (n, aid, row["disputer_id"]))
+            else:
+                self.db.execute(
+                    "UPDATE disputes SET affirmations=? "
+                    "WHERE disputed_id=? AND disputer_id=?",
+                    (n, aid, row["disputer_id"]))
+            self.db.commit()
+            self.recompute_validity(aid)
+
     def record_usage(self, artifact_ids: list[str]) -> None:
         for aid in artifact_ids:
             self.db.execute("""
@@ -446,6 +473,7 @@ class SqliteStore:
             """, (aid,))
         self.db.commit()
         self._recompute_quality(artifact_ids)
+        self.affirm_disputes(artifact_ids)
 
     def record_negative(self, artifact_ids: list[str]) -> None:
         for aid in artifact_ids:
