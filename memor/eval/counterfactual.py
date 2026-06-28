@@ -194,3 +194,71 @@ def summarize_verdicts(verdicts: list[CounterfactualVerdict]) -> dict:
         "loss_pct": round(losses / n * 100, 1),
         "do_no_harm_pct": round((wins + ties) / n * 100, 1),
     }
+
+
+CONTRADICTION_JUDGE_PROMPT = """You are auditing a memory system's supersession.
+A NEWER memory was flagged as superseding an OLDER one. Decide if the newer one
+genuinely CONTRADICTS or REPLACES the older (not merely related/elaborating).
+
+OLDER: {old}
+NEWER: {new}
+
+Return STRICT JSON: {{"contradiction": true|false}}"""
+
+
+def partition_cases(cases, *, store, embedder, db_path):
+    """Split cases by whether, with supersession OFF, the recalled candidate set
+    contains a disputed pair (an O and one of its active disputers both present).
+    Those are the only cases where Component B can change the outcome."""
+    import os
+    from memor.recall import recall
+    from memor.query_complexity import route_query, Tier
+    prev = os.environ.get("MEMOR_SUPERSESSION")
+    os.environ["MEMOR_SUPERSESSION"] = "0"
+    present, absent = [], []
+    try:
+        for c in cases:
+            tier = route_query(c.query)
+            if tier == Tier.SKIP:
+                absent.append(c); continue
+            res = recall(c.query, c.scope_project, db_path, embedder=embedder,
+                         k=tier.k, threshold=0.15, max_tokens=tier.max_tokens,
+                         session_id=c.session_id)
+            ids = set(res.hit_ids)
+            disputers = store.get_active_disputers(list(ids))
+            has_pair = any(any(d in ids for d in ds) for ds in disputers.values())
+            (present if has_pair else absent).append(c)
+    finally:
+        if prev is None:
+            os.environ.pop("MEMOR_SUPERSESSION", None)
+        else:
+            os.environ["MEMOR_SUPERSESSION"] = prev
+    return present, absent
+
+
+def summarize_stratified(present_verdicts, absent_verdicts) -> dict:
+    return {
+        "dispute_present": summarize_verdicts(present_verdicts),
+        "no_dispute": summarize_verdicts(absent_verdicts),
+    }
+
+
+def sample_dispute_precision(store, llm, n: int = 20) -> dict:
+    rows = store.db.execute(
+        "SELECT disputed_id, disputer_id FROM disputes WHERE dormant=0 LIMIT ?",
+        (n,)).fetchall()
+    sampled = contradictions = 0
+    for r in rows:
+        old = store.db.execute("SELECT text FROM artifacts WHERE id=?",
+                               (r["disputed_id"],)).fetchone()
+        new = store.db.execute("SELECT text FROM artifacts WHERE id=?",
+                               (r["disputer_id"],)).fetchone()
+        if not old or not new:
+            continue
+        sampled += 1
+        raw = llm.complete(CONTRADICTION_JUDGE_PROMPT.format(old=old["text"], new=new["text"]))
+        data = _extract_json(raw)
+        if data.get("contradiction") is True:
+            contradictions += 1
+    precision = round(contradictions / sampled, 3) if sampled else 0.0
+    return {"sampled": sampled, "contradictions": contradictions, "precision": precision}
