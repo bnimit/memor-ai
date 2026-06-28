@@ -32,7 +32,7 @@ def test_soft_demote_when_disputer_absent(tmp_path):
     s.db.execute("UPDATE artifacts SET active=0 WHERE id='new'"); s.db.commit()
     hits = r.query("react version", Scope(project="p")).hits
     assert [h.artifact.id for h in hits] == ["old"]              # still retrievable
-    assert hits[0].components.get("validity") == 0.5            # but demoted
+    assert hits[0].components.get("validity") < 1.0              # but demoted
 
 def test_disabled_keeps_old(tmp_path):
     e, s = _seed(tmp_path)

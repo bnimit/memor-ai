@@ -95,7 +95,8 @@ class Retriever:
         else:
             quality_scores = {}
 
-        if self.supersession and hasattr(self.store, 'get_validity_scores'):
+        if self.supersession and hasattr(self.store, 'get_validity_scores') \
+                and hasattr(self.store, 'get_active_disputers'):
             validity_by_id = self.store.get_validity_scores(list(arts_by_id))
             disputers_by_id = self.store.get_active_disputers(list(arts_by_id))
         else:
