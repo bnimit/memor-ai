@@ -4,6 +4,7 @@ import time
 from memor.types import Scope, Hit, RetrievalTrace
 from memor.interfaces import Embedder, MemoryStore
 from memor.temporal import half_life_days, mem_type_of, DEFAULT_HALF_LIFE_DAYS
+from memor.supersession import validity_for
 
 EDGE_TYPES = ["fixes", "supersedes", "part_of", "derived_from"]
 
@@ -114,7 +115,7 @@ class Retriever:
 
             quality = quality_scores.get(aid, 0.5)
 
-            validity = validity_by_id.get(aid, 1.0) if self.supersession else 1.0
+            validity = validity_for(len(disputers_by_id.get(aid, []))) if self.supersession else 1.0
             score = (self.w_sim * norm_rel + self.w_rec * recency
                      + self.w_kind * kind_boost + self.w_qual * quality) * validity
             hits[aid] = Hit(a, score, {
