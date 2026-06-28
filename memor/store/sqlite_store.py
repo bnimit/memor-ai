@@ -865,6 +865,32 @@ class SqliteStore:
             })
         return result
 
+    def get_meta(self, key: str, default: str | None = None) -> str | None:
+        row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (key, value))
+        self.db.commit()
+
+    def backfill_disputes(self, embedder) -> int:
+        """One-time pairwise dispute scan over all active distilled memories,
+        per project. Idempotent (add_dispute is INSERT OR IGNORE; validity is
+        derived). Returns dispute rows present afterward for touched memories."""
+        from memor.supersession import find_disputes
+        rows = self.db.execute(
+            "SELECT * FROM artifacts WHERE kind='memory' AND active=1 "
+            "ORDER BY created_at ASC").fetchall()
+        arts = [self._row_to_artifact(r) for r in rows]
+        quals = self.get_quality_scores([a.id for a in arts])
+        written = 0
+        # Walk newest-first so each art is treated as the "new" disputer of older ones.
+        for art in reversed(arts):
+            disputed = find_disputes(self, embedder, art,
+                                     new_quality=quals.get(art.id, 0.5))
+            written += len(disputed)
+        return written
+
     def get_onboarding_status(self) -> str:
         chunks = self.db.execute(
             "SELECT COUNT(*) as c FROM artifacts WHERE kind='session_chunk' AND active=1"

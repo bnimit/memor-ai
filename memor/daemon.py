@@ -319,6 +319,16 @@ def run_poll_cycle(
         except Exception:
             pass
 
+    # One-time supersession backfill over the existing corpus.
+    try:
+        if store.get_meta("disputes_backfilled") != "1":
+            n = store.backfill_disputes(embedder)
+            store.set_meta("disputes_backfilled", "1")
+            if n:
+                print(f"  backfilled {n} supersession disputes")
+    except Exception:
+        pass
+
     return state, distilled
 
 
