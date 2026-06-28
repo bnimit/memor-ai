@@ -3,6 +3,7 @@ import math
 import time
 from memor.types import Scope, Hit, RetrievalTrace
 from memor.interfaces import Embedder, MemoryStore
+from memor.temporal import half_life_days, mem_type_of, DEFAULT_HALF_LIFE_DAYS
 
 EDGE_TYPES = ["fixes", "supersedes", "part_of", "derived_from"]
 
@@ -35,10 +36,12 @@ class Retriever:
     def __init__(self, store: MemoryStore, embedder: Embedder, *,
                  k: int = 8, recency_weight: float = 0.25,
                  kind_weight: float = 0.15, quality_weight: float = 0.10,
-                 min_similarity: float = 0.0, edge_expand: bool = True):
+                 min_similarity: float = 0.0, edge_expand: bool = True,
+                 type_halflife: bool = False):
         self.store, self.embedder = store, embedder
         self.k, self.edge_expand = k, edge_expand
         self.min_similarity = min_similarity
+        self.type_halflife = type_halflife
         self.w_sim = 1.0 - recency_weight - kind_weight - quality_weight
         self.w_rec = recency_weight
         self.w_kind = kind_weight
@@ -95,7 +98,9 @@ class Retriever:
             norm_rel = (fused.get(aid, 0.0) - rel_min) / rel_range
 
             age_days = (now - a.created_at) / 86400
-            recency = math.exp(-0.693 * age_days / RECENCY_HALF_LIFE_DAYS)
+            hl = half_life_days(mem_type_of(a)) if self.type_halflife \
+                else DEFAULT_HALF_LIFE_DAYS
+            recency = math.exp(-0.693 * age_days / hl)
 
             kind_boost = KIND_WEIGHTS.get(a.kind, 1.0) - 1.0
 

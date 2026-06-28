@@ -87,7 +87,10 @@ def recall(query: str, project: str, db_path: str, *,
     from memor.retrieve.retriever import Retriever
 
     store = SqliteStore(db_path, dim=embedder.dim)
-    retriever = Retriever(store, embedder, k=k, min_similarity=min_similarity)
+    import os
+    type_halflife = os.environ.get("MEMOR_TYPE_HALFLIFE", "0") == "1"
+    retriever = Retriever(store, embedder, k=k, min_similarity=min_similarity,
+                          type_halflife=type_halflife)
     trace = retriever.query(query, Scope(project=project))
 
     hits = list(trace.hits)
