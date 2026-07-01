@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -64,6 +65,19 @@ def _injected_token_count(artifact) -> int:
     return max(1, count_tokens(artifact.text[:_TEXT_TRUNCATE_LEN]))
 
 
+def _injected_text(artifact, inject_mode: str) -> str:
+    if inject_mode == "fact":
+        return artifact.meta.get("fact") or artifact.text
+    return artifact.text
+
+
+def _injected_token_count_text(text: str, artifact) -> int:
+    if text == artifact.text and len(artifact.text) <= _TEXT_TRUNCATE_LEN:
+        return artifact.token_count
+    from memor.tokencount import count_tokens
+    return max(1, count_tokens(text[:_TEXT_TRUNCATE_LEN]))
+
+
 DEFAULT_MIN_SIMILARITY = 0.0
 
 
@@ -74,6 +88,9 @@ def recall(query: str, project: str, db_path: str, *,
            exclude_ids: set[str] | None = None,
            session_id: str = "") -> RecallResult:
     t0 = time.perf_counter()
+
+    _use_keys = os.environ.get("MEMOR_LLM_DISTILL", "0").lower() in ("1", "true", "yes")
+    _inject_mode = os.environ.get("MEMOR_INJECT_MODE", "value").lower()
 
     if not Path(db_path).exists():
         ms = (time.perf_counter() - t0) * 1000
@@ -87,7 +104,8 @@ def recall(query: str, project: str, db_path: str, *,
     from memor.retrieve.retriever import Retriever
 
     store = SqliteStore(db_path, dim=embedder.dim)
-    retriever = Retriever(store, embedder, k=k, min_similarity=min_similarity)
+    retriever = Retriever(store, embedder, k=k, min_similarity=min_similarity,
+                          use_keys=_use_keys)
     trace = retriever.query(query, Scope(project=project))
 
     hits = list(trace.hits)
@@ -101,14 +119,14 @@ def recall(query: str, project: str, db_path: str, *,
         budget_hits = []
         running = 0
         for h in hits:
-            cost = _injected_token_count(h.artifact)
+            cost = _injected_token_count_text(_injected_text(h.artifact, _inject_mode), h.artifact)
             if running + cost > max_tokens and budget_hits:
                 break
             budget_hits.append(h)
             running += cost
         hits = budget_hits
     top_score = hits[0].score if hits else 0.0
-    tokens = sum(_injected_token_count(h.artifact) for h in hits)
+    tokens = sum(_injected_token_count_text(_injected_text(h.artifact, _inject_mode), h.artifact) for h in hits)
 
     if not hits:
         status = "no_hits"
@@ -124,7 +142,8 @@ def recall(query: str, project: str, db_path: str, *,
         for i, h in enumerate(hits, 1):
             a = h.artifact
             kind_tag = a.meta.get("mem_type", a.kind)
-            text = a.text if len(a.text) <= _TEXT_TRUNCATE_LEN else a.text[:_TEXT_TRUNCATE_LEN] + "..."
+            raw_text = _injected_text(a, _inject_mode)
+            text = raw_text if len(raw_text) <= _TEXT_TRUNCATE_LEN else raw_text[:_TEXT_TRUNCATE_LEN] + "..."
             source_parts = []
             sid = a.meta.get("session_id")
             if sid:

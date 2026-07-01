@@ -32,6 +32,7 @@ class SqliteStore:
         self._migrate_quality_decay()
         self._migrate_negative_count()
         self._migrate_recall_agent()
+        self._migrate_key_vectors()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -86,6 +87,15 @@ class SqliteStore:
           tool_call_count INTEGER DEFAULT 0,
           had_recall INTEGER DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_turn_metrics_session ON turn_metrics(session_id);
+        CREATE TABLE IF NOT EXISTS key_vectors(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_id TEXT NOT NULL,
+          key_type TEXT NOT NULL,
+          key_text TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_key_mem ON key_vectors(memory_id);
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_keys USING vec0(embedding float[{self.dim}]);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_keys USING fts5(
+          key_id UNINDEXED, key_text, tokenize='porter unicode61');
         """)
         self.db.commit()
 
@@ -130,6 +140,20 @@ class SqliteStore:
                 self.db.commit()
             except Exception:
                 pass
+
+    def _migrate_key_vectors(self):
+        """Create key_vectors/vec_keys/fts_keys on DBs created before Project 1.
+        _init_schema already creates them for new DBs; this is a no-op then."""
+        self.db.executescript(f"""
+        CREATE TABLE IF NOT EXISTS key_vectors(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_id TEXT NOT NULL, key_type TEXT NOT NULL, key_text TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_key_mem ON key_vectors(memory_id);
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_keys USING vec0(embedding float[{self.dim}]);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_keys USING fts5(
+          key_id UNINDEXED, key_text, tokenize='porter unicode61');
+        """)
+        self.db.commit()
 
     def _migrate_fts(self):
         """One-time backfill of the FTS index for databases created before
@@ -280,6 +304,97 @@ class SqliteStore:
                 continue
             out.append((self._row_to_artifact(r), float(r["bm25_rank"])))
         return out
+
+    def add_keys(self, memory_id: str, keys: list[tuple[str, str]],
+                 vectors: list[list[float]]) -> None:
+        cur = self.db.cursor()
+        for (ktype, ktext), v in zip(keys, vectors):
+            cur.execute(
+                "INSERT INTO key_vectors(memory_id, key_type, key_text) VALUES(?,?,?)",
+                (memory_id, ktype, ktext))
+            kid = cur.lastrowid
+            cur.execute("INSERT INTO vec_keys(rowid, embedding) VALUES(?,?)",
+                        (kid, _serialize(v)))
+            cur.execute("INSERT INTO fts_keys(key_id, key_text) VALUES(?,?)",
+                        (kid, ktext))
+        self.db.commit()
+
+    def search_keys(self, vector: list[float], scope: Scope, k: int) -> list[tuple[str, float]]:
+        from memor.types import GLOBAL_PROJECT
+        fetch = min(max(k * 20, 200), self._VEC_KNN_LIMIT)
+        rows = self.db.execute("""
+          SELECT kv.memory_id AS mid, v.distance AS distance
+          FROM (SELECT rowid, distance FROM vec_keys
+                WHERE embedding MATCH ? AND k = ?) v
+          JOIN key_vectors kv ON kv.id = v.rowid
+          JOIN artifacts a ON a.id = kv.memory_id
+          WHERE a.active = 1
+            AND (? IS NULL OR a.project = ? OR a.project = ?)
+          ORDER BY v.distance ASC
+        """, (_serialize(vector), fetch,
+              scope.project, scope.project, GLOBAL_PROJECT)).fetchall()
+        best: dict[str, float] = {}
+        for r in rows:
+            sim = 1.0 - float(r["distance"])
+            mid = r["mid"]
+            if mid not in best or sim > best[mid]:
+                best[mid] = sim
+        ranked = sorted(best.items(), key=lambda kv: kv[1], reverse=True)
+        return ranked[:k]
+
+    def search_keys_lexical(self, query: str, scope: Scope, k: int) -> list[tuple[str, float]]:
+        """Lexical BM25 over key_text via fts_keys, resolved to memory_ids (best
+        bm25 per memory). Mirrors search_lexical but for the key surface."""
+        from memor.types import GLOBAL_PROJECT
+        terms = re.findall(r"[A-Za-z0-9_]+", query.lower())
+        if not terms:
+            return []
+        match = " OR ".join(terms)
+        rows = self.db.execute("""
+          SELECT kv.memory_id AS mid, bm25(fts_keys) AS rank
+          FROM fts_keys f JOIN key_vectors kv ON kv.id = f.key_id
+          JOIN artifacts a ON a.id = kv.memory_id
+          WHERE fts_keys MATCH ? AND a.active = 1
+            AND (? IS NULL OR a.project = ? OR a.project = ?)
+          ORDER BY rank ASC
+        """, (match, scope.project, scope.project, GLOBAL_PROJECT)).fetchall()
+        best: dict[str, float] = {}
+        for r in rows:
+            mid = r["mid"]
+            if mid not in best or r["rank"] < best[mid]:  # lower bm25 = better
+                best[mid] = r["rank"]
+        ranked = sorted(best.items(), key=lambda kv: kv[1])  # ascending bm25
+        return ranked[:k]
+
+    def delete_keys(self, memory_id: str) -> None:
+        rows = self.db.execute(
+            "SELECT id FROM key_vectors WHERE memory_id=?", (memory_id,)).fetchall()
+        for r in rows:
+            self.db.execute("DELETE FROM vec_keys WHERE rowid=?", (r["id"],))
+            self.db.execute("DELETE FROM fts_keys WHERE key_id=?", (r["id"],))
+        self.db.execute("DELETE FROM key_vectors WHERE memory_id=?", (memory_id,))
+        self.db.commit()
+
+    def count_keys(self) -> int:
+        return self.db.execute("SELECT COUNT(*) AS c FROM key_vectors").fetchone()["c"]
+
+    def find_similar_fact(self, vector: list[float], project: str,
+                          threshold: float = 0.92) -> str | None:
+        from memor.types import GLOBAL_PROJECT
+        rows = self.db.execute(f"""
+          SELECT kv.memory_id AS mid, v.distance AS distance
+          FROM (SELECT rowid, distance FROM vec_keys
+                WHERE embedding MATCH ? AND k = {self._VEC_KNN_LIMIT}) v
+          JOIN key_vectors kv ON kv.id = v.rowid
+          JOIN artifacts a ON a.id = kv.memory_id
+          WHERE a.active = 1 AND kv.key_type = 'fact'
+            AND (a.project = ? OR a.project = ?)
+          ORDER BY v.distance ASC LIMIT 1
+        """, (_serialize(vector), project, GLOBAL_PROJECT)).fetchall()
+        if not rows:
+            return None
+        sim = 1.0 - float(rows[0]["distance"])
+        return rows[0]["mid"] if sim >= threshold else None
 
     def neighbors(self, ids: list[str], types: list[str], hops: int = 1) -> list[Artifact]:
         qmarks_ids = ",".join("?" * len(ids))

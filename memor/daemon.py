@@ -73,7 +73,16 @@ def save_distilled_state(distilled: set[str]) -> None:
 
 
 def _make_llm():
-    """Try to create an LLM for distillation. Returns None if no API key."""
+    """Create a distillation LLM. Prefers the local, offline GGUF model when
+    MEMOR_LLM_DISTILL is enabled and available. Cloud backends stay opt-in via
+    their API keys. Returns None -> extractive fallback."""
+    if os.environ.get("MEMOR_LLM_DISTILL", "0").lower() in ("1", "true", "yes"):
+        from memor.llm import llama_cpp as lc
+        if lc.available():
+            try:
+                return lc.LlamaCppLLM()
+            except lc.LlamaCppUnavailable:
+                pass
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if api_key:
         from memor.llm.anthropic import AnthropicLLM
@@ -110,7 +119,12 @@ def distill_new_sessions(
 ) -> set[str]:
     """Distill any sessions that haven't been distilled yet. Returns updated set.
     Uses full LLM distiller if llm is provided, otherwise falls back to extractive-only."""
-    if llm:
+    from memor.llm.llama_cpp import LlamaCppLLM
+    if isinstance(llm, LlamaCppLLM):
+        from memor.distill.distiller import LocalDistiller
+        gq = os.environ.get("MEMOR_QUERY_KEYS", "0").lower() in ("1", "true", "yes")
+        d = LocalDistiller(store, embedder, llm, gen_questions=gq)
+    elif llm:
         from memor.distill.distiller import Distiller
         d = Distiller(store, embedder, llm)
     else:
@@ -320,6 +334,44 @@ def run_poll_cycle(
             pass
 
     return state, distilled
+
+
+def redistill_project(store, embedder, llm, project, *, deactivate_old=True,
+                      gen_questions=False, progress=None) -> dict:
+    """Re-distill a project's raw session_chunks with the local distiller.
+    Deactivates prior distilled memories first (reversible).
+    Re-runs safely (dedup-on-fact prevents duplicate memories), but re-distills
+    every session each call — it does not skip already-distilled sessions.
+    Returns counts."""
+    from memor.distill.distiller import LocalDistiller
+    deactivated = 0
+    if deactivate_old:
+        olds = store.db.execute(
+            "SELECT id FROM artifacts WHERE kind='memory' AND source='distill' "
+            "AND project=? AND active=1", (project,)).fetchall()
+        for r in olds:
+            # _deactivate_artifact only clears the vec/fts index; the explicit active=0 below is what makes it reversible-deactivated
+            store._deactivate_artifact(r["id"])
+            store.db.execute("UPDATE artifacts SET active=0 WHERE id=?", (r["id"],))
+            store.delete_keys(r["id"])
+            deactivated += 1
+        store.db.commit()
+    distiller = LocalDistiller(store, embedder, llm, gen_questions=gen_questions)
+    rows = store.db.execute(
+        "SELECT * FROM artifacts WHERE kind='session_chunk' AND project=?",
+        (project,)).fetchall()
+    by_session: dict[str, list] = {}
+    for r in rows:
+        a = store._row_to_artifact(r)
+        by_session.setdefault(a.meta.get("session_id", "?"), []).append(a)
+    total_mem = 0
+    for i, (sid, chunks) in enumerate(by_session.items()):
+        chunks.sort(key=lambda a: a.meta.get("ord", 0))
+        ids = distiller.distill_session(sid, chunks, project)
+        total_mem += len(ids)
+        if progress:
+            progress(i + 1, len(by_session), sid)
+    return {"sessions": len(by_session), "memories": total_mem, "deactivated": deactivated}
 
 
 def _make_embedder():

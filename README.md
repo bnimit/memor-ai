@@ -173,6 +173,30 @@ Dark fintech-inspired UI showing:
 
 ---
 
+## Local distillation (optional, no API key)
+
+memor can distill sessions with a small **local** model (offline, in-process,
+ingest-only — recall never uses an LLM). Enable it:
+
+```bash
+pip install "memor-cli[llm]"   # or: pip install "llama-cpp-python>=0.3.0"
+export MEMOR_LLM_DISTILL=1
+memor daemon
+```
+
+On first run it downloads ~1.1 GB (Qwen2.5-1.5B GGUF, Apache-2.0), cached
+thereafter. On CPUs without AVX2, or if the wheel can't build, install a
+prebuilt CPU wheel:
+
+```bash
+pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+```
+
+If the model is unavailable, distillation falls back to extractive mode
+automatically.
+
+---
+
 ## Commands
 
 ```

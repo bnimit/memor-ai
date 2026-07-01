@@ -5,3 +5,7 @@ Only include durable, reusable facts. Session text:
 ---
 {session_text}
 ---"""
+
+# Backend contract: complete(prompt: str, *, max_tokens: int = ...,
+# grammar: str | None = None) -> str. Cloud backends (anthropic, openai_compat)
+# ignore `grammar`; the local llama_cpp backend enforces it via GBNF.

@@ -287,6 +287,31 @@ def distill(project: str = typer.Option(...), db: str = "memor.db",
     typer.echo(f"distilled {total} memories from {len(by_session)} sessions")
 
 
+@app.command("redistill")
+def redistill_cmd(project: str = typer.Option(...), db: str = "memor.db",
+                  questions: bool = False, yes: bool = False):
+    """Re-distill a project's raw sessions with the local model (opt-in backfill)."""
+    import os
+    os.environ.setdefault("MEMOR_LLM_DISTILL", "1")
+    from memor.daemon import _make_llm, redistill_project
+    from memor.embed.local import LocalEmbedder
+    from memor.store.sqlite_store import SqliteStore
+    llm = _make_llm()
+    if llm is None:
+        typer.echo("No local model available. Install llama-cpp-python + set MEMOR_LLM_DISTILL=1.")
+        raise typer.Exit(1)
+    if not yes:
+        typer.echo("This re-distills the whole project locally (minutes to hours "
+                   "on CPU). Old distilled memories are deactivated (reversible). "
+                   "Re-run with --yes to proceed.")
+        raise typer.Exit(0)
+    e = LocalEmbedder()
+    s = SqliteStore(db, dim=e.dim)
+    def prog(i, n, sid): typer.echo(f"[{i}/{n}] {sid}")
+    stats = redistill_project(s, e, llm, project, gen_questions=questions, progress=prog)
+    typer.echo(f"Redistill complete: {stats}")
+
+
 @app.command("ingest-project")
 def ingest_project(project_dir: str, project: str = typer.Option(...),
                    db: str = "memor.db", fake: bool = False, no_filter: bool = False):
