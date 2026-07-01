@@ -26,6 +26,7 @@ def test_redistill_deactivates_old_and_creates_clean(tmp_path):
     e, s = _seed(tmp_path)
     stats = d.redistill_project(s, e, FakeLLM(), "p", deactivate_old=True)
     assert stats["deactivated"] == 1
+    assert stats["sessions"] == 1
     assert s.db.execute("SELECT active FROM artifacts WHERE id='old1'").fetchone()["active"] == 0
     clean = s.db.execute(
         "SELECT COUNT(*) c FROM artifacts WHERE kind='memory' AND active=1").fetchone()["c"]

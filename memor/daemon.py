@@ -348,12 +348,13 @@ def redistill_project(store, embedder, llm, project, *, deactivate_old=True,
             "SELECT id FROM artifacts WHERE kind='memory' AND source='distill' "
             "AND project=? AND active=1", (project,)).fetchall()
         for r in olds:
+            # _deactivate_artifact only clears the vec/fts index; the explicit active=0 below is what makes it reversible-deactivated
             store._deactivate_artifact(r["id"])
             store.db.execute("UPDATE artifacts SET active=0 WHERE id=?", (r["id"],))
             store.delete_keys(r["id"])
             deactivated += 1
         store.db.commit()
-    d = LocalDistiller(store, embedder, llm, gen_questions=gen_questions)
+    distiller = LocalDistiller(store, embedder, llm, gen_questions=gen_questions)
     rows = store.db.execute(
         "SELECT * FROM artifacts WHERE kind='session_chunk' AND project=?",
         (project,)).fetchall()
@@ -364,7 +365,7 @@ def redistill_project(store, embedder, llm, project, *, deactivate_old=True,
     total_mem = 0
     for i, (sid, chunks) in enumerate(by_session.items()):
         chunks.sort(key=lambda a: a.meta.get("ord", 0))
-        ids = d.distill_session(sid, chunks, project)
+        ids = distiller.distill_session(sid, chunks, project)
         total_mem += len(ids)
         if progress:
             progress(i + 1, len(by_session), sid)
