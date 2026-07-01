@@ -13,7 +13,8 @@ class AnthropicLLM:
         self.model = model
         self.max_retries = max_retries
 
-    def complete(self, prompt: str, *, max_tokens: int = 1024) -> str:
+    def complete(self, prompt: str, *, max_tokens: int = 1024, grammar: str | None = None) -> str:
+        # grammar accepted for interface parity; ignored (no GBNF over HTTP)
         import anthropic
 
         attempt = 0
