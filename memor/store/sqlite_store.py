@@ -305,6 +305,55 @@ class SqliteStore:
             out.append((self._row_to_artifact(r), float(r["bm25_rank"])))
         return out
 
+    def add_keys(self, memory_id: str, keys: list[tuple[str, str]],
+                 vectors: list[list[float]]) -> None:
+        cur = self.db.cursor()
+        for (ktype, ktext), v in zip(keys, vectors):
+            cur.execute(
+                "INSERT INTO key_vectors(memory_id, key_type, key_text) VALUES(?,?,?)",
+                (memory_id, ktype, ktext))
+            kid = cur.lastrowid
+            cur.execute("INSERT INTO vec_keys(rowid, embedding) VALUES(?,?)",
+                        (kid, _serialize(v)))
+            cur.execute("INSERT INTO fts_keys(key_id, key_text) VALUES(?,?)",
+                        (kid, ktext))
+        self.db.commit()
+
+    def search_keys(self, vector: list[float], scope: Scope, k: int) -> list[tuple[str, float]]:
+        from memor.types import GLOBAL_PROJECT
+        fetch = min(max(k * 20, 200), self._VEC_KNN_LIMIT)
+        rows = self.db.execute(f"""
+          SELECT kv.memory_id AS mid, v.distance AS distance
+          FROM (SELECT rowid, distance FROM vec_keys
+                WHERE embedding MATCH ? AND k = ?) v
+          JOIN key_vectors kv ON kv.id = v.rowid
+          JOIN artifacts a ON a.id = kv.memory_id
+          WHERE a.active = 1
+            AND (? IS NULL OR a.project = ? OR a.project = ?)
+          ORDER BY v.distance ASC
+        """, (_serialize(vector), fetch,
+              scope.project, scope.project, GLOBAL_PROJECT)).fetchall()
+        best: dict[str, float] = {}
+        for r in rows:
+            sim = 1.0 - float(r["distance"])
+            mid = r["mid"]
+            if mid not in best or sim > best[mid]:
+                best[mid] = sim
+        ranked = sorted(best.items(), key=lambda kv: kv[1], reverse=True)
+        return ranked[:k]
+
+    def delete_keys(self, memory_id: str) -> None:
+        rows = self.db.execute(
+            "SELECT id FROM key_vectors WHERE memory_id=?", (memory_id,)).fetchall()
+        for r in rows:
+            self.db.execute("DELETE FROM vec_keys WHERE rowid=?", (r["id"],))
+            self.db.execute("DELETE FROM fts_keys WHERE key_id=?", (r["id"],))
+        self.db.execute("DELETE FROM key_vectors WHERE memory_id=?", (memory_id,))
+        self.db.commit()
+
+    def count_keys(self) -> int:
+        return self.db.execute("SELECT COUNT(*) AS c FROM key_vectors").fetchone()["c"]
+
     def neighbors(self, ids: list[str], types: list[str], hops: int = 1) -> list[Artifact]:
         qmarks_ids = ",".join("?" * len(ids))
         qmarks_types = ",".join("?" * len(types))
