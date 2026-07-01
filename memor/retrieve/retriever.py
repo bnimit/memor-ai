@@ -131,15 +131,25 @@ class Retriever:
             return RetrievalTrace(query=text, scope=scope, candidates=0,
                                   hits=[], latency_ms=(time.perf_counter()-t0)*1000)
         sim_by_id = dict(key_hits)
+        # Fix 1: apply min_similarity gate before any scoring
+        sim_by_id = {mid: s for mid, s in sim_by_id.items() if s >= self.min_similarity}
+        if not sim_by_id:
+            return RetrievalTrace(query=text, scope=scope, candidates=0,
+                                  hits=[], latency_ms=(time.perf_counter()-t0)*1000)
         ids = list(sim_by_id)
         # fetch value artifacts
         qmarks = ",".join("?" * len(ids))
         rows = self.store.db.execute(
             f"SELECT * FROM artifacts WHERE id IN ({qmarks}) AND active=1", ids).fetchall()
         arts = {r["id"]: self.store._row_to_artifact(r) for r in rows}
-        quality = self.store.get_quality_scores(ids) if hasattr(self.store, 'get_quality_scores') else {}
-        sims = list(sim_by_id.values())
-        smin = min(sims); srange = (max(sims) - smin) or 1.0
+        if not arts:
+            return RetrievalTrace(query=text, scope=scope, candidates=0,
+                                  hits=[], latency_ms=(time.perf_counter()-t0)*1000)
+        # Fix 3: query quality scores only over active artifact ids
+        quality = self.store.get_quality_scores(list(arts)) if hasattr(self.store, 'get_quality_scores') else {}
+        # Fix 2: normalize over active sims only (exclude filtered-out / inactive ids)
+        active_sims = [sim_by_id[mid] for mid in arts]
+        smin = min(active_sims); srange = (max(active_sims) - smin) or 1.0
         hits = []
         for mid, a in arts.items():
             norm = (sim_by_id[mid] - smin) / srange
