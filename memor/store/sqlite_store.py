@@ -342,6 +342,30 @@ class SqliteStore:
         ranked = sorted(best.items(), key=lambda kv: kv[1], reverse=True)
         return ranked[:k]
 
+    def search_keys_lexical(self, query: str, scope: Scope, k: int) -> list[tuple[str, float]]:
+        """Lexical BM25 over key_text via fts_keys, resolved to memory_ids (best
+        bm25 per memory). Mirrors search_lexical but for the key surface."""
+        from memor.types import GLOBAL_PROJECT
+        terms = re.findall(r"[A-Za-z0-9_]+", query.lower())
+        if not terms:
+            return []
+        match = " OR ".join(terms)
+        rows = self.db.execute("""
+          SELECT kv.memory_id AS mid, bm25(fts_keys) AS rank
+          FROM fts_keys f JOIN key_vectors kv ON kv.id = f.key_id
+          JOIN artifacts a ON a.id = kv.memory_id
+          WHERE fts_keys MATCH ? AND a.active = 1
+            AND (? IS NULL OR a.project = ? OR a.project = ?)
+          ORDER BY rank ASC
+        """, (match, scope.project, scope.project, GLOBAL_PROJECT)).fetchall()
+        best: dict[str, float] = {}
+        for r in rows:
+            mid = r["mid"]
+            if mid not in best or r["rank"] < best[mid]:  # lower bm25 = better
+                best[mid] = r["rank"]
+        ranked = sorted(best.items(), key=lambda kv: kv[1])  # ascending bm25
+        return ranked[:k]
+
     def delete_keys(self, memory_id: str) -> None:
         rows = self.db.execute(
             "SELECT id FROM key_vectors WHERE memory_id=?", (memory_id,)).fetchall()

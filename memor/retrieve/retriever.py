@@ -131,35 +131,52 @@ class Retriever:
             return RetrievalTrace(query=text, scope=scope, candidates=0,
                                   hits=[], latency_ms=(time.perf_counter()-t0)*1000)
         sim_by_id = dict(key_hits)
-        # Fix 1: apply min_similarity gate before any scoring
+        # Apply min_similarity gate before any scoring
         sim_by_id = {mid: s for mid, s in sim_by_id.items() if s >= self.min_similarity}
         if not sim_by_id:
             return RetrievalTrace(query=text, scope=scope, candidates=0,
                                   hits=[], latency_ms=(time.perf_counter()-t0)*1000)
-        ids = list(sim_by_id)
-        # fetch value artifacts
-        qmarks = ",".join("?" * len(ids))
+
+        # Lexical channel: BM25 over key_text via fts_keys. Only activates when
+        # dense key search is non-empty (mirrors the main dense path's gate).
+        lex_hits: list[tuple[str, float]] = []
+        if hasattr(self.store, 'search_keys_lexical'):
+            lex_hits = self.store.search_keys_lexical(text, scope, self.k * 4)
+
+        # Build ranked id lists for RRF fusion
+        vec_ids = sorted(sim_by_id, key=lambda m: sim_by_id[m], reverse=True)
+        lex_ids = [mid for mid, _ in lex_hits]
+
+        fused = rrf_fuse([vec_ids, lex_ids])
+
+        # Candidate id set: union of fused keys (both channels)
+        all_ids = list(fused)
+        qmarks = ",".join("?" * len(all_ids))
         rows = self.store.db.execute(
-            f"SELECT * FROM artifacts WHERE id IN ({qmarks}) AND active=1", ids).fetchall()
+            f"SELECT * FROM artifacts WHERE id IN ({qmarks}) AND active=1", all_ids).fetchall()
         arts = {r["id"]: self.store._row_to_artifact(r) for r in rows}
         if not arts:
             return RetrievalTrace(query=text, scope=scope, candidates=0,
                                   hits=[], latency_ms=(time.perf_counter()-t0)*1000)
-        # Fix 3: query quality scores only over active artifact ids
+
+        # Normalize fused scores over active ids only
         quality = self.store.get_quality_scores(list(arts)) if hasattr(self.store, 'get_quality_scores') else {}
-        # Fix 2: normalize over active sims only (exclude filtered-out / inactive ids)
-        active_sims = [sim_by_id[mid] for mid in arts]
-        smin = min(active_sims); srange = (max(active_sims) - smin) or 1.0
+        active_fused = [fused[mid] for mid in arts]
+        rel_min = min(active_fused)
+        rel_range = (max(active_fused) - rel_min) or 1.0
+
         hits = []
         for mid, a in arts.items():
-            norm = (sim_by_id[mid] - smin) / srange
+            norm_rel = (fused.get(mid, 0.0) - rel_min) / rel_range
             age_days = (now - a.created_at) / 86400
             recency = math.exp(-0.693 * age_days / RECENCY_HALF_LIFE_DAYS)
             kind_boost = KIND_WEIGHTS.get(a.kind, 1.0) - 1.0
             q = quality.get(mid, 0.5)
-            score = (self.w_sim * norm + self.w_rec * recency
+            score = (self.w_sim * norm_rel + self.w_rec * recency
                      + self.w_kind * kind_boost + self.w_qual * q)
-            hits.append(Hit(a, score, {"sim": round(sim_by_id[mid], 3),
+            # "sim" debug field = raw cosine from vec channel (0.0 for lexical-only hits)
+            hits.append(Hit(a, score, {"sim": round(sim_by_id.get(mid, 0.0), 3),
+                                       "rel": round(norm_rel, 3),
                                        "recency": round(recency, 3), "kind": a.kind,
                                        "quality": round(q, 3), "edge": 0.0}))
         hits.sort(key=lambda h: h.score, reverse=True)

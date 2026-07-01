@@ -339,8 +339,10 @@ def run_poll_cycle(
 def redistill_project(store, embedder, llm, project, *, deactivate_old=True,
                       gen_questions=False, progress=None) -> dict:
     """Re-distill a project's raw session_chunks with the local distiller.
-    Deactivates prior distilled memories first (reversible). Resumable: skips
-    sessions whose chunks are gone. Returns counts."""
+    Deactivates prior distilled memories first (reversible).
+    Re-runs safely (dedup-on-fact prevents duplicate memories), but re-distills
+    every session each call — it does not skip already-distilled sessions.
+    Returns counts."""
     from memor.distill.distiller import LocalDistiller
     deactivated = 0
     if deactivate_old:
