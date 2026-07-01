@@ -13,4 +13,4 @@ def test_migration_idempotent_on_reopen(tmp_path):
     p = str(tmp_path / "m.db")
     SqliteStore(p, dim=16)
     s2 = SqliteStore(p, dim=16)  # must not raise on second open
-    assert "key_vectors" in _tables(s2)
+    assert "key_vectors" in _tables(s2) and "vec_keys" in _tables(s2) and "fts_keys" in _tables(s2)
