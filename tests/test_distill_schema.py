@@ -26,3 +26,8 @@ def test_parse_bad_json_returns_empty():
 def test_prompt_mentions_questions_only_when_enabled():
     assert "question" in build_prompt("s", with_questions=True).lower()
     assert "question" not in build_prompt("s", with_questions=False).lower()
+
+def test_prompt_handles_percent_in_session_text():
+    # a % in the session text must not raise or corrupt
+    p = build_prompt("we hit 100% CPU and printed %s in the log", with_questions=False)
+    assert "100% CPU" in p and "%s in the log" in p

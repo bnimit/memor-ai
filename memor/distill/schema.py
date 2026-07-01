@@ -23,15 +23,15 @@ def build_prompt(session_text: str, *, with_questions: bool) -> str:
     q_field = ', "questions":[...]' if with_questions else ""
     return (
         "You are distilling a coding session into reusable memory.\n"
-        "Return STRICT JSON: {\"memories\":[{\"type\":..., \"value\":..., "
-        "\"fact\":...%s}]}\n"
+        'Return STRICT JSON: {"memories":[{"type":..., "value":..., "fact":...'
+        + q_field + "}]}\n"
         "Fields per memory:\n"
-        "  \"type\": one of decision|bugfix|lesson|snippet|preference|fact\n"
-        "  \"value\": a self-contained, reusable note (1-3 sentences)\n"
-        "  \"fact\": one terse atomic statement of the same memory\n"
-        "%s"
-        "Only durable, reusable facts. Omit chit-chat. Session text:\n---\n%s\n---"
-        % (q_field, q, session_text)
+        '  "type": one of decision|bugfix|lesson|snippet|preference|fact\n'
+        '  "value": a self-contained, reusable note (1-3 sentences)\n'
+        '  "fact": one terse atomic statement of the same memory\n'
+        + q +
+        "Only durable, reusable facts. Omit chit-chat. Session text:\n---\n"
+        + session_text + "\n---"
     )
 
 
