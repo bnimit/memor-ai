@@ -179,7 +179,7 @@ memor can distill sessions with a small **local** model (offline, in-process,
 ingest-only — recall never uses an LLM). Enable it:
 
 ```bash
-pip install "memor-cli[llm]"   # or: pip install llama-cpp-python
+pip install "memor-cli[llm]"   # or: pip install "llama-cpp-python>=0.3.0"
 export MEMOR_LLM_DISTILL=1
 memor daemon
 ```

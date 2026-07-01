@@ -1,5 +1,5 @@
 # tests/test_llama_cpp_backend.py
-import builtins, importlib, pytest
+import builtins, pytest
 from memor.llm import llama_cpp as mod
 
 def test_available_reflects_import(monkeypatch):
