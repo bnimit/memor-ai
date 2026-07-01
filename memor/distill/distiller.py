@@ -101,8 +101,6 @@ class LocalDistiller:
     def distill_session(self, session_id: str, chunks: list[Artifact],
                         project: str) -> list[str]:
         from memor.distill.schema import build_prompt, parse_memories, GBNF_GRAMMAR
-        from memor.distill.extractive import extract_key_chunks
-        from memor.tokencount import count_tokens
         key_chunks = extract_key_chunks(chunks, self.embedder)
         created = max((c.created_at for c in chunks), default=0.0)
         new_ids: list[str] = []
@@ -122,7 +120,7 @@ class LocalDistiller:
                     meta={"mem_type": m["type"], "session_id": session_id, "fact": fact})
                 self.store.add_artifacts([art], [self.embedder.embed([m["value"]])[0]])
                 keys = [("fact", fact)]
-                for q in m["questions"]:
+                for q in m.get("questions", []):
                     keys.append(("question", q))
                 key_vecs = self.embedder.embed([kt for _, kt in keys])
                 self.store.add_keys(mid, keys, key_vecs)

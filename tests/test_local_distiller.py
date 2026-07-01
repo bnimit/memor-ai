@@ -1,3 +1,4 @@
+import json
 from memor.store.sqlite_store import SqliteStore
 from memor.embed.fake import FakeEmbedder
 from memor.distill.distiller import LocalDistiller
@@ -23,8 +24,7 @@ def test_distill_stores_value_artifact_and_fact_key(tmp_path):
     assert len(ids) == 1
     row = s.db.execute("SELECT * FROM artifacts WHERE id=?", (ids[0],)).fetchone()
     assert row["kind"] == "memory"
-    import json as _j
-    meta = _j.loads(row["meta"])
+    meta = json.loads(row["meta"])
     assert meta["mem_type"] == "decision" and meta["fact"] == "auth uses session cookies"
     # exactly one 'fact' key, no questions
     assert s.count_keys() == 1
