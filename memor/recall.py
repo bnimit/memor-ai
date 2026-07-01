@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -86,7 +87,6 @@ def recall(query: str, project: str, db_path: str, *,
            min_similarity: float = DEFAULT_MIN_SIMILARITY,
            exclude_ids: set[str] | None = None,
            session_id: str = "") -> RecallResult:
-    import os
     t0 = time.perf_counter()
 
     _use_keys = os.environ.get("MEMOR_LLM_DISTILL", "0").lower() in ("1", "true", "yes")
