@@ -49,3 +49,18 @@ def test_delete_keys(tmp_path):
     assert s.count_keys() == 0
     assert s.db.execute("SELECT COUNT(*) FROM vec_keys").fetchone()[0] == 0
     assert s.db.execute("SELECT COUNT(*) FROM fts_keys").fetchone()[0] == 0
+
+def test_find_similar_fact_matches_identical(tmp_path):
+    e = FakeEmbedder(dim=16); s = SqliteStore(str(tmp_path/"m.db"), dim=16)
+    _mem(s, e, "m1", "auth uses session cookies")
+    s.add_keys("m1", [("fact", "auth uses session cookies")],
+               e.embed(["auth uses session cookies"]))
+    dup = s.find_similar_fact(e.embed(["auth uses session cookies"])[0], "p", threshold=0.92)
+    assert dup == "m1"
+
+def test_find_similar_fact_none_below_threshold(tmp_path):
+    e = FakeEmbedder(dim=16); s = SqliteStore(str(tmp_path/"m.db"), dim=16)
+    _mem(s, e, "m1", "auth uses session cookies")
+    s.add_keys("m1", [("fact", "auth uses session cookies")],
+               e.embed(["auth uses session cookies"]))
+    assert s.find_similar_fact(e.embed(["totally unrelated topic"])[0], "p", threshold=0.99) is None

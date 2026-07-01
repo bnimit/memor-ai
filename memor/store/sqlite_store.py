@@ -354,6 +354,24 @@ class SqliteStore:
     def count_keys(self) -> int:
         return self.db.execute("SELECT COUNT(*) AS c FROM key_vectors").fetchone()["c"]
 
+    def find_similar_fact(self, vector: list[float], project: str,
+                          threshold: float = 0.92) -> str | None:
+        from memor.types import GLOBAL_PROJECT
+        rows = self.db.execute("""
+          SELECT kv.memory_id AS mid, v.distance AS distance
+          FROM (SELECT rowid, distance FROM vec_keys
+                WHERE embedding MATCH ? AND k = 50) v
+          JOIN key_vectors kv ON kv.id = v.rowid
+          JOIN artifacts a ON a.id = kv.memory_id
+          WHERE a.active = 1 AND kv.key_type = 'fact'
+            AND (a.project = ? OR a.project = ?)
+          ORDER BY v.distance ASC LIMIT 1
+        """, (_serialize(vector), project, GLOBAL_PROJECT)).fetchall()
+        if not rows:
+            return None
+        sim = 1.0 - float(rows[0]["distance"])
+        return rows[0]["mid"] if sim >= threshold else None
+
     def neighbors(self, ids: list[str], types: list[str], hops: int = 1) -> list[Artifact]:
         qmarks_ids = ",".join("?" * len(ids))
         qmarks_types = ",".join("?" * len(types))
