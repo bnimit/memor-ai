@@ -173,6 +173,33 @@ def run_suite(cases: list[CounterfactualCase], *, store, embedder, llm, db_path,
     return summary
 
 
+def run_suite_for_project(store, embedder, llm, *, project, arms, db_path=None, k=8):
+    """Run the counterfactual suite once per arm on a single sample project,
+    toggling the distillation/injection env flags so the Phase-A gate can
+    compare raw-chunk vs distilled recall on identical cases."""
+    import os
+    _ARMS = {
+        "raw": {"MEMOR_LLM_DISTILL": "0"},
+        "distilled_fact": {"MEMOR_LLM_DISTILL": "1", "MEMOR_INJECT_MODE": "fact"},
+        "distilled_value": {"MEMOR_LLM_DISTILL": "1", "MEMOR_INJECT_MODE": "value"},
+    }
+    results = {}
+    for arm in arms:
+        saved = {k_: os.environ.get(k_) for k_ in _ARMS[arm]}
+        os.environ.update(_ARMS[arm])
+        try:
+            cases = build_cases_from_store(store, project=project)
+            results[arm] = run_suite(cases, store=store, embedder=embedder,
+                                     llm=llm, db_path=db_path, k=k)
+        finally:
+            for k_, v in saved.items():
+                if v is None:
+                    os.environ.pop(k_, None)
+                else:
+                    os.environ[k_] = v
+    return results
+
+
 def summarize_verdicts(verdicts: list[CounterfactualVerdict]) -> dict:
     n = len(verdicts)
     if n == 0:
