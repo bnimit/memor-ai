@@ -89,6 +89,49 @@ class Distiller:
         return new_ids
 
 
+class LocalDistiller:
+    """Extract-then-rewrite distiller for the local GGUF model. Stores a rich
+    `value` artifact plus retrieval keys (fact, optional questions). Raw chunks
+    are never stored as memories."""
+
+    def __init__(self, store, embedder, llm, *, gen_questions: bool = False):
+        self.store, self.embedder, self.llm = store, embedder, llm
+        self.gen_questions = gen_questions
+
+    def distill_session(self, session_id: str, chunks: list[Artifact],
+                        project: str) -> list[str]:
+        from memor.distill.schema import build_prompt, parse_memories, GBNF_GRAMMAR
+        from memor.distill.extractive import extract_key_chunks
+        from memor.tokencount import count_tokens
+        key_chunks = extract_key_chunks(chunks, self.embedder)
+        created = max((c.created_at for c in chunks), default=0.0)
+        new_ids: list[str] = []
+        for c in key_chunks:
+            prompt = build_prompt(c.text, with_questions=self.gen_questions)
+            raw = self.llm.complete(prompt, grammar=GBNF_GRAMMAR)
+            for m in parse_memories(raw, with_questions=self.gen_questions):
+                fact = m["fact"]
+                fact_vec = self.embedder.embed([fact])[0]
+                if self.store.find_similar_fact(fact_vec, project, threshold=0.92):
+                    continue
+                mid = f"mem:{session_id}:{hashlib.sha1(fact.encode()).hexdigest()[:8]}"
+                art = Artifact(
+                    id=mid, kind="memory", project=project, source="distill",
+                    text=m["value"], token_count=max(1, count_tokens(m["value"])),
+                    created_at=created,
+                    meta={"mem_type": m["type"], "session_id": session_id, "fact": fact})
+                self.store.add_artifacts([art], [self.embedder.embed([m["value"]])[0]])
+                keys = [("fact", fact)]
+                for q in m["questions"]:
+                    keys.append(("question", q))
+                key_vecs = self.embedder.embed([kt for _, kt in keys])
+                self.store.add_keys(mid, keys, key_vecs)
+                for src in key_chunks:
+                    self.store.add_edge(mid, src.id, "derived_from")
+                new_ids.append(mid)
+        return new_ids
+
+
 class ExtractiveDistiller:
     """LLM-free distiller. Stores the key extracted chunks as memories directly.
     Used as automatic fallback when no API key is available."""
