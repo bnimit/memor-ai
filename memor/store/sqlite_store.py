@@ -357,10 +357,10 @@ class SqliteStore:
     def find_similar_fact(self, vector: list[float], project: str,
                           threshold: float = 0.92) -> str | None:
         from memor.types import GLOBAL_PROJECT
-        rows = self.db.execute("""
+        rows = self.db.execute(f"""
           SELECT kv.memory_id AS mid, v.distance AS distance
           FROM (SELECT rowid, distance FROM vec_keys
-                WHERE embedding MATCH ? AND k = 50) v
+                WHERE embedding MATCH ? AND k = {self._VEC_KNN_LIMIT}) v
           JOIN key_vectors kv ON kv.id = v.rowid
           JOIN artifacts a ON a.id = kv.memory_id
           WHERE a.active = 1 AND kv.key_type = 'fact'

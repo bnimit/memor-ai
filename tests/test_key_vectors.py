@@ -64,3 +64,11 @@ def test_find_similar_fact_none_below_threshold(tmp_path):
     s.add_keys("m1", [("fact", "auth uses session cookies")],
                e.embed(["auth uses session cookies"]))
     assert s.find_similar_fact(e.embed(["totally unrelated topic"])[0], "p", threshold=0.99) is None
+
+def test_find_similar_fact_ignores_non_fact_keys(tmp_path):
+    e = FakeEmbedder(dim=16); s = SqliteStore(str(tmp_path/"m.db"), dim=16)
+    _mem(s, e, "m1", "auth uses session cookies")
+    s.add_keys("m1", [("question", "auth uses session cookies")],
+               e.embed(["auth uses session cookies"]))
+    # only a question key exists (no fact) -> no dedup match even for identical vector
+    assert s.find_similar_fact(e.embed(["auth uses session cookies"])[0], "p", threshold=0.5) is None
