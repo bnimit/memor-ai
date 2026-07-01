@@ -73,7 +73,16 @@ def save_distilled_state(distilled: set[str]) -> None:
 
 
 def _make_llm():
-    """Try to create an LLM for distillation. Returns None if no API key."""
+    """Create a distillation LLM. Prefers the local, offline GGUF model when
+    MEMOR_LLM_DISTILL is enabled and available. Cloud backends stay opt-in via
+    their API keys. Returns None -> extractive fallback."""
+    if os.environ.get("MEMOR_LLM_DISTILL", "0").lower() in ("1", "true", "yes"):
+        from memor.llm import llama_cpp as lc
+        if lc.available():
+            try:
+                return lc.LlamaCppLLM()
+            except lc.LlamaCppUnavailable:
+                pass
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if api_key:
         from memor.llm.anthropic import AnthropicLLM
@@ -110,7 +119,12 @@ def distill_new_sessions(
 ) -> set[str]:
     """Distill any sessions that haven't been distilled yet. Returns updated set.
     Uses full LLM distiller if llm is provided, otherwise falls back to extractive-only."""
-    if llm:
+    from memor.llm.llama_cpp import LlamaCppLLM
+    if isinstance(llm, LlamaCppLLM):
+        from memor.distill.distiller import LocalDistiller
+        gq = os.environ.get("MEMOR_QUERY_KEYS", "0").lower() in ("1", "true", "yes")
+        d = LocalDistiller(store, embedder, llm, gen_questions=gq)
+    elif llm:
         from memor.distill.distiller import Distiller
         d = Distiller(store, embedder, llm)
     else:
