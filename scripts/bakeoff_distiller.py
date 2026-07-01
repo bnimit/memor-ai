@@ -19,6 +19,31 @@ def _sample_chunks(store, project, max_sessions=10):
     return list(by_session.items())[:max_sessions]
 
 
+def recall_latency_probe(store, embedder, project, *, k=8, max_queries=50):
+    """Measure recall p50/p95 latency over the key_vectors path (use_keys=True).
+    Uses the potion embedder only — no generative model. Feeds the Phase-A
+    gate's 'recall p95 < 15ms' criterion."""
+    import time
+    from memor.retrieve.retriever import Retriever
+    from memor.types import Scope
+    rows = store.db.execute(
+        "SELECT text FROM artifacts WHERE kind='session_chunk' AND project=? LIMIT ?",
+        (project, max_queries)).fetchall()
+    queries = [r["text"][:200] for r in rows]
+    if not queries:
+        return {"p50_ms": 0.0, "p95_ms": 0.0, "n": 0}
+    r = Retriever(store, embedder, k=k, use_keys=True)
+    lat = []
+    for q in queries:
+        t0 = time.perf_counter()
+        r.query(q, Scope(project=project))
+        lat.append((time.perf_counter() - t0) * 1000)
+    lat.sort()
+    p50 = lat[len(lat) // 2]
+    p95 = lat[min(len(lat) - 1, int(len(lat) * 0.95))]
+    return {"p50_ms": round(p50, 2), "p95_ms": round(p95, 2), "n": len(lat)}
+
+
 def evaluate_model(repo_id, filename, store, embedder, sessions):
     from memor.llm.llama_cpp import LlamaCppLLM
     from memor.distill.schema import build_prompt, parse_memories, GBNF_GRAMMAR
@@ -61,9 +86,12 @@ def main(argv=None):
         try:
             r = evaluate_model(repo_id, filename, s, e, sessions)
             print(f"{r['model']:50} {r['valid_json_rate']*100:>7.1f} "
-                  f"{r['avg_value_tokens']:>8} {r['avg_latency_s_per_chunk']:>8}")
+                  f"{r['avg_value_tokens']:>8.1f} {r['avg_latency_s_per_chunk']:>8}")
         except Exception as ex:
             print(f"{repo_id:50}  ERROR: {ex}")
+    probe = recall_latency_probe(s, e, args.project)
+    print(f"\nrecall latency (key path, n={probe['n']}): "
+          f"p50={probe['p50_ms']}ms p95={probe['p95_ms']}ms")
 
 
 if __name__ == "__main__":
