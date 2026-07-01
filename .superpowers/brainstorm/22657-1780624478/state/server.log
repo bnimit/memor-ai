@@ -1,8 +1,0 @@
-{"type":"server-started","port":59688,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:59688","screen_dir":"/Users/nimit/Documents/Projects/Memorable/.superpowers/brainstorm/22657-1780624478/content","state_dir":"/Users/nimit/Documents/Projects/Memorable/.superpowers/brainstorm/22657-1780624478/state"}
-{"type":"screen-added","file":"/Users/nimit/Documents/Projects/Memorable/.superpowers/brainstorm/22657-1780624478/content/color-direction.html"}
-{"source":"user-event","type":"click","text":"Session Chunks\n        7,731\n        ingested from transcripts\n      \n    \n    \n      Warm Linen\n      Light cream/parchment base, dark gold accents, forest green for success states. Mercury/Stripe-inspired but warmer. Clean and airy.","choice":"b","id":null,"timestamp":1780624569962}
-{"type":"screen-added","file":"/Users/nimit/Documents/Projects/Memorable/.superpowers/brainstorm/22657-1780624478/content/card-style.html"}
-{"type":"screen-added","file":"/Users/nimit/Documents/Projects/Memorable/.superpowers/brainstorm/22657-1780624478/content/table-style.html"}
-{"type":"screen-added","file":"/Users/nimit/Documents/Projects/Memorable/.superpowers/brainstorm/22657-1780624478/content/dashboard-preview.html"}
-{"type":"screen-added","file":"/Users/nimit/Documents/Projects/Memorable/.superpowers/brainstorm/22657-1780624478/content/waiting.html"}
-{"type":"server-stopped","reason":"idle timeout"}
