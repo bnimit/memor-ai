@@ -32,6 +32,7 @@ class SqliteStore:
         self._migrate_quality_decay()
         self._migrate_negative_count()
         self._migrate_recall_agent()
+        self._migrate_key_vectors()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -86,6 +87,15 @@ class SqliteStore:
           tool_call_count INTEGER DEFAULT 0,
           had_recall INTEGER DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_turn_metrics_session ON turn_metrics(session_id);
+        CREATE TABLE IF NOT EXISTS key_vectors(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_id TEXT NOT NULL,
+          key_type TEXT NOT NULL,
+          key_text TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_key_mem ON key_vectors(memory_id);
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_keys USING vec0(embedding float[{self.dim}]);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_keys USING fts5(
+          key_id UNINDEXED, key_text, tokenize='porter unicode61');
         """)
         self.db.commit()
 
@@ -130,6 +140,20 @@ class SqliteStore:
                 self.db.commit()
             except Exception:
                 pass
+
+    def _migrate_key_vectors(self):
+        """Create key_vectors/vec_keys/fts_keys on DBs created before Project 1.
+        _init_schema already creates them for new DBs; this is a no-op then."""
+        self.db.executescript(f"""
+        CREATE TABLE IF NOT EXISTS key_vectors(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_id TEXT NOT NULL, key_type TEXT NOT NULL, key_text TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_key_mem ON key_vectors(memory_id);
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_keys USING vec0(embedding float[{self.dim}]);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_keys USING fts5(
+          key_id UNINDEXED, key_text, tokenize='porter unicode61');
+        """)
+        self.db.commit()
 
     def _migrate_fts(self):
         """One-time backfill of the FTS index for databases created before
