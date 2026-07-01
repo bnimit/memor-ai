@@ -35,10 +35,12 @@ class Retriever:
     def __init__(self, store: MemoryStore, embedder: Embedder, *,
                  k: int = 8, recency_weight: float = 0.25,
                  kind_weight: float = 0.15, quality_weight: float = 0.10,
-                 min_similarity: float = 0.0, edge_expand: bool = True):
+                 min_similarity: float = 0.0, edge_expand: bool = True,
+                 use_keys: bool = False):
         self.store, self.embedder = store, embedder
         self.k, self.edge_expand = k, edge_expand
         self.min_similarity = min_similarity
+        self.use_keys = use_keys
         self.w_sim = 1.0 - recency_weight - kind_weight - quality_weight
         self.w_rec = recency_weight
         self.w_kind = kind_weight
@@ -48,6 +50,8 @@ class Retriever:
         t0 = time.perf_counter()
         now = time.time()
         qv = self.embedder.embed([text])[0]
+        if self.use_keys:
+            return self._query_keys(text, qv, scope, t0, now)
         dense = self.store.search(qv, scope, self.k)
 
         # Absolute-similarity gate: drop anti-correlated candidates BEFORE
@@ -120,3 +124,34 @@ class Retriever:
         ranked = sorted(hits.values(), key=lambda h: h.score, reverse=True)[:self.k]
         return RetrievalTrace(query=text, scope=scope, candidates=candidates,
                               hits=ranked, latency_ms=(time.perf_counter()-t0)*1000)
+
+    def _query_keys(self, text, qv, scope, t0, now):
+        key_hits = self.store.search_keys(qv, scope, self.k * 4)  # [(mid, sim)]
+        if not key_hits:
+            return RetrievalTrace(query=text, scope=scope, candidates=0,
+                                  hits=[], latency_ms=(time.perf_counter()-t0)*1000)
+        sim_by_id = dict(key_hits)
+        ids = list(sim_by_id)
+        # fetch value artifacts
+        qmarks = ",".join("?" * len(ids))
+        rows = self.store.db.execute(
+            f"SELECT * FROM artifacts WHERE id IN ({qmarks}) AND active=1", ids).fetchall()
+        arts = {r["id"]: self.store._row_to_artifact(r) for r in rows}
+        quality = self.store.get_quality_scores(ids) if hasattr(self.store, 'get_quality_scores') else {}
+        sims = list(sim_by_id.values())
+        smin = min(sims); srange = (max(sims) - smin) or 1.0
+        hits = []
+        for mid, a in arts.items():
+            norm = (sim_by_id[mid] - smin) / srange
+            age_days = (now - a.created_at) / 86400
+            recency = math.exp(-0.693 * age_days / RECENCY_HALF_LIFE_DAYS)
+            kind_boost = KIND_WEIGHTS.get(a.kind, 1.0) - 1.0
+            q = quality.get(mid, 0.5)
+            score = (self.w_sim * norm + self.w_rec * recency
+                     + self.w_kind * kind_boost + self.w_qual * q)
+            hits.append(Hit(a, score, {"sim": round(sim_by_id[mid], 3),
+                                       "recency": round(recency, 3), "kind": a.kind,
+                                       "quality": round(q, 3), "edge": 0.0}))
+        hits.sort(key=lambda h: h.score, reverse=True)
+        return RetrievalTrace(query=text, scope=scope, candidates=len(arts),
+                              hits=hits[:self.k], latency_ms=(time.perf_counter()-t0)*1000)
