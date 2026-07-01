@@ -26,3 +26,14 @@ def test_make_llm_local_unavailable_falls_through(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(lc, "available", lambda: False)
     assert d._make_llm() is None
+
+
+def test_make_llm_local_raises_falls_through(monkeypatch):
+    monkeypatch.setenv("MEMOR_LLM_DISTILL", "1")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(lc, "available", lambda: True)
+    def _raise(self, **k):
+        raise lc.LlamaCppUnavailable("test")
+    monkeypatch.setattr(lc.LlamaCppLLM, "__init__", _raise)
+    assert d._make_llm() is None
