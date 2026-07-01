@@ -322,7 +322,7 @@ class SqliteStore:
     def search_keys(self, vector: list[float], scope: Scope, k: int) -> list[tuple[str, float]]:
         from memor.types import GLOBAL_PROJECT
         fetch = min(max(k * 20, 200), self._VEC_KNN_LIMIT)
-        rows = self.db.execute(f"""
+        rows = self.db.execute("""
           SELECT kv.memory_id AS mid, v.distance AS distance
           FROM (SELECT rowid, distance FROM vec_keys
                 WHERE embedding MATCH ? AND k = ?) v

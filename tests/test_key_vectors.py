@@ -47,3 +47,5 @@ def test_delete_keys(tmp_path):
     s.add_keys("m1", [("fact", "x")], e.embed(["x"]))
     s.delete_keys("m1")
     assert s.count_keys() == 0
+    assert s.db.execute("SELECT COUNT(*) FROM vec_keys").fetchone()[0] == 0
+    assert s.db.execute("SELECT COUNT(*) FROM fts_keys").fetchone()[0] == 0
