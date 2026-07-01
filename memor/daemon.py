@@ -336,6 +336,41 @@ def run_poll_cycle(
     return state, distilled
 
 
+def redistill_project(store, embedder, llm, project, *, deactivate_old=True,
+                      gen_questions=False, progress=None) -> dict:
+    """Re-distill a project's raw session_chunks with the local distiller.
+    Deactivates prior distilled memories first (reversible). Resumable: skips
+    sessions whose chunks are gone. Returns counts."""
+    from memor.distill.distiller import LocalDistiller
+    deactivated = 0
+    if deactivate_old:
+        olds = store.db.execute(
+            "SELECT id FROM artifacts WHERE kind='memory' AND source='distill' "
+            "AND project=? AND active=1", (project,)).fetchall()
+        for r in olds:
+            store._deactivate_artifact(r["id"])
+            store.db.execute("UPDATE artifacts SET active=0 WHERE id=?", (r["id"],))
+            store.delete_keys(r["id"])
+            deactivated += 1
+        store.db.commit()
+    d = LocalDistiller(store, embedder, llm, gen_questions=gen_questions)
+    rows = store.db.execute(
+        "SELECT * FROM artifacts WHERE kind='session_chunk' AND project=?",
+        (project,)).fetchall()
+    by_session: dict[str, list] = {}
+    for r in rows:
+        a = store._row_to_artifact(r)
+        by_session.setdefault(a.meta.get("session_id", "?"), []).append(a)
+    total_mem = 0
+    for i, (sid, chunks) in enumerate(by_session.items()):
+        chunks.sort(key=lambda a: a.meta.get("ord", 0))
+        ids = d.distill_session(sid, chunks, project)
+        total_mem += len(ids)
+        if progress:
+            progress(i + 1, len(by_session), sid)
+    return {"sessions": len(by_session), "memories": total_mem, "deactivated": deactivated}
+
+
 def _make_embedder():
     """Local ONNX embedder by default. No API key needed for search."""
     from memor.embed.local import LocalEmbedder
