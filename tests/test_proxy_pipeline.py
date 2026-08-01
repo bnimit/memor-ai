@@ -34,7 +34,7 @@ def test_openai_compresses_trailing_tool_messages(tmp_path):
     store = SqliteStore(str(tmp_path / "m.db"), dim=16)
     old_tool = "INFO old\n" * 50
     tool1 = "\n".join([f"INFO noise {i}" for i in range(80)])
-    tool2 = "\n".join(["ERROR boom", "Traceback (most recent call last):"] * 10)
+    tool2 = "\n".join([f"DEBUG chatter {i}" for i in range(80)] + ["ERROR boom", "Traceback (most recent call last):"])
     body = {
         "model": "gpt-4",
         "messages": [
@@ -123,6 +123,44 @@ def test_apply_payload_text_immutable():
     assert original["messages"][0]["content"][0]["content"] == "old"
     # Result updated
     assert result["messages"][0]["content"][0]["content"] == "new"
+
+def test_incompressible_payload_left_verbatim(tmp_path):
+    """A payload the compressor can't shrink keeps no marker and no CCR blob."""
+    store = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    # Every line is "important", so compress_log returns the text unchanged.
+    dense = "\n".join(["ERROR boom", "Traceback (most recent call last):"] * 10)
+    body = {
+        "model": "claude-sonnet-4-0",
+        "messages": [
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "1", "content": dense}]},
+        ],
+    }
+    result = run_pipeline("anthropic", body, store)
+    assert result.body["messages"][0]["content"][0]["content"] == dense
+    assert result.ccr_ids == []
+    assert result.content_types == {}
+    assert result.passthrough is True
+    assert result.tokens_after == result.tokens_before
+
+
+def test_tokens_after_includes_ccr_marker(tmp_path):
+    """tokens_after must count the injected marker line, not just the body."""
+    from memor.tokencount import count_tokens
+
+    store = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    log = "\n".join([f"INFO noise {i}" for i in range(80)] + ["ERROR boom"])
+    body = {
+        "model": "claude-sonnet-4-0",
+        "messages": [
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "1", "content": log}]},
+        ],
+    }
+    result = run_pipeline("anthropic", body, store)
+    emitted = result.body["messages"][0]["content"][0]["content"]
+    assert emitted.startswith("[memor:ccr:")
+    assert result.tokens_after == count_tokens(emitted)
+    assert result.tokens_after < result.tokens_before
+
 
 def test_content_types_tracked(tmp_path):
     store = SqliteStore(str(tmp_path / "m.db"), dim=16)
