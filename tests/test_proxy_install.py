@@ -293,6 +293,94 @@ def test_roundtrip_install_uninstall_codex(mock_home):
     assert not is_proxy_agent("codex")
 
 
+def test_reinstall_does_not_clobber_the_original_backup(mock_home):
+    """A second install must not snapshot the already-proxied config."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+
+    original = {"existing": "value"}
+    settings_path.write_text(json.dumps(original, indent=2))
+
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_claude_proxy(8421)
+        install_claude_proxy(9999)
+
+    backup = json.loads((memor_dir / "proxy-backup-claude.json").read_text())
+    assert backup == original
+
+    uninstall_agent_proxy("claude")
+    assert json.loads(settings_path.read_text()) == original
+
+
+def test_uninstall_clears_backup_so_next_install_recaptures(mock_home):
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    backup_path = memor_dir / "proxy-backup-claude.json"
+
+    settings_path.write_text(json.dumps({"round": 1}, indent=2))
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_claude_proxy(8421)
+    uninstall_agent_proxy("claude")
+    assert not backup_path.exists()
+
+    # A new pre-proxy config must be captured on the next install.
+    settings_path.write_text(json.dumps({"round": 2}, indent=2))
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_claude_proxy(8421)
+    assert json.loads(backup_path.read_text()) == {"round": 2}
+
+
+def test_codex_base_url_stays_above_the_first_table(mock_home):
+    """Appending at EOF would nest the key inside the last table."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    codex_dir = mock_home / ".codex"
+    codex_dir.mkdir()
+    config_path = codex_dir / "config.toml"
+    config_path.write_text(
+        'model = "gpt-5"\n'
+        "\n"
+        "[mcp_servers.something]\n"
+        'command = "/usr/bin/something"\n'
+    )
+
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_codex_proxy(8421)
+
+    import tomllib
+
+    parsed = tomllib.loads(config_path.read_text())
+    assert parsed["openai_base_url"] == "http://127.0.0.1:8421/v1"
+    assert parsed["model"] == "gpt-5"
+    assert "openai_base_url" not in parsed["mcp_servers"]["something"]
+    assert parsed["mcp_servers"]["memor_retrieve"]["command"] == "/fake/memor-retrieve-mcp"
+
+
+def test_codex_base_url_is_updated_in_place_on_reinstall(mock_home):
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    codex_dir = mock_home / ".codex"
+    codex_dir.mkdir()
+    config_path = codex_dir / "config.toml"
+    config_path.write_text('model = "gpt-5"\n')
+
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_codex_proxy(8421)
+        install_codex_proxy(9999)
+
+    import tomllib
+
+    text = config_path.read_text()
+    assert text.count("openai_base_url") == 1
+    assert tomllib.loads(text)["openai_base_url"] == "http://127.0.0.1:9999/v1"
+
+
 def test_install_claude_proxy_registers_mcp(mock_home, monkeypatch):
     """Claude proxy install also registers memor_retrieve MCP server."""
     memor_dir = mock_home / ".memor"
