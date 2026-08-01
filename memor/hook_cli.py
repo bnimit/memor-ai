@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Memor recall hook — works with Claude Code, Codex, and Copilot.
+"""Memor recall hook — Claude Code, Cursor, Codex, Copilot, Kimi, Goose.
 
 Tries to connect to the warm sidecar at ~/.memor/hook.sock.
 Falls back to inline execution if sidecar is unavailable.
 """
 from __future__ import annotations
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -67,6 +68,12 @@ def main():
     except (json.JSONDecodeError, EOFError):
         sys.exit(1)
 
+    # install-hook stamps MEMOR_HOOK_AGENT=kimi|goose into the command so
+    # Claude-shaped Kimi payloads (and Goose) are labeled before detection.
+    agent_override = os.environ.get("MEMOR_HOOK_AGENT", "").strip().lower()
+    if agent_override:
+        request["_memor_agent"] = agent_override
+
     result = _send_to_sidecar(request)
     if result is None:
         if _start_sidecar():
@@ -74,7 +81,8 @@ def main():
     if result is None:
         result = _inline_fallback(request)
 
-    print(json.dumps(result))
+    from memor.hook_server import detect_agent, serialize_hook_stdout
+    print(serialize_hook_stdout(detect_agent(request), result))
     sys.exit(0)
 
 

@@ -1,5 +1,4 @@
-"""Auto-ingest daemon: polls ~/.claude/projects/ for new/modified .jsonl transcripts,
-then auto-distills new sessions into compact memories."""
+"""Auto-ingest daemon: polls local agent session stores, then auto-distills."""
 from __future__ import annotations
 
 import json
@@ -8,6 +7,11 @@ import time
 from pathlib import Path
 
 from memor.ingest.claude_code import parse_transcript
+from memor.ingest.sources import (
+    IngestUnit,
+    default_local_source_paths,
+    scan_all_sources,
+)
 from memor.store.sqlite_store import SqliteStore
 from memor.types import Scope
 
@@ -96,20 +100,34 @@ def _make_llm():
 
 
 def ingest_file(path: Path, project: str, store: SqliteStore, embedder) -> int:
-    """Ingest a single transcript file. Returns number of chunks ingested."""
-    arts = parse_transcript(path, project=project, filter_noise=True)
+    """Ingest a single Claude transcript file. Returns number of chunks ingested."""
+    unit = IngestUnit(
+        state_key=str(path),
+        mtime=0.0,
+        project=project,
+        agent="claude",
+        parse=lambda: parse_transcript(path, project=project, filter_noise=True),
+        path=path,
+    )
+    return ingest_unit(unit, store, embedder)
+
+
+def ingest_unit(unit: IngestUnit, store: SqliteStore, embedder) -> int:
+    """Ingest one source unit. Returns number of chunks ingested."""
+    arts = unit.parse()
     if not arts:
         return 0
     vecs = embedder.embed([a.text for a in arts])
     store.add_artifacts(arts, vecs)
 
-    from memor.ingest.claude_code import parse_session_usage
-    try:
-        usage = parse_session_usage(path, project)
-        if usage:
-            store.upsert_session_stats(usage)
-    except Exception:
-        pass
+    if unit.agent == "claude" and unit.path is not None:
+        from memor.ingest.claude_code import parse_session_usage
+        try:
+            usage = parse_session_usage(unit.path, unit.project)
+            if usage:
+                store.upsert_session_stats(usage)
+        except Exception:
+            pass
 
     return len(arts)
 
@@ -230,39 +248,56 @@ def run_poll_cycle(
     projects_dir: Path = CLAUDE_PROJECTS_DIR,
     llm=None,
     distilled: set[str] | None = None,
-) -> tuple[dict[str, float], set[str]]:
-    """Run one poll cycle: ingest new files, then distill new sessions.
-    Returns (updated ingest state, updated distilled set)."""
+    *,
+    kimi_sessions_dir: Path | None = None,
+    kimi_json_path: Path | None = None,
+    goose_db_path: Path | None = None,
+) -> tuple[dict[str, float], set[str], dict[str, int]]:
+    """Run one poll cycle: ingest new units, then distill new sessions.
+
+    Claude is always scanned via ``projects_dir``. Kimi/Goose are scanned only
+    when their path kwargs are provided (daemon/backfill pass home defaults;
+    unit tests omit them so only the fixture Claude tree is used).
+
+    Returns (updated ingest state, updated distilled set, chunks_by_agent).
+    """
     if distilled is None:
         distilled = set()
 
     new_ingested = False
-    transcripts = scan_transcripts(projects_dir)
+    units = scan_all_sources(
+        claude_projects_dir=projects_dir,
+        kimi_sessions_dir=kimi_sessions_dir,
+        kimi_json_path=kimi_json_path,
+        goose_db_path=goose_db_path,
+    )
 
-    # Pre-filter to only files that are new or modified
     pending = [
-        (path, project)
-        for path, project in transcripts
-        if not (state.get(str(path)) is not None and path.stat().st_mtime <= state[str(path)])
+        u for u in units
+        if not (state.get(u.state_key) is not None and u.mtime <= state[u.state_key])
     ]
 
     bulk = len(pending) > 10
     total_pending = len(pending)
+    counts_by_agent: dict[str, int] = {}
 
-    for idx, (path, project) in enumerate(pending):
-        path_str = str(path)
-        current_mtime = path.stat().st_mtime
+    for idx, unit in enumerate(pending):
         progress_prefix = f"[{idx + 1}/{total_pending}] " if bulk else ""
+        label = Path(unit.state_key).name if unit.path else unit.state_key
         try:
-            count = ingest_file(path, project, store, embedder)
-            state[path_str] = current_mtime
+            count = ingest_unit(unit, store, embedder)
+            state[unit.state_key] = unit.mtime
+            counts_by_agent[unit.agent] = counts_by_agent.get(unit.agent, 0) + count
             if count > 0:
-                print(f"  {progress_prefix}ingested {count} chunks from {path.name} (project: {project})")
+                print(
+                    f"  {progress_prefix}ingested {count} chunks from {label} "
+                    f"({unit.agent}, project: {unit.project})"
+                )
                 new_ingested = True
             else:
-                print(f"  {progress_prefix}skipped {path.name} (0 chunks after filtering)")
+                print(f"  {progress_prefix}skipped {label} (0 chunks after filtering)")
         except Exception as e:
-            print(f"  {progress_prefix}ERROR ingesting {path.name}: {e}")
+            print(f"  {progress_prefix}ERROR ingesting {label}: {e}")
 
     # Auto-distill new sessions (LLM if available, extractive fallback otherwise)
     if new_ingested:
@@ -270,28 +305,27 @@ def run_poll_cycle(
         print(f"  running {mode} distillation on new sessions...")
         distilled = distill_new_sessions(store, embedder, llm, distilled)
 
-    # Feedback analysis: check if recalled memories were used in completed sessions
+    # Feedback + turn metrics: Claude transcripts only
     if new_ingested:
         from memor.feedback import analyze_session_feedback
-        for path, project in pending:
-            session_id = path.stem
+        from memor.turn_metrics import parse_turn_metrics, correlate_with_recalls
+        for unit in pending:
+            if unit.agent != "claude" or unit.path is None:
+                continue
+            session_id = unit.path.stem
             try:
-                used = analyze_session_feedback(store, session_id, path, embedder=embedder)
+                used = analyze_session_feedback(
+                    store, session_id, unit.path, embedder=embedder
+                )
                 if used > 0:
                     print(f"  feedback: {used} memories confirmed used in {session_id[:12]}...")
             except Exception:
                 pass
-
-    # Turn-level metrics: parse tool calls per turn, correlate with recalls
-    if new_ingested:
-        from memor.turn_metrics import parse_turn_metrics, correlate_with_recalls
-        for path, project in pending:
-            session_id = path.stem
             try:
-                metrics = parse_turn_metrics(path, session_id)
+                metrics = parse_turn_metrics(unit.path, session_id)
                 if metrics:
                     metrics = correlate_with_recalls(metrics, store, session_id)
-                    store.save_turn_metrics(session_id, project, metrics)
+                    store.save_turn_metrics(session_id, unit.project, metrics)
             except Exception:
                 pass
 
@@ -333,7 +367,46 @@ def run_poll_cycle(
         except Exception:
             pass
 
-    return state, distilled
+    return state, distilled, counts_by_agent
+
+
+def run_backfill(
+    store: SqliteStore,
+    embedder,
+    *,
+    projects_dir: Path | None = None,
+    kimi_sessions_dir: Path | None = None,
+    kimi_json_path: Path | None = None,
+    goose_db_path: Path | None = None,
+    llm=None,
+) -> dict[str, int]:
+    """One-shot ingest across local agent sources. Returns chunk counts by agent."""
+    paths = default_local_source_paths()
+    state = load_state()
+    distilled = load_distilled_state()
+    state, distilled, counts = run_poll_cycle(
+        state,
+        store,
+        embedder,
+        projects_dir if projects_dir is not None else paths["claude_projects_dir"],
+        llm=llm,
+        distilled=distilled,
+        kimi_sessions_dir=(
+            kimi_sessions_dir if kimi_sessions_dir is not None
+            else paths["kimi_sessions_dir"]
+        ),
+        kimi_json_path=(
+            kimi_json_path if kimi_json_path is not None
+            else paths["kimi_json_path"]
+        ),
+        goose_db_path=(
+            goose_db_path if goose_db_path is not None
+            else paths["goose_db_path"]
+        ),
+    )
+    save_state(state)
+    save_distilled_state(distilled)
+    return counts
 
 
 def redistill_project(store, embedder, llm, project, *, deactivate_old=True,
@@ -387,6 +460,10 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     store = SqliteStore(str(DEFAULT_DB), dim=embedder.dim)
     state = load_state()
     distilled = load_distilled_state()
+    paths = default_local_source_paths()
+    kimi_dir = paths["kimi_sessions_dir"]
+    kimi_json = paths["kimi_json_path"]
+    goose_db = paths["goose_db_path"]
 
     llm = _make_llm()
 
@@ -398,6 +475,8 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
 |_| |_| |_|\___|_| |_| |_|\___/|_|        \__,_|_|
 """)
     print(f"  watching:      {projects_dir}")
+    print(f"                 {kimi_dir}")
+    print(f"                 {goose_db}")
     print(f"  db:            {DEFAULT_DB}")
     print(f"  embeddings:    local model2vec (dim={embedder.dim})")
     print(f"  poll interval: {poll_interval}s")
@@ -408,8 +487,11 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     try:
         while True:
             print(f"[{time.strftime('%H:%M:%S')}] polling...")
-            state, distilled = run_poll_cycle(
-                state, store, embedder, projects_dir, llm=llm, distilled=distilled
+            state, distilled, _ = run_poll_cycle(
+                state, store, embedder, projects_dir, llm=llm, distilled=distilled,
+                kimi_sessions_dir=kimi_dir,
+                kimi_json_path=kimi_json,
+                goose_db_path=goose_db,
             )
             save_state(state)
             save_distilled_state(distilled)

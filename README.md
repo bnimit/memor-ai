@@ -13,9 +13,9 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
-**Automatic background memory for Claude Code, Cursor, Codex, and Copilot — plus optional local token savings for Claude Code and Codex.** Memory is fire-and-forget; proxy is opt-in. No Memor API key required.
+**Automatic background memory for Claude Code, Cursor, Codex, Copilot, Kimi, and Goose — plus optional local token savings for Claude Code and Codex.** Memory is fire-and-forget; proxy is opt-in. No Memor API key required.
 
-Memor watches your coding sessions, extracts decisions and patterns, and recalls relevant context on every prompt. Optionally, a local proxy compresses tool payloads before they reach the provider and tracks measurable token savings on the dashboard. Works with Claude Code, Cursor, OpenAI Codex CLI, and GitHub Copilot CLI.
+Memor watches your coding sessions, extracts decisions and patterns, and recalls relevant context on every prompt. Optionally, a local proxy compresses tool payloads before they reach the provider and tracks measurable token savings on the dashboard.
 
 ---
 
@@ -26,8 +26,8 @@ Memor watches your coding sessions, extracts decisions and patterns, and recalls
 pipx install memor-cli
 
 # Install the hook + download embedding model (~60MB)
-memor install-hook                  # interactive — pick Claude Code, Codex, or Copilot
-memor install-hook --agent claude   # or pass directly
+memor install-hook                  # interactive — pick an agent
+memor install-hook --agent kimi     # or pass directly (claude, codex, copilot, kimi, goose)
 
 # Start as a background service (macOS/Linux)
 memor service install
@@ -128,6 +128,8 @@ Memor runs two complementary local paths — combine them or use either alone:
 | **Codex CLI** | Yes | Experimental — `memor install-proxy --agent codex` (Chat Completions only) |
 | **Cursor** | Yes | No — hooks only |
 | **Copilot CLI** | Yes | No — hooks only |
+| **Kimi CLI** | Yes | No — hooks only |
+| **Goose** | Yes | No — hooks only |
 
 ### Hook install details
 
@@ -137,15 +139,19 @@ Memor runs two complementary local paths — combine them or use either alone:
 | **Codex CLI** | `UserPromptSubmit` + `additionalContext` | `~/.codex/hooks/hooks.json` | `memor install-hook --agent codex` |
 | **Copilot CLI** | `userPromptSubmitted` + `additionalContext` | `~/.copilot/hooks/memor.json` | `memor install-hook --agent copilot` |
 | **Cursor** | `beforeSubmitPrompt` + `additionalContext` | `~/.claude/settings.json` (loaded as Claude user hooks) | automatic — covered by the Claude install |
+| **Kimi CLI** | `UserPromptSubmit` + plain-text context | `~/.kimi/config.toml` | `memor install-hook --agent kimi` |
+| **Goose** | `UserPromptSubmit` + `additionalContext` | `~/.agents/plugins/memor/` | `memor install-hook --agent goose` |
 
-A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. Hooks stay in charge of memory inject even when the proxy is active; the proxy's own inject is best-effort, because it cannot see your working directory to scope the project. The dashboard tracks recalls per agent so you can see usage across all your environments.
+A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Kimi and Goose installs stamp `MEMOR_HOOK_AGENT` so Claude-shaped payloads stay correctly labeled. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. Hooks stay in charge of memory inject even when the proxy is active; the proxy's own inject is best-effort, because it cannot see your working directory to scope the project. The dashboard tracks recalls per agent so you can see usage across all your environments.
+
+> **Goose note:** Memory inject needs a Goose build with advise-tier `additionalContext` support. DeepSeek (or any other provider) is configured inside Goose — Memor talks to Goose's hooks, not to the model provider.
 
 > **Note:** Cloud-hosted agents (Codex cloud, Copilot cloud agent) run in remote sandboxes and cannot reach local hooks. MCP server support for sandboxed agents is planned ([#26](https://github.com/bnimit/memor-ai/issues/26)).
 
 **Background processes** (supervised by `memor service install`):
 
-1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback (positive and negative), promotes cross-project patterns to global scope, compacts duplicates, auto-compacts the vector index when bloated, tracks session-level token usage. All local.
-2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms. Works across Claude Code, Cursor, Codex, and Copilot.
+1. **Daemon** — polls local agent session stores (Claude Code `~/.claude/projects/`, Kimi `~/.kimi/sessions/`, Goose `~/.local/share/goose/sessions/sessions.db`), embeds chunks, runs distillation, analyzes feedback (Claude), promotes cross-project patterns to global scope, compacts duplicates, auto-compacts the vector index when bloated, tracks session-level token usage. Model providers are not ingest sources — only the agent that owns the session. All local. Use `memor backfill` for a one-shot ingest of past sessions.
+2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms. Works across Claude Code, Cursor, Codex, Copilot, Kimi, and Goose.
 3. **Proxy** (optional) — intercepts Anthropic/OpenAI API calls on `127.0.0.1:8421`, compresses latest-turn tool payloads, forwards to your provider, and writes a savings ledger. Started automatically by `memor install-proxy`.
 
 **No Memor API key required.** Embeddings and compressors run locally. The proxy forwards your existing Anthropic/OpenAI credentials — keys are never stored. Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
@@ -191,7 +197,7 @@ The quality formula is Bayesian: `(uses - negatives + 1) / (recalls + 2)`. One c
 
 | Kind | Source | Description |
 |---|---|---|
-| `session_chunk` | Daemon auto-ingest | Filtered turns from Claude Code transcripts |
+| `session_chunk` | Daemon auto-ingest | Filtered turns from Claude / Kimi / Goose sessions |
 | `memory` | Extractive distillation | Key decisions, patterns, bugfixes per session |
 
 Memories are automatically classified as `decision`, `bugfix`, `lesson`, `snippet`, or generic `extract` based on content patterns. The daemon runs a signal filter that keeps decisions, bugfixes, lessons, and code rationale while skipping noise (tool calls, file listings, boilerplate).
@@ -259,13 +265,14 @@ automatically.
 ```
 memor help                           Print the full manual
 memor install-hook                   Install hook + download model (interactive agent picker)
-  --agent claude|codex|copilot       Choose agent directly
+  --agent claude|codex|copilot|kimi|goose   Choose agent directly
 memor install-proxy                  Install local proxy for token savings
   --agent claude|codex               Claude Code, or Codex CLI (experimental)
 memor uninstall-proxy                Restore original agent config
   --agent claude|codex               Point the agent back at its provider
 memor proxy                          Run proxy server in foreground (localhost:8421)
-memor daemon                         Auto-ingest + distill (background watcher)
+memor daemon                         Auto-ingest + distill (Claude, Kimi, Goose)
+memor backfill                       One-shot ingest of past local agent sessions
 memor dashboard                      Web dashboard on localhost:8420
 memor version                        Print installed version
 memor service install                Run daemon + dashboard as background services (launchd/systemd)

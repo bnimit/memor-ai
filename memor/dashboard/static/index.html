@@ -312,6 +312,10 @@
   .badge-copilot::before { background: #64a0ff; }
   .badge-cursor { background: rgba(192,132,252,0.12); color: #c084fc; }
   .badge-cursor::before { background: #c084fc; }
+  .badge-kimi { background: rgba(255,140,90,0.12); color: #ff8c5a; }
+  .badge-kimi::before { background: #ff8c5a; }
+  .badge-goose { background: rgba(80,200,180,0.12); color: #50c8b4; }
+  .badge-goose::before { background: #50c8b4; }
 
   .quality-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--surface3); width: 100%; min-width: 60px; }
   .quality-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
@@ -666,6 +670,8 @@
       codex:   ['badge-codex',   'Codex'],
       copilot: ['badge-copilot', 'Copilot'],
       cursor:  ['badge-cursor',  'Cursor'],
+      kimi:    ['badge-kimi',    'Kimi'],
+      goose:   ['badge-goose',   'Goose'],
     };
     var m = map[agent || 'claude'] || ['badge-claude', agent || 'claude'];
     return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';
@@ -1086,7 +1092,10 @@
     if (!data || data.length <= 1) { section.style.display = 'none'; return; }
     section.style.display = '';
     grid.innerHTML = '';
-    var colors = { claude: 'var(--accent)', codex: '#3dd68c', copilot: '#64a0ff', cursor: '#c084fc' };
+    var colors = {
+      claude: 'var(--accent)', codex: '#3dd68c', copilot: '#64a0ff',
+      cursor: '#c084fc', kimi: '#ff8c5a', goose: '#50c8b4',
+    };
     data.forEach(function(row) {
       var agent = row.agent || 'claude';
       var color = colors[agent] || 'var(--text-muted)';
