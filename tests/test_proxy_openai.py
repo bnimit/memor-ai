@@ -34,7 +34,7 @@ def test_chat_completions_runs_pipeline_and_forwards(tmp_path, monkeypatch):
             {"role": "tool", "tool_call_id": "call_123", "content": "Sunny, 72F"},
         ],
     }
-    r = c.post("/v1/chat/completions", json=body, headers={"authorization": "Bearer test-key"})
+    r = c.post("/v1/chat/completions", json=body, headers={"authorization": "Bearer test-key", "x-agent": "codex"})
     assert r.status_code == 200
 
 
@@ -72,7 +72,7 @@ def test_chat_completions_streaming(tmp_path, monkeypatch):
         "messages": [{"role": "user", "content": "hi"}],
         "stream": True,
     }
-    r = c.post("/v1/chat/completions", json=body, headers={"authorization": "Bearer test-key"})
+    r = c.post("/v1/chat/completions", json=body, headers={"authorization": "Bearer test-key", "x-agent": "codex"})
     assert r.status_code == 200
     # Verify we got streaming content
     content = r.content

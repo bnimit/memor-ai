@@ -43,12 +43,19 @@ def _is_macos() -> bool:
 
 
 def _find_memor_bin() -> str:
+    """Resolve memor for launchd/systemd. Prefer pipx over a dev-repo .venv."""
+    pipx_bin = Path.home() / ".local" / "bin" / "memor"
+    if pipx_bin.is_file():
+        return str(pipx_bin.resolve())
     path = shutil.which("memor")
-    if not path:
-        raise FileNotFoundError(
-            "'memor' not found on PATH. Reinstall with: pipx install memor-cli"
-        )
-    return path
+    if path and "/.venv/" not in path:
+        return path
+    # Fall back to any memor on PATH (e.g. active venv during development).
+    if path:
+        return path
+    raise FileNotFoundError(
+        "'memor' not found on PATH. Reinstall with: pipx install memor-cli"
+    )
 
 
 def _dashboard_port() -> int:

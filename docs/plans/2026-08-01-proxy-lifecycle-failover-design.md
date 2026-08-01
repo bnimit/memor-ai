@@ -1,9 +1,11 @@
 # Proxy Lifecycle + Config Failover — Design Spec
 
 **Date:** 2026-08-01  
-**Status:** Draft for user review  
+**Status:** Implemented (#42, merged)  
 **Product:** memor-cli / Memor  
 **Goal:** Proxy savings stay available after install/upgrade/restart, and agents never stay pointed at a dead `:8421` when Memor cannot serve the proxy.
+
+> **Note (0.11):** Decisions **D2** (no runtime shim) and **D3** (Goose/Kimi out of scope) are superseded by [Goose + Kimi Proxy 0.11 design](./2026-08-01-goose-kimi-proxy-0.11-design.md). Config failover from this spec remains; runtime fail-open shim is added in 0.11.
 
 ---
 

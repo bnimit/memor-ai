@@ -177,3 +177,79 @@ def test_savings_ledger_empty_db(tmp_path):
     assert data["summary"]["pct_saved"] == 0
     assert data["per_day"] == []
     assert data["content_types"] == []
+
+
+def test_proxy_savings_by_agent_store(tmp_path):
+    """get_proxy_savings_by_agent groups by agent; pct excludes passthrough rows."""
+    import time
+    _, store = _make_app_with_proxy_savings(tmp_path)
+    store.record_proxy_savings({
+        "timestamp": time.time(),
+        "agent": "claude",
+        "provider": "anthropic",
+        "session_id": "s4",
+        "tokens_before": 9999,
+        "tokens_after": 9999,
+        "content_types": {},
+        "passthrough": 1,
+    })
+    agents = store.get_proxy_savings_by_agent(days=30)
+    by_name = {a["agent"]: a for a in agents}
+
+    assert set(by_name) == {"claude", "codex"}
+
+    claude = by_name["claude"]
+    assert claude["tokens_before"] == 1500
+    assert claude["tokens_after"] == 1200
+    assert claude["pct_saved"] == 20.0
+    assert claude["requests"] == 2
+    assert claude["passthrough_requests"] == 1
+
+    codex = by_name["codex"]
+    assert codex["tokens_before"] == 2000
+    assert codex["tokens_after"] == 1500
+    assert codex["pct_saved"] == 25.0
+    assert codex["requests"] == 1
+    assert codex["passthrough_requests"] == 0
+
+
+def test_proxy_savings_by_agent_endpoint(tmp_path):
+    """GET /api/proxy-savings-by-agent returns per-agent aggregation."""
+    import time
+    from fastapi.testclient import TestClient
+    app, store = _make_app_with_proxy_savings(tmp_path)
+    store.record_proxy_savings({
+        "timestamp": time.time(),
+        "agent": "claude",
+        "provider": "anthropic",
+        "session_id": "s4",
+        "tokens_before": 9999,
+        "tokens_after": 9999,
+        "content_types": {},
+        "passthrough": 1,
+    })
+    client = TestClient(app)
+
+    r = client.get("/api/proxy-savings-by-agent?days=30")
+    assert r.status_code == 200
+    data = r.json()
+    assert "agents" in data
+    assert len(data["agents"]) == 2
+
+    claude = next(a for a in data["agents"] if a["agent"] == "claude")
+    assert claude["tokens_before"] == 1500
+    assert claude["pct_saved"] == 20.0
+    assert claude["passthrough_requests"] == 1
+
+
+def test_proxy_savings_by_agent_empty_db(tmp_path):
+    """Empty proxy_savings returns empty agents list."""
+    from fastapi.testclient import TestClient
+    db_path = str(tmp_path / "empty.db")
+    SqliteStore(db_path, dim=16)
+    from memor.dashboard.server import create_app
+    client = TestClient(create_app(db_path))
+
+    r = client.get("/api/proxy-savings-by-agent?days=30")
+    assert r.status_code == 200
+    assert r.json() == {"agents": []}

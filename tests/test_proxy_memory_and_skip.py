@@ -4,22 +4,15 @@ from memor.store.sqlite_store import SqliteStore
 from memor.types import Artifact
 
 
-def test_hook_still_recalls_when_claude_proxied(tmp_path, monkeypatch):
-    """Interim behaviour: proxied Claude still gets hook recall.
-
-    Proxy-side inject is best-effort, so skipping the hook risked zero memory.
-    See docs/plans/2026-08-01-dual-path-context-layer.md — the skip returns once
-    proxy inject is reliable.
-    """
+def test_hook_skips_when_claude_proxied(tmp_path, monkeypatch):
+    """Proxied Claude skips hook inject; memory comes from the proxy path."""
     import memor.config as cfg
     monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(cfg, "STATE_DIR", tmp_path)
-    
-    # Enable proxy for claude
+
     cfg.set_proxy_agent("claude", True)
     assert cfg.is_proxy_agent("claude") is True
-    
-    # Setup database with some memories
+
     db_path = str(tmp_path / "m.db")
     e = FakeEmbedder(dim=16)
     s = SqliteStore(db_path, dim=16)
@@ -30,40 +23,30 @@ def test_hook_still_recalls_when_claude_proxied(tmp_path, monkeypatch):
         meta={"mem_type": "decision", "session_id": "s1"}
     )
     s.add_artifacts([art], e.embed([art.text]))
-    
-    # Create Claude request (default agent)
+
     from memor.hook_server import handle_request
     req = {
         "prompt": "how does password hashing work?",
         "cwd": str(tmp_path / "testproj"),
         "session_id": "test-claude"
     }
-    
+
     result = handle_request(req, db_path=db_path, embedder=e)
     ctx = result["hookSpecificOutput"]["additionalContext"]
-    
-    assert "proxy path active" not in ctx.lower()
-    assert "Recalled Memories" in ctx or "no relevant" in ctx.lower()
-    
-    logs = s.db.execute(
-        "SELECT status FROM recall_log WHERE session_id=?",
-        ("test-claude",)
-    ).fetchall()
-    assert len(logs) == 1
-    assert logs[0]["status"] != "skipped_proxy"
+
+    assert ctx == ""
+    assert s.db.execute("SELECT COUNT(*) AS n FROM recall_log").fetchone()["n"] == 0
 
 
-def test_hook_still_recalls_when_codex_proxied(tmp_path, monkeypatch):
-    """Interim behaviour: proxied Codex still gets hook recall."""
+def test_hook_skips_when_codex_proxied(tmp_path, monkeypatch):
+    """Proxied Codex skips hook inject; memory comes from the proxy path."""
     import memor.config as cfg
     monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(cfg, "STATE_DIR", tmp_path)
-    
-    # Enable proxy for codex
+
     cfg.set_proxy_agent("codex", True)
     assert cfg.is_proxy_agent("codex") is True
-    
-    # Setup database
+
     db_path = str(tmp_path / "m.db")
     e = FakeEmbedder(dim=16)
     s = SqliteStore(db_path, dim=16)
@@ -74,22 +57,21 @@ def test_hook_still_recalls_when_codex_proxied(tmp_path, monkeypatch):
         meta={"mem_type": "decision", "session_id": "s1"}
     )
     s.add_artifacts([art], e.embed([art.text]))
-    
-    # Create Codex request (has model or turn_id)
+
     from memor.hook_server import handle_request
     req = {
         "prompt": "how does caching work?",
         "cwd": str(tmp_path / "testproj"),
         "session_id": "test-codex",
-        "model": "gpt-5.6-sol-medium",  # Identifies as codex
+        "model": "gpt-5.6-sol-medium",
         "turn_id": "turn-123"
     }
-    
+
     result = handle_request(req, db_path=db_path, embedder=e)
     ctx = result["hookSpecificOutput"]["additionalContext"]
-    
-    assert "proxy path active" not in ctx.lower()
-    assert "Recalled Memories" in ctx or "no relevant" in ctx.lower()
+
+    assert ctx == ""
+    assert s.db.execute("SELECT COUNT(*) AS n FROM recall_log").fetchone()["n"] == 0
 
 
 def test_hook_cursor_still_recalls_when_claude_proxied(tmp_path, monkeypatch):

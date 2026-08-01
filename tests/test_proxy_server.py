@@ -66,7 +66,7 @@ def test_messages_runs_pipeline_and_forwards(tmp_path, monkeypatch):
         "messages": [{"role": "user", "content": "hi"}],
         "max_tokens": 16,
     }
-    r = c.post("/v1/messages", json=body, headers={"x-api-key": "test-key", "anthropic-version": "2023-06-01"})
+    r = c.post("/v1/messages", json=body, headers={"x-api-key": "test-key", "anthropic-version": "2023-06-01", "x-agent": "claude"})
     assert r.status_code == 200
 
 
@@ -104,7 +104,7 @@ def test_messages_streaming(tmp_path, monkeypatch):
         "max_tokens": 16,
         "stream": True,
     }
-    r = c.post("/v1/messages", json=body, headers={"x-api-key": "test-key"})
+    r = c.post("/v1/messages", json=body, headers={"x-api-key": "test-key", "x-agent": "claude"})
     assert r.status_code == 200
     # Verify we got streaming content
     content = r.content

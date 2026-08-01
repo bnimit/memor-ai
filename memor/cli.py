@@ -877,16 +877,31 @@ def proxy(port: int = typer.Option(None, help="Port to serve on"),
 
 
 @app.command("install-proxy")
-def install_proxy(agent: str = typer.Option(
-        ..., help="Agent: claude, or codex (experimental — Chat Completions API only)")):
+def install_proxy(
+    agent: str = typer.Option(
+        ..., help="Agent: claude, codex, goose, or kimi"),
+    upstream_url: str = typer.Option(
+        None,
+        "--upstream-url",
+        help="Goose/Kimi only: upstream API URL to capture when the agent config "
+        "has no base_url (e.g. Goose Desktop custom providers without JSON).",
+    ),
+):
     """Install proxy for an agent and ensure the proxy service is running."""
-    from memor.proxy.install import install_claude_proxy, install_codex_proxy
+    from memor.proxy.install import (
+        install_agent_proxy,
+        install_claude_proxy,
+        install_codex_proxy,
+    )
     from memor.config import proxy_port as get_proxy_port
     from memor import service
     
     agent = agent.lower()
-    if agent not in ["claude", "codex"]:
-        typer.echo(f"Unknown agent '{agent}'. Choose: claude or codex", err=True)
+    if agent not in ["claude", "codex", "goose", "kimi"]:
+        typer.echo(
+            f"Unknown agent '{agent}'. Choose: claude, codex, goose, or kimi",
+            err=True,
+        )
         raise typer.Exit(1)
     
     port = get_proxy_port()
@@ -907,6 +922,18 @@ def install_proxy(agent: str = typer.Option(
             typer.echo("  Chat Completions API (/v1/chat/completions). Codex versions that use")
             typer.echo("  the Responses API (/v1/responses) will bypass the proxy and report")
             typer.echo("  no savings. Memory via hooks is unaffected.")
+        elif agent == "goose":
+            install_agent_proxy("goose", port, upstream_url=upstream_url)
+            typer.echo(f"\nInstalled Goose proxy:")
+            typer.echo(f"  Updated ~/.config/goose/ provider config")
+            typer.echo(f"  Set base_url=http://127.0.0.1:{port}/v1/...")
+            typer.echo(f"  Stamped x-agent: goose header")
+        elif agent == "kimi":
+            install_agent_proxy("kimi", port)
+            typer.echo(f"\nInstalled Kimi proxy:")
+            typer.echo(f"  Updated ~/.kimi/config.toml provider")
+            typer.echo(f"  Set base_url=http://127.0.0.1:{port}/v1/...")
+            typer.echo(f"  Stamped x-agent: kimi header")
         
         typer.echo(f"  Backup saved to ~/.memor/proxy-backup-{agent}.*")
         typer.echo()
@@ -939,13 +966,16 @@ def install_proxy(agent: str = typer.Option(
 
 
 @app.command("uninstall-proxy")
-def uninstall_proxy(agent: str = typer.Option(..., help="Agent: claude or codex")):
+def uninstall_proxy(agent: str = typer.Option(..., help="Agent: claude, codex, goose, or kimi")):
     """Uninstall proxy for an agent (restores original config)."""
     from memor.proxy.install import uninstall_agent_proxy
     
     agent = agent.lower()
-    if agent not in ["claude", "codex"]:
-        typer.echo(f"Unknown agent '{agent}'. Choose: claude or codex", err=True)
+    if agent not in ["claude", "codex", "goose", "kimi"]:
+        typer.echo(
+            f"Unknown agent '{agent}'. Choose: claude, codex, goose, or kimi",
+            err=True,
+        )
         raise typer.Exit(1)
     
     try:

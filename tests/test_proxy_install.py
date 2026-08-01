@@ -6,12 +6,14 @@ from pathlib import Path
 import pytest
 from unittest.mock import patch
 from memor.proxy.install import (
+    AGENT_PROXY_HANDLERS,
     backup_agent_config,
+    install_agent_proxy,
     install_claude_proxy,
     install_codex_proxy,
     uninstall_agent_proxy,
 )
-from memor.config import is_proxy_agent, set_proxy_agent
+from memor.config import get_proxy_upstream, is_proxy_agent, set_proxy_agent
 import memor.config
 
 
@@ -431,6 +433,142 @@ def test_install_codex_proxy_registers_mcp(mock_home, monkeypatch):
     # Verify MCP backup was created
     mcp_backup = memor_dir / "mcp-backup-codex.toml"
     assert mcp_backup.exists()
+
+
+def test_agent_proxy_handlers_registry():
+    """Registry includes all four agents with install/uninstall/strip callables."""
+    assert set(AGENT_PROXY_HANDLERS) == {"claude", "codex", "goose", "kimi"}
+    for agent, handler in AGENT_PROXY_HANDLERS.items():
+        assert callable(handler.install)
+        assert callable(handler.uninstall)
+        assert callable(handler.strip)
+        assert callable(handler.paths)
+
+
+def test_install_agent_proxy_dispatches_claude(mock_home):
+    """install_agent_proxy dispatches to the claude handler."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    (mock_home / ".claude").mkdir()
+
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_agent_proxy("claude", 8421)
+
+    settings = json.loads((mock_home / ".claude" / "settings.json").read_text())
+    assert settings["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8421"
+
+
+def test_install_agent_proxy_unknown_agent_raises():
+    with pytest.raises(ValueError, match="Unknown agent"):
+        install_agent_proxy("unknown", 8421)
+
+
+def test_install_claude_proxy_captures_default_upstream(mock_home):
+    """Fresh Claude install records the default Anthropic upstream."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    (mock_home / ".claude").mkdir()
+
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_claude_proxy(8421)
+
+    upstream = get_proxy_upstream("claude")
+    assert upstream is not None
+    assert upstream["protocol"] == "anthropic"
+    assert upstream["base_url"] == "https://api.anthropic.com/v1/messages"
+    assert upstream["provider_name"] == "anthropic"
+
+
+def test_install_claude_proxy_captures_custom_upstream(mock_home):
+    """Claude install captures a pre-existing non-localhost ANTHROPIC_BASE_URL."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://custom.example.com",
+                }
+            },
+            indent=2,
+        )
+    )
+
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_claude_proxy(8421)
+
+    upstream = get_proxy_upstream("claude")
+    assert upstream["base_url"] == "https://custom.example.com/v1/messages"
+
+
+def test_install_claude_proxy_ignores_memor_localhost_upstream(mock_home):
+    """Re-install when already proxied should not capture localhost as upstream."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8421"}},
+            indent=2,
+        )
+    )
+
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_claude_proxy(8421)
+
+    upstream = get_proxy_upstream("claude")
+    assert upstream["base_url"] == "https://api.anthropic.com/v1/messages"
+
+
+def test_install_codex_proxy_captures_default_upstream(mock_home):
+    """Fresh Codex install records the default OpenAI upstream."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    (mock_home / ".codex").mkdir()
+
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_codex_proxy(8421)
+
+    upstream = get_proxy_upstream("codex")
+    assert upstream is not None
+    assert upstream["protocol"] == "openai"
+    assert upstream["base_url"] == "https://api.openai.com/v1/chat/completions"
+    assert upstream["provider_name"] == "openai"
+
+
+def test_install_codex_proxy_captures_custom_upstream(mock_home):
+    """Codex install captures a pre-existing non-localhost openai_base_url."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    codex_dir = mock_home / ".codex"
+    codex_dir.mkdir()
+    config_path = codex_dir / "config.toml"
+    config_path.write_text('openai_base_url = "https://custom.example.com/v1"\n')
+
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_codex_proxy(8421)
+
+    upstream = get_proxy_upstream("codex")
+    assert upstream["base_url"] == "https://custom.example.com/v1/chat/completions"
+
+
+def test_uninstall_clears_proxy_upstream(mock_home):
+    """Uninstall removes the captured upstream entry."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    (mock_home / ".claude").mkdir()
+
+    with patch("shutil.which", return_value="/fake/memor-retrieve-mcp"):
+        install_claude_proxy(8421)
+    assert get_proxy_upstream("claude") is not None
+
+    uninstall_agent_proxy("claude")
+    assert get_proxy_upstream("claude") is None
 
 
 def test_uninstall_removes_mcp_server(mock_home):

@@ -6,12 +6,13 @@ from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 from memor.store.sqlite_store import SqliteStore, read_dim
-from memor.proxy.pipeline import run_pipeline
 from memor.proxy.forward import (
     forward_request,
     sanitize_request_headers,
     sanitize_response_headers,
 )
+from memor.proxy.shim import compressor_state, prepare_request_body
+from memor.proxy.upstream import resolve_agent, resolve_upstream_url
 from memor.embed.local import LocalEmbedder
 
 
@@ -61,41 +62,47 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
     @app.get("/health")
     async def health():
         """Health check endpoint."""
-        return {"ok": True, "bind": "127.0.0.1"}
+        return {
+            "ok": True,
+            "bind": "127.0.0.1",
+            "mode": compressor_state.mode,
+            "compressor_ready": compressor_state.compressor_ready,
+        }
     
     @app.post("/v1/messages")
     async def messages_endpoint(request: Request):
         """Proxy endpoint for Anthropic Messages API."""
         # Parse request body
         body = await request.json()
-        
-        # Run compression pipeline
-        result = run_pipeline("anthropic", body, store)
-        
-        # Inject recalled memories after pipeline, before forward
-        from memor.proxy.memory import inject_memory
+
         from memor.project import resolve_project
-        project_hint = (request.headers.get("x-memor-project") or 
+        project_hint = (request.headers.get("x-memor-project") or
                        request.headers.get("x-project") or "")
         project = resolve_project(project_hint) if project_hint else "unknown"
-        result.body = inject_memory(
-            "anthropic", result.body, 
-            project=project, db_path=db_path, embedder=embedder
+        result = prepare_request_body(
+            "anthropic", body, store,
+            db_path=db_path, embedder=embedder, project=project,
         )
-        
+
         upstream_headers = sanitize_request_headers(request.headers)
         
         stream = _wants_stream(body, request.headers)
         
-        # Forward to Anthropic API
-        upstream_url = "https://api.anthropic.com/v1/messages"
+        agent = resolve_agent(request.headers)
+        upstream_url = resolve_upstream_url(agent, "anthropic")
+        if upstream_url is None:
+            return Response(
+                content=json.dumps({"error": "no upstream configured for agent"}),
+                status_code=502,
+                media_type="application/json",
+            )
         upstream_content = json.dumps(result.body).encode("utf-8")
-        
+
         # Parse usage from response for non-streaming
         upstream_input_tokens = None
         upstream_cache_read_tokens = None
         upstream_output_tokens = None
-        
+
         if not stream:
             # Non-streaming: get response with buffered content
             upstream_response = await forward_request(
@@ -105,7 +112,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 content=upstream_content,
                 stream=False,
             )
-            
+
             # Read response once and parse usage
             response_content = await upstream_response.aread()
             if upstream_response.status_code == 200:
@@ -117,11 +124,10 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                     upstream_output_tokens = usage.get("output_tokens")
                 except (json.JSONDecodeError, KeyError):
                     pass
-            
+
             # Record savings to database
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
-            
+
             store.record_proxy_savings({
                 "timestamp": time.time(),
                 "agent": agent,
@@ -130,7 +136,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_before": result.tokens_before,
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
-                "passthrough": result.passthrough,
+                "passthrough": int(result.passthrough),
                 "upstream_input_tokens": upstream_input_tokens,
                 "upstream_cache_read_tokens": upstream_cache_read_tokens,
                 "upstream_output_tokens": upstream_output_tokens,
@@ -157,7 +163,6 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             
             # Record savings immediately (before streaming starts)
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
             
             store.record_proxy_savings({
                 "timestamp": time.time(),
@@ -167,7 +172,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_before": result.tokens_before,
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
-                "passthrough": result.passthrough,
+                "passthrough": int(result.passthrough),
                 "upstream_input_tokens": None,  # Not available for streaming
                 "upstream_cache_read_tokens": None,
                 "upstream_output_tokens": None,
@@ -192,27 +197,28 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         """Proxy endpoint for OpenAI Chat Completions API."""
         # Parse request body
         body = await request.json()
-        
-        # Run compression pipeline
-        result = run_pipeline("openai", body, store)
-        
-        # Inject recalled memories after pipeline, before forward
-        from memor.proxy.memory import inject_memory
+
         from memor.project import resolve_project
-        project_hint = (request.headers.get("x-memor-project") or 
+        project_hint = (request.headers.get("x-memor-project") or
                        request.headers.get("x-project") or "")
         project = resolve_project(project_hint) if project_hint else "unknown"
-        result.body = inject_memory(
-            "openai", result.body, 
-            project=project, db_path=db_path, embedder=embedder
+        result = prepare_request_body(
+            "openai", body, store,
+            db_path=db_path, embedder=embedder, project=project,
         )
-        
+
         upstream_headers = sanitize_request_headers(request.headers)
         
         stream = _wants_stream(body, request.headers)
         
-        # Forward to OpenAI API
-        upstream_url = "https://api.openai.com/v1/chat/completions"
+        agent = resolve_agent(request.headers)
+        upstream_url = resolve_upstream_url(agent, "openai")
+        if upstream_url is None:
+            return Response(
+                content=json.dumps({"error": "no upstream configured for agent"}),
+                status_code=502,
+                media_type="application/json",
+            )
         upstream_content = json.dumps(result.body).encode("utf-8")
         
         # Parse usage from response for non-streaming
@@ -242,7 +248,6 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             
             # Record savings to database
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
             
             store.record_proxy_savings({
                 "timestamp": time.time(),
@@ -252,7 +257,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_before": result.tokens_before,
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
-                "passthrough": result.passthrough,
+                "passthrough": int(result.passthrough),
                 "upstream_input_tokens": upstream_prompt_tokens,
                 "upstream_cache_read_tokens": None,
                 "upstream_output_tokens": upstream_completion_tokens,
@@ -279,7 +284,6 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             
             # Record savings immediately (before streaming starts)
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
             
             store.record_proxy_savings({
                 "timestamp": time.time(),
@@ -289,7 +293,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_before": result.tokens_before,
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
-                "passthrough": result.passthrough,
+                "passthrough": int(result.passthrough),
                 "upstream_input_tokens": None,  # Not available for streaming
                 "upstream_cache_read_tokens": None,
                 "upstream_output_tokens": None,
