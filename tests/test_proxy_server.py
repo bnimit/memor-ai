@@ -13,6 +13,22 @@ def test_health(tmp_path):
     assert r.json()["ok"] is True
 
 
+def test_wants_stream_accepts_compound_accept_header():
+    from memor.proxy.server import _wants_stream
+
+    class H(dict):
+        def get(self, k, default=None):
+            for key, val in self.items():
+                if key.lower() == k.lower():
+                    return val
+            return default
+
+    assert _wants_stream({}, H({"Accept": "text/event-stream, */*"})) is True
+    assert _wants_stream({}, H({"accept": "TEXT/EVENT-STREAM"})) is True
+    assert _wants_stream({"stream": True}, H()) is True
+    assert _wants_stream({}, H({"accept": "application/json"})) is False
+
+
 def test_create_proxy_app_uses_db_dim_not_embedder_dim(tmp_path):
     """Existing DBs were often built with dim=256; proxy embedder may differ."""
     from memor.store.sqlite_store import SqliteStore
