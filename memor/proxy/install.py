@@ -9,6 +9,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from memor.config import clear_proxy_upstream, set_proxy_agent, set_proxy_upstream
+from memor.proxy.goose_install import (
+    _goose_paths,
+    install_goose_proxy,
+    strip_goose_proxy_urls,
+    uninstall_goose_proxy,
+)
+from memor.proxy.kimi_install import (
+    install_kimi_proxy,
+    kimi_paths,
+    strip_kimi_proxy_urls,
+    uninstall_kimi_proxy,
+)
 
 _ANTHROPIC_DEFAULT = "https://api.anthropic.com/v1/messages"
 _OPENAI_DEFAULT = "https://api.openai.com/v1/chat/completions"
@@ -281,22 +293,6 @@ def _strip_codex_proxy_urls(port: int) -> str:
     return "codex: no Memor openai_base_url to strip"
 
 
-def _goose_not_implemented(_port: int) -> None:
-    raise NotImplementedError("Goose proxy install is not yet implemented")
-
-
-def _kimi_not_implemented(_port: int) -> None:
-    raise NotImplementedError("Kimi proxy install is not yet implemented")
-
-
-def _goose_uninstall_not_implemented() -> None:
-    raise NotImplementedError("Goose proxy uninstall is not yet implemented")
-
-
-def _kimi_uninstall_not_implemented() -> None:
-    raise NotImplementedError("Kimi proxy uninstall is not yet implemented")
-
-
 def _unknown_agent_strip(agent: str, _port: int) -> str:
     return f"{agent}: unknown agent"
 
@@ -329,16 +325,16 @@ AGENT_PROXY_HANDLERS: dict[str, AgentProxyHandler] = {
         paths=_codex_paths,
     ),
     "goose": AgentProxyHandler(
-        install=_goose_not_implemented,
-        uninstall=_goose_uninstall_not_implemented,
-        strip=lambda port: _unknown_agent_strip("goose", port),
-        paths=lambda: _unknown_agent_paths("goose"),
+        install=install_goose_proxy,
+        uninstall=uninstall_goose_proxy,
+        strip=strip_goose_proxy_urls,
+        paths=_goose_paths,
     ),
     "kimi": AgentProxyHandler(
-        install=_kimi_not_implemented,
-        uninstall=_kimi_uninstall_not_implemented,
-        strip=lambda port: _unknown_agent_strip("kimi", port),
-        paths=lambda: _unknown_agent_paths("kimi"),
+        install=install_kimi_proxy,
+        uninstall=uninstall_kimi_proxy,
+        strip=strip_kimi_proxy_urls,
+        paths=kimi_paths,
     ),
 }
 
@@ -397,9 +393,7 @@ def failover_proxy_agents(reason: str = "") -> list[str]:
                 lines.append(f"{agent}: cleared flag (unknown agent)")
                 continue
             if backup_path.exists():
-                config_path.parent.mkdir(parents=True, exist_ok=True)
-                config_path.write_text(backup_path.read_text())
-                backup_path.unlink()
+                handler.uninstall()
                 lines.append(f"{agent}: restored config from backup; proxy flag cleared")
             else:
                 detail = handler.strip(port)
