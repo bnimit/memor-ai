@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from memor.config import set_proxy_agent
 
@@ -134,3 +135,92 @@ def uninstall_agent_proxy(agent: str) -> None:
     
     # Clear proxy_agent flag
     set_proxy_agent(agent, False)
+
+
+def register_mcp_claude() -> None:
+    """Register memor_retrieve MCP server in Claude settings.json."""
+    config_path = Path.home() / ".claude" / "settings.json"
+    
+    # Find the binary path
+    binary = shutil.which("memor-retrieve-mcp")
+    if not binary:
+        raise RuntimeError("memor-retrieve-mcp not found in PATH. Did you install memor-cli?")
+    
+    # Create backup
+    memor_dir = _get_memor_dir()
+    memor_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = memor_dir / "mcp-backup-claude.json"
+    
+    if config_path.exists():
+        backup_path.write_text(config_path.read_text())
+        settings = json.loads(config_path.read_text())
+    else:
+        backup_path.write_text(json.dumps({}, indent=2))
+        settings = {}
+    
+    # Add MCP server
+    if "mcpServers" not in settings:
+        settings["mcpServers"] = {}
+    
+    settings["mcpServers"]["memor_retrieve"] = {
+        "command": binary,
+        "args": []
+    }
+    
+    # Write back
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(settings, indent=2) + "\n")
+
+
+def register_mcp_codex() -> None:
+    """Register memor_retrieve MCP server in Codex config.toml."""
+    config_path = Path.home() / ".codex" / "config.toml"
+    
+    # Find the binary path
+    binary = shutil.which("memor-retrieve-mcp")
+    if not binary:
+        raise RuntimeError("memor-retrieve-mcp not found in PATH. Did you install memor-cli?")
+    
+    # Create backup
+    memor_dir = _get_memor_dir()
+    memor_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = memor_dir / "mcp-backup-codex.toml"
+    
+    if config_path.exists():
+        backup_path.write_text(config_path.read_text())
+        config_text = config_path.read_text()
+    else:
+        backup_path.write_text("")
+        config_text = ""
+    
+    # Check if memor_retrieve section already exists
+    if "[mcp_servers.memor_retrieve]" in config_text:
+        # Update existing section
+        lines = config_text.splitlines()
+        new_lines = []
+        in_memor_section = False
+        
+        for line in lines:
+            if line.strip().startswith("[mcp_servers.memor_retrieve]"):
+                in_memor_section = True
+                new_lines.append(line)
+            elif in_memor_section and line.strip().startswith("["):
+                # End of memor section
+                in_memor_section = False
+                new_lines.append(line)
+            elif in_memor_section and line.strip().startswith("command"):
+                new_lines.append(f'command = "{binary}"')
+            else:
+                new_lines.append(line)
+        
+        config_text = "\n".join(new_lines)
+    else:
+        # Append new section
+        mcp_section = f"""
+[mcp_servers.memor_retrieve]
+command = "{binary}"
+"""
+        config_text = config_text.rstrip() + "\n" + mcp_section
+    
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(config_text)
