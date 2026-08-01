@@ -12,6 +12,7 @@ from memor.proxy.forward import (
     sanitize_request_headers,
     sanitize_response_headers,
 )
+from memor.proxy.upstream import resolve_agent, resolve_upstream_url
 from memor.embed.local import LocalEmbedder
 
 
@@ -87,8 +88,14 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         
         stream = _wants_stream(body, request.headers)
         
-        # Forward to Anthropic API
-        upstream_url = "https://api.anthropic.com/v1/messages"
+        agent = resolve_agent(request.headers)
+        upstream_url = resolve_upstream_url(agent, "anthropic")
+        if upstream_url is None:
+            return Response(
+                content=json.dumps({"error": "no upstream configured for agent"}),
+                status_code=502,
+                media_type="application/json",
+            )
         upstream_content = json.dumps(result.body).encode("utf-8")
         
         # Parse usage from response for non-streaming
@@ -120,7 +127,6 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             
             # Record savings to database
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
             
             store.record_proxy_savings({
                 "timestamp": time.time(),
@@ -157,7 +163,6 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             
             # Record savings immediately (before streaming starts)
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
             
             store.record_proxy_savings({
                 "timestamp": time.time(),
@@ -211,8 +216,14 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         
         stream = _wants_stream(body, request.headers)
         
-        # Forward to OpenAI API
-        upstream_url = "https://api.openai.com/v1/chat/completions"
+        agent = resolve_agent(request.headers)
+        upstream_url = resolve_upstream_url(agent, "openai")
+        if upstream_url is None:
+            return Response(
+                content=json.dumps({"error": "no upstream configured for agent"}),
+                status_code=502,
+                media_type="application/json",
+            )
         upstream_content = json.dumps(result.body).encode("utf-8")
         
         # Parse usage from response for non-streaming
@@ -242,7 +253,6 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             
             # Record savings to database
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
             
             store.record_proxy_savings({
                 "timestamp": time.time(),
@@ -279,7 +289,6 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             
             # Record savings immediately (before streaming starts)
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
             
             store.record_proxy_savings({
                 "timestamp": time.time(),
