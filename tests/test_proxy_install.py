@@ -1,0 +1,292 @@
+"""Tests for proxy install/uninstall functionality using monkeypatched HOME."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import pytest
+from memor.proxy.install import (
+    backup_agent_config,
+    install_claude_proxy,
+    install_codex_proxy,
+    uninstall_agent_proxy,
+)
+from memor.config import is_proxy_agent, set_proxy_agent
+import memor.config
+
+
+@pytest.fixture
+def mock_home(monkeypatch, tmp_path):
+    """Monkeypatch HOME and config paths to use tmp_path."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    # Also monkeypatch the config module's paths
+    monkeypatch.setattr(memor.config, "STATE_DIR", tmp_path / ".memor")
+    monkeypatch.setattr(memor.config, "CONFIG_PATH", tmp_path / ".memor" / "config.json")
+    return tmp_path
+
+
+def test_backup_agent_config(mock_home):
+    """Backup creates ~/.memor/proxy-backup-<agent>.json."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    # Create a fake Claude config
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings = claude_dir / "settings.json"
+    settings.write_text(json.dumps({"some": "config"}, indent=2))
+    
+    backup_path = backup_agent_config("claude")
+    assert backup_path == memor_dir / "proxy-backup-claude.json"
+    assert backup_path.exists()
+    
+    backup_data = json.loads(backup_path.read_text())
+    assert backup_data == {"some": "config"}
+
+
+def test_backup_agent_config_missing_file(mock_home):
+    """Backup handles missing agent config gracefully."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    backup_path = backup_agent_config("claude")
+    assert backup_path == memor_dir / "proxy-backup-claude.json"
+    # Should still create a backup file (empty object)
+    assert backup_path.exists()
+    backup_data = json.loads(backup_path.read_text())
+    assert backup_data == {}
+
+
+def test_install_claude_proxy(mock_home):
+    """Claude proxy install merges ANTHROPIC_BASE_URL into settings.json."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    
+    # Test with existing settings
+    settings_path.write_text(json.dumps({"existing": "value"}, indent=2))
+    
+    install_claude_proxy(8421)
+    
+    # Verify settings were updated
+    settings = json.loads(settings_path.read_text())
+    assert settings["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8421"
+    assert settings["existing"] == "value"  # preserved
+    
+    # Verify backup was created
+    backup = mock_home / ".memor" / "proxy-backup-claude.json"
+    assert backup.exists()
+    backup_data = json.loads(backup.read_text())
+    assert backup_data["existing"] == "value"
+    assert "env" not in backup_data  # original didn't have env
+
+
+def test_install_claude_proxy_no_existing_config(mock_home):
+    """Claude proxy install creates settings.json if it doesn't exist."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    
+    install_claude_proxy(8421)
+    
+    assert settings_path.exists()
+    settings = json.loads(settings_path.read_text())
+    assert settings["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8421"
+
+
+def test_install_claude_proxy_preserves_existing_env(mock_home):
+    """Claude proxy install preserves existing env variables."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    
+    original = {
+        "env": {
+            "SOME_VAR": "value",
+        }
+    }
+    settings_path.write_text(json.dumps(original, indent=2))
+    
+    install_claude_proxy(8421)
+    
+    settings = json.loads(settings_path.read_text())
+    assert settings["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8421"
+    assert settings["env"]["SOME_VAR"] == "value"
+
+
+def test_install_codex_proxy(mock_home):
+    """Codex proxy install sets openai_base_url in config.toml."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    codex_dir = mock_home / ".codex"
+    codex_dir.mkdir()
+    config_path = codex_dir / "config.toml"
+    
+    # Start with a basic config
+    config_path.write_text('model_provider = "anthropic"\n')
+    
+    install_codex_proxy(8421)
+    
+    # Verify config was updated
+    config = config_path.read_text()
+    assert 'openai_base_url = "http://127.0.0.1:8421/v1"' in config
+    assert 'model_provider = "anthropic"' in config  # preserved
+    
+    # Verify backup
+    backup = mock_home / ".memor" / "proxy-backup-codex.toml"
+    assert backup.exists()
+    backup_text = backup.read_text()
+    assert 'model_provider = "anthropic"' in backup_text
+    assert "openai_base_url" not in backup_text
+
+
+def test_install_codex_proxy_no_existing_config(mock_home):
+    """Codex proxy install creates config.toml if it doesn't exist."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    codex_dir = mock_home / ".codex"
+    codex_dir.mkdir()
+    config_path = codex_dir / "config.toml"
+    
+    install_codex_proxy(8421)
+    
+    assert config_path.exists()
+    config = config_path.read_text()
+    assert 'openai_base_url = "http://127.0.0.1:8421/v1"' in config
+
+
+def test_uninstall_agent_proxy_restores_backup(mock_home):
+    """Uninstall restores the backed-up config and clears proxy_agent flag."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    
+    # Set up original config
+    original = {"existing": "value"}
+    settings_path.write_text(json.dumps(original, indent=2))
+    
+    # Install proxy
+    install_claude_proxy(8421)
+    set_proxy_agent("claude", True)
+    
+    # Verify proxy is installed
+    assert is_proxy_agent("claude")
+    settings = json.loads(settings_path.read_text())
+    assert "ANTHROPIC_BASE_URL" in settings["env"]
+    
+    # Uninstall
+    uninstall_agent_proxy("claude")
+    
+    # Verify config was restored
+    settings = json.loads(settings_path.read_text())
+    assert settings == original
+    assert "env" not in settings
+    
+    # Verify proxy_agent flag was cleared
+    assert not is_proxy_agent("claude")
+
+
+def test_uninstall_codex_proxy_restores_backup(mock_home):
+    """Uninstall restores Codex config from backup."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    codex_dir = mock_home / ".codex"
+    codex_dir.mkdir()
+    config_path = codex_dir / "config.toml"
+    
+    # Set up original config
+    original = 'model_provider = "anthropic"\n'
+    config_path.write_text(original)
+    
+    # Install proxy
+    install_codex_proxy(8421)
+    set_proxy_agent("codex", True)
+    
+    # Verify proxy is installed
+    assert is_proxy_agent("codex")
+    config = config_path.read_text()
+    assert "openai_base_url" in config
+    
+    # Uninstall
+    uninstall_agent_proxy("codex")
+    
+    # Verify config was restored
+    config = config_path.read_text()
+    assert config == original
+    assert "openai_base_url" not in config
+    
+    # Verify proxy_agent flag was cleared
+    assert not is_proxy_agent("codex")
+
+
+def test_roundtrip_install_uninstall_claude(mock_home):
+    """Full roundtrip: install, verify, uninstall, verify original restored."""
+    # Setup
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    
+    original = {"some": "config", "env": {"OTHER": "var"}}
+    settings_path.write_text(json.dumps(original, indent=2))
+    
+    # Install
+    install_claude_proxy(9999)
+    set_proxy_agent("claude", True)
+    
+    settings = json.loads(settings_path.read_text())
+    assert settings["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:9999"
+    assert settings["env"]["OTHER"] == "var"
+    assert is_proxy_agent("claude")
+    
+    # Uninstall
+    uninstall_agent_proxy("claude")
+    
+    settings = json.loads(settings_path.read_text())
+    assert settings == original
+    assert not is_proxy_agent("claude")
+
+
+def test_roundtrip_install_uninstall_codex(mock_home):
+    """Full roundtrip for Codex."""
+    # Setup
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    codex_dir = mock_home / ".codex"
+    codex_dir.mkdir()
+    config_path = codex_dir / "config.toml"
+    
+    original = 'model = "gpt-4"\napi_key = "sk-test"\n'
+    config_path.write_text(original)
+    
+    # Install
+    install_codex_proxy(9999)
+    set_proxy_agent("codex", True)
+    
+    config = config_path.read_text()
+    assert 'openai_base_url = "http://127.0.0.1:9999/v1"' in config
+    assert 'model = "gpt-4"' in config
+    assert is_proxy_agent("codex")
+    
+    # Uninstall
+    uninstall_agent_proxy("codex")
+    
+    config = config_path.read_text()
+    assert config == original
+    assert "openai_base_url" not in config
+    assert not is_proxy_agent("codex")
