@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-08-01
+
+### Added
+- **Goose + Kimi proxy install** — `memor install-proxy --agent goose|kimi` rewrites provider config, stamps `x-agent` headers, and registers per-agent upstream routing.
+- **Per-agent proxy savings on dashboard** — ledger entries tagged by agent (`x-agent` header + path fallback).
+- **Runtime fail-open shim** — proxy forwards directly to upstream when compression or inject fails.
+
+### Changed
+- **Hook skip when proxied** — proxied agents (claude, codex, goose, kimi) skip hook inject; memory comes from the proxy path. Cursor and Copilot always inject via hooks.
+
 ## [0.10.1] - 2026-08-01
 
 ### Docs

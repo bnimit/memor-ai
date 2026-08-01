@@ -47,13 +47,13 @@ memor dashboard
 
 ### Optional: Token savings proxy
 
-Memory works out of the box via hooks. To also compress tool payloads and track token savings (Claude Code or Codex only):
+Memory works out of the box via hooks. To also compress tool payloads and track token savings:
 
 ```bash
-memor install-proxy --agent claude   # or: codex
+memor install-proxy --agent claude   # or: codex, goose, kimi
 ```
 
-This points your agent at a local proxy on `127.0.0.1:8421`, compresses latest-turn tool content before it reaches the provider, and logs savings to the dashboard. Hooks keep running for that agent, so memory works exactly as before. Cursor and Copilot always use hooks only.
+This points your agent at a local proxy on `127.0.0.1:8421`, compresses latest-turn tool content before it reaches the provider, and logs savings to the dashboard. For proxied agents, hooks skip inject (memory comes from the proxy path); Cursor and Copilot always use hooks only.
 
 `memor service restart` (e.g. after `pipx upgrade`) keeps the proxy running when it was opted in. If the proxy fails its health check on install, Memor restores your agent’s original API URLs so calls are not left pointing at a dead localhost port. `memor service stop` warns while agents still point at the proxy; `memor service uninstall` restores direct API configs for proxy-enabled agents.
 
@@ -96,7 +96,7 @@ Memor runs two complementary local paths — combine them or use either alone:
 | **Hooks** | Shared memory recall across all agents | On after `memor install-hook` |
 | **Proxy** | Compress tool payloads; ledger token savings | Opt-in via `memor install-proxy` |
 
-**Memory is fire-and-forget** — install hooks once, every prompt gets relevant context. **Proxy is opt-in** — only for Claude Code and Codex, only when you want measurable token savings. Hooks stay in charge of memory even when the proxy is active (proxy-side inject is best-effort). The proxy forwards your existing Anthropic/OpenAI credentials; Memor does not require its own API key.
+**Memory is fire-and-forget** — install hooks once, every prompt gets relevant context. **Proxy is opt-in** — for Claude Code, Codex, Goose, and Kimi when you want measurable token savings. Proxied agents skip hook inject (memory comes from the proxy path); Cursor and Copilot always use hooks. The proxy forwards your existing Anthropic/OpenAI credentials; Memor does not require its own API key.
 
 ---
 
@@ -137,8 +137,8 @@ Memor runs two complementary local paths — combine them or use either alone:
 | **Codex CLI** | Yes | Experimental — `memor install-proxy --agent codex` (Chat Completions only) |
 | **Cursor** | Yes | No — hooks only |
 | **Copilot CLI** | Yes | No — hooks only |
-| **Kimi CLI** | Yes | No — hooks only |
-| **Goose** | Yes | No — hooks only |
+| **Kimi CLI** | Yes | Yes — `memor install-proxy --agent kimi` |
+| **Goose** | Yes | Yes — `memor install-proxy --agent goose` |
 
 ### Hook install details
 
@@ -151,7 +151,7 @@ Memor runs two complementary local paths — combine them or use either alone:
 | **Kimi CLI** | `UserPromptSubmit` + plain-text context | `~/.kimi/config.toml` | `memor install-hook --agent kimi` |
 | **Goose** | `UserPromptSubmit` + `additionalContext` | `~/.agents/plugins/memor/` | `memor install-hook --agent goose` |
 
-A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Kimi and Goose installs stamp `MEMOR_HOOK_AGENT` so Claude-shaped payloads stay correctly labeled. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. Hooks stay in charge of memory inject even when the proxy is active; the proxy's own inject is best-effort, because it cannot see your working directory to scope the project. The dashboard tracks recalls per agent so you can see usage across all your environments.
+A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Kimi and Goose installs stamp `MEMOR_HOOK_AGENT` so Claude-shaped payloads stay correctly labeled. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. When an agent is proxied, its hook skips inject and memory comes from the proxy path; Cursor and Copilot always inject via hooks. The dashboard tracks recalls per agent so you can see usage across all your environments.
 
 > **Goose note:** Memory inject needs a Goose build with advise-tier `additionalContext` support. DeepSeek (or any other provider) is configured inside Goose — Memor talks to Goose's hooks, not to the model provider.
 

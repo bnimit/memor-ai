@@ -111,6 +111,7 @@ def test_forwarded_body_framing_matches_recompressed_payload(proxy_client):
             "content-length": str(len(raw)),
             "connection": "close",
             "x-api-key": "test-key",
+            "x-agent": "claude",
         },
     )
     assert r.status_code == 200
@@ -154,7 +155,7 @@ def test_gzipped_upstream_response_is_decoded_and_reframed(proxy_client):
     r = client.post(
         "/v1/messages",
         json=_compressible_body(),
-        headers={"x-api-key": "test-key", "x-test-gzip": "1"},
+        headers={"x-api-key": "test-key", "x-test-gzip": "1", "x-agent": "claude"},
     )
     assert r.status_code == 200
     # Body reached the client decoded, so the upstream framing headers are gone.
@@ -170,7 +171,7 @@ def test_streaming_response_drops_hop_by_hop_headers(proxy_client):
     r = client.post(
         "/v1/messages",
         json=body,
-        headers={"x-api-key": "test-key", "x-test-stream": "1"},
+        headers={"x-api-key": "test-key", "x-test-stream": "1", "x-agent": "claude"},
     )
     assert r.status_code == 200
     assert b"message_start" in r.content
