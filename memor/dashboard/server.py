@@ -326,14 +326,5 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
 def _get_dim(db_path: str) -> int:
     """Read dim from meta table, default to 1536 (OpenAI)."""
-    import sqlite3
-    try:
-        db = sqlite3.connect(db_path)
-        db.row_factory = sqlite3.Row
-        row = db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
-        db.close()
-        if row:
-            return int(row["value"])
-    except Exception:
-        pass
-    return 1536
+    from memor.store.sqlite_store import read_dim
+    return read_dim(db_path, 1536)

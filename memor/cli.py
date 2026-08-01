@@ -16,17 +16,8 @@ def _db_path(db: str) -> str:
     return str(Path(db).expanduser())
 
 def _get_dim(db_path: str) -> int:
-    import sqlite3
-    try:
-        db = sqlite3.connect(db_path)
-        db.row_factory = sqlite3.Row
-        row = db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
-        db.close()
-        if row:
-            return int(row["value"])
-    except Exception:
-        pass
-    return 256
+    from memor.store.sqlite_store import read_dim
+    return read_dim(db_path, 256)
 
 def _embedder(fake: bool):
     if fake:

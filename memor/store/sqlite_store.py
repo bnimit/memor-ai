@@ -7,6 +7,23 @@ from memor.types import Artifact, Scope, SessionUsage
 def _serialize(v: list[float]) -> bytes:
     return struct.pack("%sf" % len(v), *v)
 
+def read_dim(db_path: str, default: int) -> int:
+    """Read the embedding dimension a database was built with.
+
+    Opening a store with the wrong dim trips the dim check, so anything that
+    attaches to an existing database has to ask it first.
+    """
+    try:
+        db = sqlite3.connect(db_path)
+        db.row_factory = sqlite3.Row
+        row = db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
+        db.close()
+        if row:
+            return int(row["value"])
+    except Exception:
+        pass
+    return default
+
 def _choose_chunk_size(active_count: int) -> int:
     if active_count < 1000:
         return 64
