@@ -910,14 +910,29 @@ def install_proxy(agent: str = typer.Option(
         
         typer.echo(f"  Backup saved to ~/.memor/proxy-backup-{agent}.*")
         typer.echo()
-        
-        # Ensure the proxy service is running
+
+        # Ensure the proxy service is running and healthy
         typer.echo("Ensuring proxy service is running...")
         service.install(with_dashboard=True, with_proxy=True)
+        from memor.proxy.health import wait_for_proxy_health
+        from memor.proxy.install import failover_proxy_agents
+        ok, detail = wait_for_proxy_health(port)
+        if not ok:
+            typer.echo(f"\nProxy failed health check: {detail}", err=True)
+            for line in failover_proxy_agents(detail):
+                typer.echo(f"  {line}", err=True)
+            typer.echo(
+                "\nRestored direct API endpoints so the agent is not stuck on "
+                f"http://127.0.0.1:{port}. Re-run after fixing the proxy.",
+                err=True,
+            )
+            raise typer.Exit(1)
         typer.echo()
         typer.echo(f"Proxy ready at http://127.0.0.1:{port}")
         typer.echo(f"All {agent} API calls will now flow through memor for context compression.")
-        
+
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Failed to install proxy: {e}", err=True)
         raise typer.Exit(1)

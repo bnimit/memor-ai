@@ -64,6 +64,26 @@ def _proxy_port() -> int:
     return proxy_port()
 
 
+def _proxy_unit_file_exists() -> bool:
+    """True if a proxy launchd plist or systemd unit file is on disk."""
+    if _is_macos():
+        return _plist_path(PROXY_LABEL).exists()
+    return _unit_path("memor-proxy").exists()
+
+
+def _should_run_proxy() -> bool:
+    """Whether install/restart should manage the proxy unit.
+
+    True if any agent opted in via config, or a proxy unit file already exists
+    (so upgrades don't leave a stranded plist/unit unloaded).
+    """
+    from memor.config import load_config
+    agents = load_config().get("proxy_agents") or {}
+    if any(agents.values()):
+        return True
+    return _proxy_unit_file_exists()
+
+
 def _units(memor_bin: str, *, with_dashboard: bool = True, with_proxy: bool = False, port: int | None = None) -> list[dict]:
     """Describe the services to manage. Each entry has the launchd label,
     systemd unit name, program args (after the memor binary), and log file."""
@@ -179,7 +199,13 @@ def _port_in_use(port: int) -> bool:
 
 
 def install(with_dashboard: bool = True, with_proxy: bool = False) -> str:
-    """Install background services. The proxy is opt-in via `memor install-proxy`."""
+    """Install background services. The proxy is opt-in via `memor install-proxy`.
+
+    When `with_proxy` is False (default), it is still enabled if `_should_run_proxy()`
+    — so `memor service restart` after upgrade keeps a previously installed proxy.
+    """
+    if not with_proxy and _should_run_proxy():
+        with_proxy = True
     memor_bin = _find_memor_bin()
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     port = _dashboard_port()
@@ -231,6 +257,15 @@ def install(with_dashboard: bool = True, with_proxy: bool = False) -> str:
 
 
 def uninstall() -> str:
+    from memor.config import load_config
+    from memor.proxy.install import failover_proxy_agents
+
+    failover_lines: list[str] = []
+    agents = load_config().get("proxy_agents") or {}
+    if any(agents.values()):
+        failover_lines = failover_proxy_agents(
+            "service uninstall — restoring direct API endpoints")
+
     removed = []
     if _is_macos():
         for label, _ in _all_unit_labels():
@@ -252,12 +287,23 @@ def uninstall() -> str:
                 changed = True
         if changed:
             subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
-    if not removed:
+    if not removed and not failover_lines:
         return "No services installed."
-    return "Services stopped and removed:\n" + "\n".join(f"  deleted: {p}" for p in removed)
+    parts = []
+    if removed:
+        parts.append(
+            "Services stopped and removed:\n" + "\n".join(f"  deleted: {p}" for p in removed)
+        )
+    elif not removed:
+        parts.append("No service unit files to remove.")
+    if failover_lines:
+        parts.append("Proxy agent configs:\n" + "\n".join(f"  {ln}" for ln in failover_lines))
+    return "\n".join(parts)
 
 
 def stop() -> str:
+    from memor.config import load_config
+
     stopped = []
     if _is_macos():
         for label, _ in _all_unit_labels():
@@ -274,8 +320,17 @@ def stop() -> str:
                 stopped.append(name if r.returncode == 0 else f"{name} (failed)")
     if not stopped:
         return "No services installed. Nothing to stop."
-    return ("Stopped: " + ", ".join(stopped) +
-            "\n  They restart on next login. To remove: memor service uninstall")
+    out = ("Stopped: " + ", ".join(stopped) +
+           "\n  They restart on next login. To remove: memor service uninstall")
+    agents = load_config().get("proxy_agents") or {}
+    if any(agents.values()):
+        pport = _proxy_port()
+        out += (
+            f"\n  warning: proxy-enabled agents still point at http://127.0.0.1:{pport}."
+            f"\n    Start again: memor service restart"
+            f"\n    Or restore direct API: memor uninstall-proxy --agent <claude|codex>"
+        )
+    return out
 
 
 def restart() -> str:
