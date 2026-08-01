@@ -12,35 +12,43 @@ def _get_memor_dir() -> Path:
     return Path.home() / ".memor"
 
 
+def _agent_paths(agent: str) -> tuple[Path, Path, str]:
+    """(config path, proxy backup path, contents to record for a missing config)."""
+    memor_dir = _get_memor_dir()
+    if agent == "claude":
+        return (
+            Path.home() / ".claude" / "settings.json",
+            memor_dir / "proxy-backup-claude.json",
+            json.dumps({}, indent=2),
+        )
+    if agent == "codex":
+        return (
+            Path.home() / ".codex" / "config.toml",
+            memor_dir / "proxy-backup-codex.toml",
+            "",
+        )
+    raise ValueError(f"Unknown agent: {agent}")
+
+
 def backup_agent_config(agent: str) -> Path:
     """Back up the agent's config file to ~/.memor/proxy-backup-<agent>.json or .toml.
+    
+    An existing backup is left untouched: re-running install would otherwise
+    capture the config we already rewrote, and uninstall would then "restore"
+    the proxied state permanently. Uninstall clears the backup.
     
     Returns the backup file path.
     """
     memor_dir = _get_memor_dir()
     memor_dir.mkdir(parents=True, exist_ok=True)
     
-    if agent == "claude":
-        config_path = Path.home() / ".claude" / "settings.json"
-        backup_path = memor_dir / "proxy-backup-claude.json"
-        
-        if config_path.exists():
-            backup_path.write_text(config_path.read_text())
-        else:
-            backup_path.write_text(json.dumps({}, indent=2))
+    config_path, backup_path, empty_contents = _agent_paths(agent)
+    if backup_path.exists():
+        return backup_path
     
-    elif agent == "codex":
-        config_path = Path.home() / ".codex" / "config.toml"
-        backup_path = memor_dir / "proxy-backup-codex.toml"
-        
-        if config_path.exists():
-            backup_path.write_text(config_path.read_text())
-        else:
-            backup_path.write_text("")
-    
-    else:
-        raise ValueError(f"Unknown agent: {agent}")
-    
+    backup_path.write_text(
+        config_path.read_text() if config_path.exists() else empty_contents
+    )
     return backup_path
 
 
@@ -73,41 +81,54 @@ def install_claude_proxy(port: int) -> None:
     register_mcp_claude()
 
 
-def install_codex_proxy(port: int) -> None:
-    """Install Codex proxy by setting openai_base_url in config.toml.
+def set_toml_top_level_key(text: str, key: str, value_line: str) -> str:
+    """Set a bare TOML key, keeping it above the first table header.
     
-    Uses a simple approach: append or update openai_base_url at the top level.
+    Appending to the end of the file would put the key inside whichever table
+    happens to be last — valid TOML, but a different key path, so the setting
+    would silently stop applying.
     """
+    lines = text.splitlines()
+    out: list[str] = []
+    replaced = False
+    in_table = False
+    
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_table = True
+        if not in_table and "=" in stripped and stripped.split("=", 1)[0].strip() == key:
+            out.append(value_line)
+            replaced = True
+            continue
+        out.append(line)
+    
+    if not replaced:
+        first_table = next(
+            (i for i, line in enumerate(out) if line.strip().startswith("[")),
+            len(out),
+        )
+        out.insert(first_table, value_line)
+    
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def install_codex_proxy(port: int) -> None:
+    """Install Codex proxy by setting openai_base_url in config.toml."""
     config_path = Path.home() / ".codex" / "config.toml"
     
     # Backup first
     backup_agent_config("codex")
     
-    # Load existing config
-    if config_path.exists():
-        config_text = config_path.read_text()
-    else:
-        config_text = ""
-    
-    # Parse and update (simple approach: check if key exists, update or append)
-    lines = config_text.splitlines()
-    base_url_line = f'openai_base_url = "http://127.0.0.1:{port}/v1"'
-    
-    found = False
-    new_lines = []
-    for line in lines:
-        if line.strip().startswith("openai_base_url"):
-            new_lines.append(base_url_line)
-            found = True
-        else:
-            new_lines.append(line)
-    
-    if not found:
-        # Append at the end
-        new_lines.append(base_url_line)
+    config_text = config_path.read_text() if config_path.exists() else ""
+    config_text = set_toml_top_level_key(
+        config_text,
+        "openai_base_url",
+        f'openai_base_url = "http://127.0.0.1:{port}/v1"',
+    )
     
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text("\n".join(new_lines) + "\n")
+    config_path.write_text(config_text)
     
     # Set proxy_agent flag
     set_proxy_agent("codex", True)
@@ -118,26 +139,13 @@ def install_codex_proxy(port: int) -> None:
 
 def uninstall_agent_proxy(agent: str) -> None:
     """Restore the backed-up config and clear the proxy_agent flag."""
-    memor_dir = _get_memor_dir()
+    config_path, backup_path, _ = _agent_paths(agent)
     
-    if agent == "claude":
-        backup_path = memor_dir / "proxy-backup-claude.json"
-        config_path = Path.home() / ".claude" / "settings.json"
-        
-        if backup_path.exists():
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_text(backup_path.read_text())
-    
-    elif agent == "codex":
-        backup_path = memor_dir / "proxy-backup-codex.toml"
-        config_path = Path.home() / ".codex" / "config.toml"
-        
-        if backup_path.exists():
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_text(backup_path.read_text())
-    
-    else:
-        raise ValueError(f"Unknown agent: {agent}")
+    if backup_path.exists():
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(backup_path.read_text())
+        # Consumed: the next install captures a fresh pre-proxy snapshot.
+        backup_path.unlink()
     
     # Clear proxy_agent flag
     set_proxy_agent(agent, False)
