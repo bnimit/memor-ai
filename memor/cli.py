@@ -877,8 +877,16 @@ def proxy(port: int = typer.Option(None, help="Port to serve on"),
 
 
 @app.command("install-proxy")
-def install_proxy(agent: str = typer.Option(
-        ..., help="Agent: claude, codex, goose, or kimi")):
+def install_proxy(
+    agent: str = typer.Option(
+        ..., help="Agent: claude, codex, goose, or kimi"),
+    upstream_url: str = typer.Option(
+        None,
+        "--upstream-url",
+        help="Goose/Kimi only: upstream API URL to capture when the agent config "
+        "has no base_url (e.g. Goose Desktop custom providers without JSON).",
+    ),
+):
     """Install proxy for an agent and ensure the proxy service is running."""
     from memor.proxy.install import (
         install_agent_proxy,
@@ -915,7 +923,7 @@ def install_proxy(agent: str = typer.Option(
             typer.echo("  the Responses API (/v1/responses) will bypass the proxy and report")
             typer.echo("  no savings. Memory via hooks is unaffected.")
         elif agent == "goose":
-            install_agent_proxy("goose", port)
+            install_agent_proxy("goose", port, upstream_url=upstream_url)
             typer.echo(f"\nInstalled Goose proxy:")
             typer.echo(f"  Updated ~/.config/goose/ provider config")
             typer.echo(f"  Set base_url=http://127.0.0.1:{port}/v1/...")

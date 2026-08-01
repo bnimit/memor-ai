@@ -75,8 +75,54 @@ def test_discover_goose_upstream_missing_custom_provider(mock_home):
     goose_dir = mock_home / ".config" / "goose"
     goose_dir.mkdir(parents=True)
     (goose_dir / "config.yaml").write_text("active_provider: custom_missing\n")
-    with pytest.raises(GooseProviderNotFoundError, match="re-save the provider"):
+    with pytest.raises(GooseProviderNotFoundError, match="--upstream-url"):
         discover_goose_upstream()
+
+
+def test_discover_goose_upstream_materializes_desktop_provider(mock_home):
+    """Goose Desktop can register custom providers in yaml without JSON."""
+    goose_dir = mock_home / ".config" / "goose"
+    goose_dir.mkdir(parents=True)
+    (goose_dir / "config.yaml").write_text(
+        "active_provider: custom_deepseek\n"
+        "providers:\n"
+        "  custom_deepseek:\n"
+        "    enabled: true\n"
+        "    model: deepseek-v4-pro\n"
+        "    configured: true\n"
+    )
+    protocol, base_url, provider_name, rewrite_kind = discover_goose_upstream(
+        upstream_url="https://api.deepseek.com/v1/chat/completions",
+    )
+    assert protocol == "openai"
+    assert base_url == "https://api.deepseek.com/v1/chat/completions"
+    assert provider_name == "custom_deepseek"
+    assert rewrite_kind == "custom_json"
+    provider_path = goose_dir / "custom_providers" / "custom_deepseek.json"
+    assert provider_path.exists()
+    data = json.loads(provider_path.read_text())
+    assert data["base_url"] == "https://api.deepseek.com/v1/chat/completions"
+    assert data["models"][0]["name"] == "deepseek-v4-pro"
+
+
+def test_install_goose_proxy_materializes_from_upstream_url(mock_home, monkeypatch):
+    goose_dir = mock_home / ".config" / "goose"
+    goose_dir.mkdir(parents=True)
+    (goose_dir / "config.yaml").write_text(
+        "active_provider: custom_deepseek\n"
+        "providers:\n"
+        "  custom_deepseek:\n"
+        "    model: deepseek-v4-pro\n"
+    )
+    install_goose_proxy(
+        8421,
+        upstream_url="https://api.deepseek.com/v1/chat/completions",
+    )
+    provider_path = goose_dir / "custom_providers" / "custom_deepseek.json"
+    data = json.loads(provider_path.read_text())
+    assert data["base_url"] == "http://127.0.0.1:8421/v1/chat/completions"
+    assert data["headers"]["x-agent"] == "goose"
+    assert get_proxy_upstream("goose")["base_url"].endswith("/chat/completions")
 
 
 def test_install_goose_proxy_custom_rewrites_json_and_sets_upstream(mock_home):

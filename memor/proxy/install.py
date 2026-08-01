@@ -339,11 +339,14 @@ AGENT_PROXY_HANDLERS: dict[str, AgentProxyHandler] = {
 }
 
 
-def install_agent_proxy(agent: str, port: int) -> None:
+def install_agent_proxy(agent: str, port: int, *, upstream_url: str | None = None) -> None:
     """Install proxy for the given agent using the handler registry."""
     handler = AGENT_PROXY_HANDLERS.get(agent)
     if handler is None:
         raise ValueError(f"Unknown agent: {agent}")
+    if agent == "goose":
+        install_goose_proxy(port, upstream_url=upstream_url)
+        return
     handler.install(port)
 
 

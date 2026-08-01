@@ -124,21 +124,101 @@ def _read_active_provider() -> str:
     return provider
 
 
+def _read_yaml_provider_model(text: str, provider_name: str) -> str | None:
+    """Read model name from a providers.<name> block in config.yaml."""
+    in_block = False
+    for line in text.splitlines():
+        if re.match(rf"^\s{{2}}{re.escape(provider_name)}:\s*$", line):
+            in_block = True
+            continue
+        if in_block:
+            if line and not line.startswith(" "):
+                break
+            if re.match(r"^\s{2}\S", line) and not line.startswith("    "):
+                break
+            match = re.match(r"^\s+model:\s*(.+)$", line)
+            if match:
+                value = match.group(1).strip()
+                if value.startswith('"') and value.endswith('"'):
+                    return value[1:-1]
+                if value.startswith("'") and value.endswith("'"):
+                    return value[1:-1]
+                return value
+    return None
+
+
+def _protocol_from_upstream_url(base_url: str) -> str:
+    path = base_url.rstrip("/").split("/")[-2:] if "/" in base_url else []
+    if base_url.rstrip("/").endswith("/messages") or "/v1/messages" in base_url:
+        return "anthropic"
+    return "openai"
+
+
+def _materialize_custom_provider_json(
+    provider_name: str,
+    base_url: str,
+    *,
+    config_text: str = "",
+) -> Path:
+    """Create custom_providers JSON when Goose Desktop registered the provider in yaml only."""
+    protocol = _protocol_from_upstream_url(base_url)
+    engine = "anthropic" if protocol == "anthropic" else "openai"
+    model = _read_yaml_provider_model(config_text, provider_name) or "default"
+    provider_path = _custom_provider_path(provider_name)
+    provider_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "name": provider_name,
+        "engine": engine,
+        "display_name": provider_name.replace("custom_", "").replace("_", " ").title(),
+        "description": f"Materialized by memor install-proxy for {provider_name}",
+        "api_key_env": f"{provider_name.upper()}_API_KEY",
+        "base_url": base_url.rstrip("/"),
+        "models": [{"name": model, "context_limit": 128000}],
+        "requires_auth": True,
+        "supports_streaming": True,
+    }
+    provider_path.write_text(json.dumps(data, indent=2) + "\n")
+    return provider_path
+
+
+def _resolve_upstream_url_override() -> str | None:
+    return (os.environ.get("MEMOR_GOOSE_UPSTREAM_URL") or "").strip() or None
+
+
 def discover_goose_upstream(
     port: int | None = None,
+    *,
+    upstream_url: str | None = None,
 ) -> tuple[str, str, str, str]:
     """Return (protocol, base_url, provider_name, rewrite_kind) from Goose config."""
     provider_name = _read_active_provider()
 
     if provider_name.startswith("custom_"):
         provider_path = _custom_provider_path(provider_name)
+        override = (upstream_url or _resolve_upstream_url_override() or "").strip()
         if not provider_path.exists():
-            raise GooseProviderNotFoundError(
-                f"Goose active provider {provider_name!r} has no config file at "
-                f"{provider_path}. Open Goose → Settings → Models → re-save the "
-                "provider, or create the JSON manually under "
-                f"{_custom_providers_dir()}/, then re-run memor install-proxy --agent goose."
+            config_text = (
+                _goose_config_path().read_text() if _goose_config_path().exists() else ""
             )
+            if override:
+                _materialize_custom_provider_json(
+                    provider_name,
+                    override,
+                    config_text=config_text,
+                )
+            else:
+                hint = (
+                    "Goose Desktop often stores custom providers in config.yaml without "
+                    "writing custom_providers/*.json. Re-save the provider in Goose → "
+                    "Settings → Models, or pass the upstream URL:\n\n"
+                    "  memor install-proxy --agent goose "
+                    "--upstream-url 'https://api.deepseek.com/v1/chat/completions'\n\n"
+                    "Or set MEMOR_GOOSE_UPSTREAM_URL for the same value."
+                )
+                raise GooseProviderNotFoundError(
+                    f"Goose active provider {provider_name!r} has no config file at "
+                    f"{provider_path}. {hint}"
+                )
         data = json.loads(provider_path.read_text() or "{}")
         engine = str(data.get("engine", "openai"))
         protocol = _engine_to_protocol(engine)
@@ -207,11 +287,14 @@ def _backup_custom_provider(provider_name: str) -> Path:
     return backup_path
 
 
-def install_goose_proxy(port: int) -> None:
+def install_goose_proxy(port: int, *, upstream_url: str | None = None) -> None:
     """Install Goose proxy by rewriting provider config to point at Memor."""
     from memor.proxy.install import backup_agent_config
 
-    protocol, base_url, provider_name, rewrite_kind = discover_goose_upstream(port)
+    protocol, base_url, provider_name, rewrite_kind = discover_goose_upstream(
+        port,
+        upstream_url=upstream_url,
+    )
 
     backup_agent_config("goose")
 
