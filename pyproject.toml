@@ -54,6 +54,7 @@ include = ["memor*"]
 
 [tool.setuptools.package-data]
 "memor.dashboard" = ["static/**"]
+"memor.eval" = ["proxy_benchmark_fixtures/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -47,7 +47,7 @@ Secondary KPI: **cross-agent memory continuity** (existing recall/quality metric
 1. **No Memor-owned internet dependency.** Compressors run locally. Proxy only forwards the agent’s existing Anthropic/OpenAI calls. Memor does not require its own API key.
 2. **Memory stays fire-and-forget.** Proxy is **one explicit opt-in** (`memor install-proxy`).
 3. **Hooks stay** for all supported agents; proxy does not replace multi-agent coverage.
-4. **No double injection.** When an agent is on the proxy path, hooks skip memory inject for that agent; proxy may inject memory once.
+4. **Hooks stay in charge of memory.** Proxy-side inject is best-effort (no reliable cwd → weak project scope). Hooks do **not** skip when an agent is proxied; accept a possible double-inject rather than zero memory. Revisit skip only once proxy inject can scope by project.
 5. **Stream passthrough.** Responses stream through unchanged. Compression is **request-side only**.
 6. **Cache-aware.** Do not rewrite stable message prefixes. v1 compresses **latest-turn tool payloads / oversized tool messages only**.
 7. **Keys never persisted.** Forward `Authorization` / provider headers; do not store API keys.
@@ -109,10 +109,10 @@ Secondary KPI: **cross-agent memory continuity** (existing recall/quality metric
 
 | Agent | Memory (hooks) | Proxy / savings |
 |-------|----------------|-----------------|
-| Claude Code | Yes (skipped when proxied) | Yes |
-| Codex CLI | Yes (skipped when proxied) | Yes |
-| Cursor | Yes (never skipped) | No |
-| Copilot CLI | Yes (never skipped) | No |
+| Claude Code | Yes (hooks always inject; proxy inject is best-effort) | Yes |
+| Codex CLI | Yes (hooks always inject; proxy inject is best-effort) | Yes |
+| Cursor | Yes | No |
+| Copilot CLI | Yes | No |
 
 ---
 
@@ -125,12 +125,12 @@ Secondary KPI: **cross-agent memory continuity** (existing recall/quality metric
 3. Protocol adapter normalizes messages.
 4. Compressors run on **latest-turn tool payloads** only (cache-safe).
 5. Originals stored in CCR; MCP `memor_retrieve` available.
-6. Memory injected **once** via shared retriever (if relevant), using the same markdown shape as today’s hook (`## Recalled Memories…`) appended as proxy-side context on the latest user turn — not a second hook inject.
+6. Proxy may inject memories best-effort (same markdown shape as the hook) when a project hint is available; otherwise hooks remain the reliable inject path.
 7. Ledger records tokens before/after + content-type breakdown.
 8. Forward to Anthropic/OpenAI; **stream** response through.
 9. Agent may call `memor_retrieve` if it needs full detail.
 
-Hooks for that agent: **recall disabled** via per-agent flag set at `install-proxy` time.
+Hooks for that agent: **still fire** (do not skip). Proxy inject is supplementary until project scoping is reliable.
 
 ### 6.2 Hooks-only agent (Cursor / Copilot)
 
@@ -162,19 +162,18 @@ Daemon continues ingest → distill → feedback → store. Dashboard reads savi
 2. Backup exact prior base_url / env / config snippet to `~/.memor/proxy-backup-<agent>.json`.
 3. Point agent at localhost proxy (Anthropic or OpenAI as appropriate).
 4. Register `memor_retrieve` MCP for that agent.
-5. Set **per-agent** flag: `proxy_agents.<agent> = true` in Memor config so hooks skip inject for that agent only.
+5. Set **per-agent** flag: `proxy_agents.<agent> = true` in Memor config (dashboard/status + future skip once proxy inject is reliable).
 6. Health-check proxy; print dashboard URL for savings.
 
 ### `memor uninstall-proxy --agent …`
 
-Restore backed-up config; clear per-agent skip flag; leave daemon/hooks intact.
+Restore backed-up config; clear per-agent proxy flag; leave daemon/hooks intact.
 
-### Hook skip semantics
+### Hook / proxy inject semantics (current)
 
-- Hook detects agent, reads per-agent proxy flag.
-- If flag true **and** that agent is Claude/Codex → skip inject.
-- Unknown/missing flag → inject (safe default). Old hook + new proxy: may double-inject until upgrade; document “upgrade memor”.
-- Cursor/Copilot flags never set to skip.
+- Hooks always inject when they have a project cwd (Claude/Codex/Cursor/Copilot/Kimi/Goose).
+- Proxy may also inject when `x-memor-project` / similar is present; otherwise project=`unknown` and inject is weak.
+- Double-inject is an accepted interim tradeoff vs zero memory. Do not skip hooks until proxy project scoping is fixed.
 
 ### Fail modes
 

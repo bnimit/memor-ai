@@ -258,13 +258,14 @@ def eval_proxy(fixtures_dir: str = typer.Option(None, help="Path to fixtures dir
     from memor.eval.proxy_benchmark import run_benchmark
     
     if fixtures_dir is None:
-        # Default to shipped fixtures
-        fixtures_dir = Path(__file__).parent / "eval" / "proxy_benchmark_fixtures"
+        # Packaged with memor (see memor/eval/proxy_benchmark_fixtures/).
+        fixtures_dir = Path(__file__).resolve().parent / "eval" / "proxy_benchmark_fixtures"
         if not fixtures_dir.exists():
-            # Try relative to package root
-            import memor
-            pkg_root = Path(memor.__file__).parent.parent
-            fixtures_dir = pkg_root / "tests" / "fixtures" / "proxy_benchmark"
+            # Dev checkout fallback: tests/fixtures/proxy_benchmark
+            fixtures_dir = (
+                Path(__file__).resolve().parent.parent
+                / "tests" / "fixtures" / "proxy_benchmark"
+            )
     else:
         fixtures_dir = Path(fixtures_dir)
     

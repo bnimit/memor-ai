@@ -235,7 +235,7 @@ Expected: FAIL import errors
 
 Rules (must match spec):
 - `logs.py`: keep lines matching `(?i)(error|fatal|traceback|exception|failed|CRITICAL)` and nearby context (±2 lines); keep first/last 5 lines; drop repetitive INFO/DEBUG middle.
-- `json_crush.py`: if top-level array length > 10, keep first 3 + last 2 + any objects whose stringified form matches error-ish keys/values; emit compact JSON plus a one-line note `/* memor: kept N of M items */`.
+- `json_crush.py`: if top-level array length > 10, keep first 3 + last 2 + any objects whose stringified form matches error-ish keys/values; emit compact JSON array ending with `{"_memor_note":"kept N of M items"}` (must remain parseable JSON).
 - `search.py`: keep lines with `error`/`fail` case-insensitive; else top 20 lines by length uniqueness heuristic; cap 80 lines.
 - `detect.py`: try `json.loads` → json; else if ≥3 lines match `^.+:\d+:` → search; else if ≥3 timestamp-like or log-level tokens → log; else text.
 - `__init__.py`: `compress_text` uses `memor.tokencount.count_tokens`; wraps compressor in try/except → passthrough.

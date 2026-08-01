@@ -1,0 +1,33 @@
+{
+  "name": "openai_build_logs",
+  "provider": "openai",
+  "tool_rich": true,
+  "required_substrings": ["ERROR", "Build failed", "npm ERR!"],
+  "body": {
+    "model": "gpt-4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Run the build"
+      },
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_build_1",
+            "type": "function",
+            "function": {
+              "name": "run_command",
+              "arguments": "{\"command\": \"npm run build\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_build_1",
+        "content": "INFO: Starting build process\nINFO: Node version: v18.16.0\nINFO: npm version: 9.5.1\nINFO: Checking dependencies...\nINFO: All dependencies installed\nINFO: Running webpack build\nINFO: Webpack 5.88.2\nINFO: Target: web\nINFO: Mode: production\nINFO: Entry: ./src/index.js\nINFO: Output: dist/\nINFO: Resolving modules...\nINFO: Found 1,234 modules\nINFO: Building module graph...\nINFO: Processing module 1/1234: ./src/index.js\nINFO: Processing module 2/1234: ./src/app.js\nINFO: Processing module 3/1234: ./src/components/Header.js\nINFO: Processing module 4/1234: ./src/components/Footer.js\nINFO: Processing module 5/1234: ./src/components/Sidebar.js\nINFO: Processing module 10/1234: ./src/store/actions.js\nINFO: Processing module 11/1234: ./src/store/reducers.js\nINFO: Processing module 12/1234: ./src/store/middleware.js\nINFO: Processing module 13/1234: ./src/styles/main.css\nINFO: Processing module 14/1234: ./src/styles/theme.css\nINFO: Processing module 15/1234: ./src/styles/reset.css\nINFO: Processing module 16/1234: ./node_modules/react/index.js\nINFO: Processing module 17/1234: ./node_modules/react-dom/index.js\nINFO: Processing module 18/1234: ./node_modules/redux/index.js\nINFO: Processing module 19/1234: ./node_modules/react-redux/index.js\nINFO: Processing module 20/1234: ./node_modules/axios/index.js\nINFO: Optimizing modules...\nINFO: Minifying JavaScript...\nINFO: Optimizing CSS...\nINFO: Generating source maps...\nINFO: Computing chunk hashes...\nINFO: Creating output files...\nINFO: Writing dist/main.js (523 KB)\nINFO: Writing dist/vendor.js (1.2 MB)\nINFO: Writing dist/styles.css (45 KB)\nINFO: Running post-build validation...\nERROR: Build failed: Module not found\nERROR: Can't resolve './config/production' in '/app/src'\nERROR: @ ./src/index.js 12:0-42\nERROR: @ multi ./src/index.js\nnpm ERR! code 1\nnpm ERR! path /app\nnpm ERR! command failed\nnpm ERR! command sh -c webpack --mode production\nERROR: Build process exited with code 1"
+      }
+    ]
+  }
+}
