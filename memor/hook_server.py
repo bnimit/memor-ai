@@ -88,24 +88,10 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
         embedder = _get_embedder()
     agent = detect_agent(req)
 
-    # Skip hook if agent is proxied (claude/codex only, never cursor/copilot)
-    if agent in {"claude", "codex"}:
-        from memor import config
-        if config.is_proxy_agent(agent):
-            msg = "Memor: skipped — proxy path active"
-            if Path(db_path).exists():
-                try:
-                    from memor.store.sqlite_store import SqliteStore
-                    store = SqliteStore(db_path, dim=embedder.dim if embedder else 384)
-                    store.log_recall(
-                        project=project, query_preview=query[:100],
-                        hits_count=0, top_score=0.0,
-                        tokens_injected=0, latency_ms=0.0,
-                        status="skipped_proxy", session_id=session_id,
-                        agent=agent)
-                except Exception:
-                    pass
-            return format_hook_response(agent, f"---\n{msg}")
+    # The hook deliberately still recalls for proxied agents. Proxy-side inject
+    # is best-effort (it cannot see the working directory, so project scoping is
+    # weak); skipping here traded a duplicate-inject risk for zero memory.
+    # Re-enable the skip only once proxy inject is reliable.
 
     if embedder is None:
         msg = _status_message("no_embedder", project, 0, 0, 0.0)
