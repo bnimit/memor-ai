@@ -19,7 +19,7 @@ def _make_app_with_proxy_savings(tmp_path):
         "session_id": "s1",
         "tokens_before": 1000,
         "tokens_after": 800,
-        "content_types": {"text/code": {"before": 1000, "after": 800}},
+        "content_types": {"log": 2},
         "passthrough": 0,
         "upstream_input_tokens": 800,
         "upstream_cache_read_tokens": 0,
@@ -32,7 +32,7 @@ def _make_app_with_proxy_savings(tmp_path):
         "session_id": "s2",
         "tokens_before": 500,
         "tokens_after": 400,
-        "content_types": {"text/markdown": {"before": 500, "after": 400}},
+        "content_types": {"search": 1},
         "passthrough": 0,
         "upstream_input_tokens": 400,
         "upstream_cache_read_tokens": 0,
@@ -45,7 +45,7 @@ def _make_app_with_proxy_savings(tmp_path):
         "session_id": "s3",
         "tokens_before": 2000,
         "tokens_after": 1500,
-        "content_types": {"text/code": {"before": 2000, "after": 1500}},
+        "content_types": {"log": 3},
         "passthrough": 0,
         "upstream_input_tokens": 1500,
         "upstream_cache_read_tokens": 0,
@@ -78,13 +78,61 @@ def test_savings_ledger_endpoint(tmp_path):
     assert isinstance(data["per_day"], list)
     assert len(data["per_day"]) >= 3
     
-    # Check content types breakdown
+    # Check content types breakdown (pipeline shape: {content_type: count})
     assert "content_types" in data
     assert isinstance(data["content_types"], list)
-    code_entry = next((ct for ct in data["content_types"] if ct["content_type"] == "text/code"), None)
-    assert code_entry is not None
-    assert code_entry["tokens_before"] == 3000
-    assert code_entry["tokens_after"] == 2300
+    log_entry = next((ct for ct in data["content_types"] if ct["content_type"] == "log"), None)
+    assert log_entry is not None
+    assert log_entry["count"] == 5
+    search_entry = next((ct for ct in data["content_types"] if ct["content_type"] == "search"), None)
+    assert search_entry is not None
+    assert search_entry["count"] == 1
+    # Sorted by count descending
+    assert data["content_types"][0]["content_type"] == "log"
+
+
+def test_savings_ledger_content_types_from_pipeline(tmp_path):
+    """content_types written by run_pipeline aggregate correctly in the dashboard."""
+    import time
+    from fastapi.testclient import TestClient
+    from memor.proxy.pipeline import run_pipeline
+
+    db_path = str(tmp_path / "pipe.db")
+    s = SqliteStore(db_path, dim=16)
+
+    log = "\n".join(f"INFO line {i}" for i in range(60))
+    body = {
+        "model": "claude-sonnet-4-0",
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "1", "content": log},
+            ]},
+        ],
+    }
+    result = run_pipeline("anthropic", body, s)
+    assert result.passthrough is False
+
+    s.record_proxy_savings({
+        "timestamp": time.time(),
+        "agent": "claude",
+        "provider": "anthropic",
+        "session_id": "s1",
+        "tokens_before": result.tokens_before,
+        "tokens_after": result.tokens_after,
+        "content_types": result.content_types,
+        "passthrough": int(result.passthrough),
+        "upstream_input_tokens": None,
+        "upstream_cache_read_tokens": None,
+        "upstream_output_tokens": None,
+    })
+
+    from memor.dashboard.server import create_app
+    client = TestClient(create_app(db_path))
+    data = client.get("/api/savings-ledger?days=30").json()
+
+    assert data["content_types"] == [{"content_type": "log", "count": 1}]
+    assert data["summary"]["tokens_before"] == result.tokens_before
+    assert data["summary"]["tokens_after"] == result.tokens_after
 
 
 def test_proxy_status_endpoint(tmp_path):
