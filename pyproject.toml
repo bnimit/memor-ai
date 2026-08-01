@@ -47,6 +47,7 @@ Issues = "https://github.com/bnimit/memor-ai/issues"
 [project.scripts]
 memor = "memor.cli:app"
 memor-hook = "memor.hook_cli:main"
+memor-retrieve-mcp = "memor.proxy.mcp_retrieve:main"
 
 [tool.setuptools.packages.find]
 include = ["memor*"]
