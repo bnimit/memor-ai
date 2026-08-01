@@ -8,6 +8,7 @@ CONFIG_PATH = STATE_DIR / "config.json"
 
 _DEFAULTS = {
     "proxy_agents": {},  # {"claude": true, "codex": true}
+    "proxy_upstreams": {},
     "proxy_port": 8421,
     "ccr_ttl_seconds": 7 * 86400,
     "ccr_max_bytes": 2 * 1024**3,
@@ -19,6 +20,7 @@ def load_config() -> dict:
     data = json.loads(CONFIG_PATH.read_text())
     out = {**_DEFAULTS, **data}
     out["proxy_agents"] = {**_DEFAULTS["proxy_agents"], **data.get("proxy_agents", {})}
+    out["proxy_upstreams"] = {**_DEFAULTS["proxy_upstreams"], **data.get("proxy_upstreams", {})}
     return out
 
 def save_config(cfg: dict) -> None:
@@ -49,3 +51,28 @@ def ccr_ttl_seconds() -> int:
 
 def ccr_max_bytes() -> int:
     return int(load_config().get("ccr_max_bytes", 2 * 1024**3))
+
+def get_proxy_upstream(agent: str) -> dict | None:
+    """Return upstream dict or None. Dict keys: protocol, base_url, provider_name."""
+    upstream = load_config().get("proxy_upstreams", {}).get(agent)
+    return dict(upstream) if upstream else None
+
+def set_proxy_upstream(agent: str, *, protocol: str, base_url: str, provider_name: str = "") -> None:
+    """Persist upstream for agent under proxy_upstreams in config.json."""
+    cfg = load_config()
+    upstreams = dict(cfg.get("proxy_upstreams", {}))
+    upstreams[agent] = {
+        "protocol": protocol,
+        "base_url": base_url,
+        "provider_name": provider_name,
+    }
+    cfg["proxy_upstreams"] = upstreams
+    save_config(cfg)
+
+def clear_proxy_upstream(agent: str) -> None:
+    """Remove agent entry from proxy_upstreams."""
+    cfg = load_config()
+    upstreams = dict(cfg.get("proxy_upstreams", {}))
+    upstreams.pop(agent, None)
+    cfg["proxy_upstreams"] = upstreams
+    save_config(cfg)
