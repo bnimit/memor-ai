@@ -14,13 +14,6 @@ def detect_content_type(text: str) -> str:
     
     lines = [line for line in text.split('\n') if line.strip()]
     
-    # Check for search results (≥2 lines matching file:line: pattern with actual file extensions)
-    # Pattern: filename with extension, colon, number, colon
-    search_pattern = re.compile(r'^[^:]+\.\w+:\d+:')
-    search_matches = sum(1 for line in lines if search_pattern.match(line))
-    if search_matches >= 2:
-        return "search"
-    
     # Check for log format (≥3 timestamp-like or log-level tokens)
     log_indicators = 0
     log_pattern = re.compile(r'\b(INFO|DEBUG|WARN(ING)?|ERROR|FATAL|CRITICAL|TRACE)\b', re.IGNORECASE)
@@ -31,5 +24,11 @@ def detect_content_type(text: str) -> str:
             log_indicators += 1
             if log_indicators >= 3:
                 return "log"
+    
+    # Check for search results (≥3 lines matching path:line: pattern)
+    search_pattern = re.compile(r'^.+:\d+:')
+    search_matches = sum(1 for line in lines if search_pattern.match(line))
+    if search_matches >= 3:
+        return "search"
     
     return "text"

@@ -8,4 +8,4 @@ def test_detect_log():
     assert detect_content_type(sample) == "log"
 
 def test_detect_search():
-    assert detect_content_type("path/to/file.py:12: matched line\nother.py:3: hit") == "search"
+    assert detect_content_type("path/to/file.py:12: matched line\nother.py:3: hit\nthird.py:5: another") == "search"
