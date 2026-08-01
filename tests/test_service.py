@@ -1,4 +1,5 @@
 import platform
+import shutil
 from unittest.mock import MagicMock
 
 import memor.service as svc
@@ -128,3 +129,17 @@ def test_uninstall_removes_both(monkeypatch, tmp_path):
 def test_uninstall_nothing_installed(monkeypatch, tmp_path):
     _macos_setup(monkeypatch, tmp_path)
     assert svc.uninstall() == "No services installed."
+
+
+def test_find_memor_bin_prefers_pipx_over_venv(monkeypatch, tmp_path):
+    pipx = tmp_path / ".local" / "bin" / "memor"
+    pipx.parent.mkdir(parents=True)
+    pipx.write_text("#!/bin/sh\n")
+    venv_memor = tmp_path / "project" / ".venv" / "bin" / "memor"
+    venv_memor.parent.mkdir(parents=True)
+    venv_memor.write_text("#!/bin/sh\n")
+
+    monkeypatch.setattr(svc.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(shutil, "which", lambda name: str(venv_memor) if name == "memor" else None)
+
+    assert svc._find_memor_bin() == str(pipx.resolve())
