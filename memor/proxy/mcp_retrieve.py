@@ -1,7 +1,20 @@
 """Minimal MCP server exposing memor_retrieve tool for CCR blob access."""
 import json
+import os
 import sys
-from memor.store.sqlite_store import SqliteStore
+from pathlib import Path
+from memor.store.sqlite_store import SqliteStore, read_dim
+
+
+def default_db_path() -> str:
+    """The database the rest of memor writes to."""
+    return os.environ.get("MEMOR_DB") or str(Path.home() / ".memor" / "memor.db")
+
+
+def open_store(db_path: str | None = None) -> SqliteStore:
+    """Attach to the memor database using the dimension it was built with."""
+    resolved = str(Path(db_path or default_db_path()).expanduser())
+    return SqliteStore(resolved, dim=read_dim(resolved, 384))
 
 
 def retrieve(blob_id: str, store: SqliteStore) -> str:
@@ -72,11 +85,7 @@ def handle_tools_call(name: str, arguments: dict, store: SqliteStore) -> dict:
 
 def main():
     """MCP server main loop using JSON-RPC over stdio."""
-    import os
-    
-    # Get store path from env or default
-    store_path = os.environ.get("MEMOR_DB", os.path.expanduser("~/.memor/store.db"))
-    store = SqliteStore(store_path, dim=384)
+    store = open_store()
     
     # Read JSON-RPC requests from stdin
     for line in sys.stdin:
