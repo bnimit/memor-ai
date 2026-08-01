@@ -7,7 +7,11 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 from memor.store.sqlite_store import SqliteStore
 from memor.proxy.pipeline import run_pipeline
-from memor.proxy.forward import forward_request
+from memor.proxy.forward import (
+    forward_request,
+    sanitize_request_headers,
+    sanitize_response_headers,
+)
 from memor.embed.local import LocalEmbedder
 
 
@@ -62,12 +66,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             project=project, db_path=db_path, embedder=embedder
         )
         
-        # Prepare headers for upstream request
-        # Copy all headers except 'host'
-        upstream_headers = {
-            k: v for k, v in request.headers.items()
-            if k.lower() != "host"
-        }
+        upstream_headers = sanitize_request_headers(request.headers)
         
         # Determine if streaming is requested
         stream = body.get("stream", False) or request.headers.get("accept") == "text/event-stream"
@@ -125,7 +124,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             return Response(
                 content=response_content,
                 status_code=upstream_response.status_code,
-                headers=dict(upstream_response.headers),
+                headers=sanitize_response_headers(upstream_response.headers),
             )
         else:
             # Streaming: use context manager to keep client alive
@@ -169,7 +168,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             return StreamingResponse(
                 stream_with_context(),
                 status_code=resp.status_code,
-                headers=resp.headers,
+                headers=sanitize_response_headers(resp.headers),
             )
     
     @app.post("/v1/chat/completions")
@@ -192,12 +191,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             project=project, db_path=db_path, embedder=embedder
         )
         
-        # Prepare headers for upstream request
-        # Copy all headers except 'host'
-        upstream_headers = {
-            k: v for k, v in request.headers.items()
-            if k.lower() != "host"
-        }
+        upstream_headers = sanitize_request_headers(request.headers)
         
         # Determine if streaming is requested
         stream = body.get("stream", False) or request.headers.get("accept") == "text/event-stream"
@@ -253,7 +247,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             return Response(
                 content=response_content,
                 status_code=upstream_response.status_code,
-                headers=dict(upstream_response.headers),
+                headers=sanitize_response_headers(upstream_response.headers),
             )
         else:
             # Streaming: use context manager to keep client alive
@@ -297,7 +291,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             return StreamingResponse(
                 stream_with_context(),
                 status_code=resp.status_code,
-                headers=resp.headers,
+                headers=sanitize_response_headers(resp.headers),
             )
     
     return app
