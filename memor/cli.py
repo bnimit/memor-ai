@@ -658,6 +658,29 @@ def dashboard(port: int = typer.Option(8420, help="Port to serve on"),
     uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
 
 
+@app.command("proxy")
+def proxy(port: int = typer.Option(None, help="Port to serve on"),
+          db: str = typer.Option(str(Path.home() / ".memor" / "memor.db"))):
+    """Launch the HTTP proxy server for Anthropic API with context compression."""
+    import uvicorn
+    from memor.proxy.server import create_proxy_app, _assert_localhost
+    from memor.config import proxy_port as get_proxy_port
+    
+    # Use config default if not specified
+    if port is None:
+        port = get_proxy_port()
+    
+    db_resolved = _db_path(db)
+    
+    # Verify localhost bind
+    _assert_localhost("127.0.0.1")
+    
+    app_instance = create_proxy_app(db_resolved)
+    typer.echo(f"Memor proxy server: http://127.0.0.1:{port}")
+    typer.echo("Forward Anthropic API requests to: http://127.0.0.1:{port}/v1/messages")
+    uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="info")
+
+
 @app.command("version")
 def version():
     """Print the memor version."""
