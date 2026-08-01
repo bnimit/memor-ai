@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2026-08-01
+
+### Added
+- **Dual-path context layer** — opt-in local proxy (`memor install-proxy`) compresses latest-turn tool payloads, forwards to Anthropic/OpenAI, and writes a savings ledger. Hooks remain the reliable memory path; proxy inject is best-effort. (#39, #40)
+- **Kimi CLI + Goose hooks** — `memor install-hook --agent kimi|goose` with agent-correct response formatting. (#39, #40)
+- **Multi-agent ingest** — daemon + `memor backfill` scan Claude Code, Kimi (`wire.jsonl`), and Goose (`sessions.db`). Model providers are not ingest sources. (#39, #40)
+- **Proxy savings on the dashboard** — System Status metric cards (proxy/hook/daemon/agents + token savings), content-type breakdown, and CCR-aware ledger. (#39, #40)
+- **Offline proxy benchmark** — packaged fixtures + `memor eval-proxy` release gate. (#40)
+- **Optional local GGUF distillation** — `memor-cli[llm]` + `MEMOR_LLM_DISTILL=1` (default off; extractive remains the default). (#39)
+
+### Fixed
+- Proxy review hardening: valid JSON crush trailer (`_memor_note`), DB-recorded embed dim, Accept stream header parsing, proxy port-in-use warning on service install, packaged eval fixtures. (#40)
+
+### Changed
+- Dashboard System Status uses the same metric-card grid as Memory Bank / Agent Breakdown (no more single status blob).
+
 ## [0.9.0] - 2026-06-24
 
 ### Fixed

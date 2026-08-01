@@ -364,51 +364,50 @@
     </div>
   </div>
 
-  <!-- ── Dual-Path Status (always visible) ─────────────── -->
+  <!-- ── System Status ───────────────────────────────────── -->
   <section>
     <div class="section-label"><span class="dot"></span> System Status</div>
-    <div class="chart-card" style="margin-bottom:0;">
-      <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start;">
-        <div style="flex:1;min-width:280px;">
-          <div class="chart-title" style="margin-bottom:12px;">Services</div>
-          <div style="display:flex;flex-direction:column;gap:10px;">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span id="status-proxy-pill" class="badge badge-neutral">Proxy</span>
-              <span style="font-size:12px;color:var(--text-muted);">context compression proxy</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span id="status-hook-pill" class="badge badge-neutral">Hook</span>
-              <span style="font-size:12px;color:var(--text-muted);">recall injection hook</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span id="status-daemon-pill" class="badge badge-neutral">Daemon</span>
-              <span style="font-size:12px;color:var(--text-muted);">background service</span>
-            </div>
-          </div>
-          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border-light);">
-            <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">ACTIVE AGENTS</div>
-            <div id="proxy-agents-list" style="font-size:12px;color:var(--text);"></div>
-          </div>
+    <div class="metric-grid" id="status-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+      <div class="metric-card">
+        <div class="metric-info">
+          <div class="metric-label">Proxy</div>
+          <div class="metric-value" id="status-proxy">&ndash;</div>
+          <div class="metric-sub">context compression</div>
         </div>
-        <div id="savings-display" style="flex:1;min-width:280px;display:none;">
-          <div class="chart-title" style="margin-bottom:6px;">Token Efficiency</div>
-          <div style="font-size:36px;font-weight:800;color:var(--ok);letter-spacing:-1.5px;margin-bottom:4px;" id="savings-pct">&ndash;</div>
-          <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">tokens saved via context compression</div>
-          <div style="display:flex;gap:20px;margin-top:12px;">
-            <div>
-              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Before</div>
-              <div style="font-size:20px;font-weight:700;color:var(--text);" id="savings-before">&ndash;</div>
-            </div>
-            <div style="font-size:24px;color:var(--text-muted);align-self:center;">→</div>
-            <div>
-              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">After</div>
-              <div style="font-size:20px;font-weight:700;color:var(--ok);" id="savings-after">&ndash;</div>
-            </div>
-          </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-info">
+          <div class="metric-label">Hook</div>
+          <div class="metric-value" id="status-hook">&ndash;</div>
+          <div class="metric-sub">recall injection</div>
         </div>
-        <div id="content-types-display" style="flex:1;min-width:200px;display:none;">
-          <div class="chart-title" style="margin-bottom:12px;">Content Types</div>
-          <div id="content-types-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-info">
+          <div class="metric-label">Daemon</div>
+          <div class="metric-value" id="status-daemon">&ndash;</div>
+          <div class="metric-sub">background ingest</div>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-info">
+          <div class="metric-label">Proxied Agents</div>
+          <div class="metric-value" id="status-agents" style="font-size:16px;line-height:1.3;">&ndash;</div>
+          <div class="metric-sub" id="status-agents-sub">proxy-enabled agents</div>
+        </div>
+      </div>
+      <div class="metric-card" id="savings-display" style="display:none;">
+        <div class="metric-info">
+          <div class="metric-label">Token Savings</div>
+          <div class="metric-value" id="savings-pct" style="color:var(--ok);">&ndash;</div>
+          <div class="metric-sub"><span id="savings-before">&ndash;</span> → <span id="savings-after" class="up">&ndash;</span> tokens</div>
+        </div>
+      </div>
+      <div class="metric-card" id="content-types-display" style="display:none;">
+        <div class="metric-info">
+          <div class="metric-label">Compressed</div>
+          <div class="metric-value" id="content-types-total">&ndash;</div>
+          <div class="metric-sub" id="content-types-list">by content type</div>
         </div>
       </div>
     </div>
@@ -1115,57 +1114,59 @@
   function renderSavingsHero(data) {
     var savingsDisplay = document.getElementById('savings-display');
     var contentTypesDisplay = document.getElementById('content-types-display');
-    
+
     if (!data || !data.summary || data.summary.tokens_before === 0) {
       savingsDisplay.style.display = 'none';
       contentTypesDisplay.style.display = 'none';
       return;
     }
-    
+
     savingsDisplay.style.display = '';
     contentTypesDisplay.style.display = '';
-    
+
     var summary = data.summary;
-    document.getElementById('savings-pct').textContent = summary.pct_saved + '% saved';
+    document.getElementById('savings-pct').textContent = summary.pct_saved + '%';
     document.getElementById('savings-before').textContent = fmt(summary.tokens_before);
     document.getElementById('savings-after').textContent = fmt(summary.tokens_after);
 
-    var ctList = document.getElementById('content-types-list');
-    ctList.innerHTML = '';
+    var total = 0;
+    var parts = [];
     if (data.content_types && data.content_types.length > 0) {
-      data.content_types.slice(0, 5).forEach(function(ct) {
-        var item = el('div', {style: 'font-size:11px;'});
-        item.innerHTML =
-          '<div style="color:var(--text-muted);margin-bottom:2px;">' + esc(ct.content_type) + '</div>' +
-          '<div style="font-weight:600;color:var(--ok);">' + fmt(ct.count) + ' compressed</div>';
-        ctList.appendChild(item);
+      data.content_types.forEach(function(ct, i) {
+        total += ct.count || 0;
+        if (i < 3) parts.push(esc(ct.content_type) + ' ' + fmt(ct.count));
       });
-    } else {
-      ctList.innerHTML = '<div style="font-size:11px;color:var(--text-muted);">No data yet</div>';
     }
+    document.getElementById('content-types-total').textContent = total > 0 ? fmt(total) : '—';
+    document.getElementById('content-types-list').textContent =
+      parts.length ? parts.join(' · ') : 'by content type';
+  }
+
+  function setStatusCard(id, on) {
+    var node = document.getElementById(id);
+    node.textContent = on ? 'On' : 'Off';
+    node.style.color = on ? 'var(--ok)' : 'var(--text-muted)';
   }
 
   function renderProxyStatus(data) {
-    var proxyPill = document.getElementById('status-proxy-pill');
-    var hookPill = document.getElementById('status-hook-pill');
-    var daemonPill = document.getElementById('status-daemon-pill');
-    
-    proxyPill.className = 'badge ' + (data.proxy ? 'badge-ok' : 'badge-neutral');
-    proxyPill.textContent = data.proxy ? 'Proxy ✓' : 'Proxy ✗';
-    
-    hookPill.className = 'badge ' + (data.hook ? 'badge-ok' : 'badge-neutral');
-    hookPill.textContent = data.hook ? 'Hook ✓' : 'Hook ✗';
-    
-    daemonPill.className = 'badge ' + (data.daemon ? 'badge-ok' : 'badge-neutral');
-    daemonPill.textContent = data.daemon ? 'Daemon ✓' : 'Daemon ✗';
+    setStatusCard('status-proxy', !!data.proxy);
+    setStatusCard('status-hook', !!data.hook);
+    setStatusCard('status-daemon', !!data.daemon);
 
-    var agentsList = document.getElementById('proxy-agents-list');
+    var agentsEl = document.getElementById('status-agents');
+    var agentsSub = document.getElementById('status-agents-sub');
     var agents = data.proxy_agents || {};
     var activeAgents = Object.keys(agents).filter(function(a) { return agents[a]; });
     if (activeAgents.length > 0) {
-      agentsList.textContent = activeAgents.join(', ');
+      agentsEl.textContent = activeAgents.map(function(a) {
+        return a.charAt(0).toUpperCase() + a.slice(1);
+      }).join(', ');
+      agentsEl.style.color = 'var(--text)';
+      agentsSub.textContent = activeAgents.length + ' proxy-enabled';
     } else {
-      agentsList.innerHTML = '<span style="color:var(--text-muted);">None configured</span>';
+      agentsEl.textContent = 'None';
+      agentsEl.style.color = 'var(--text-muted)';
+      agentsSub.textContent = 'proxy-enabled agents';
     }
   }
 

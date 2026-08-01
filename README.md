@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-287%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-445%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -66,21 +66,27 @@ To revert: `memor uninstall-proxy --agent claude`
 Memor runs two complementary local paths — combine them or use either alone:
 
 ```
-                    ┌─────────────────────────────────────┐
-                    │     Memor local service             │
-                    │  daemon + hook + proxy + dashboard  │
-                    └──────────────┬──────────────────────┘
-                                   │
-           ┌───────────────────────┼───────────────────────┐
-           ▼                       ▼                       ▼
-    Path A: Hooks            Path B: Proxy            Shared store
-    (all agents)             (Claude Code, Codex)     SQLite + vec
-           │                       │                  + savings ledger
-           │ memory inject         │ compress + forward + CCR originals
-           │                       │ + memory once
-           ▼                       ▼
-    Claude / Cursor /         Anthropic / OpenAI
-    Codex / Copilot           (your existing providers)
+                         ┌──────────────────────────────────────┐
+                         │        Memor (localhost)             │
+                         │  daemon · hooks · proxy · dashboard  │
+                         └──────────────────┬───────────────────┘
+                                            │
+              ┌─────────────────────────────┼─────────────────────────────┐
+              ▼                             ▼                             ▼
+       Path A: Hooks                 Path B: Proxy                 Shared store
+       (memory, all agents)          (savings, opt-in)             SQLite + vec
+              │                             │                      + FTS + ledger
+              │ recall inject               │ compress latest-turn
+              │ always on after             │ tool payloads; forward
+              │ install-hook                │ to provider; CCR originals
+              ▼                             ▼
+       Claude · Cursor · Codex         Anthropic / OpenAI
+       Copilot · Kimi · Goose          (your existing credentials)
+              ▲
+              │
+       Daemon ingests sessions ── Claude ~/.claude/projects/
+                                  Kimi   ~/.kimi/sessions/
+                                  Goose  ~/.local/share/goose/...
 ```
 
 | Path | Purpose | Default |
@@ -88,14 +94,15 @@ Memor runs two complementary local paths — combine them or use either alone:
 | **Hooks** | Shared memory recall across all agents | On after `memor install-hook` |
 | **Proxy** | Compress tool payloads; ledger token savings | Opt-in via `memor install-proxy` |
 
-**Memory is fire-and-forget** — install hooks once, every prompt gets relevant context. **Proxy is opt-in** — only for Claude Code and Codex, only when you want measurable token savings. The proxy forwards to your existing Anthropic/OpenAI credentials; Memor does not require its own API key.
+**Memory is fire-and-forget** — install hooks once, every prompt gets relevant context. **Proxy is opt-in** — only for Claude Code and Codex, only when you want measurable token savings. Hooks stay in charge of memory even when the proxy is active (proxy-side inject is best-effort). The proxy forwards your existing Anthropic/OpenAI credentials; Memor does not require its own API key.
 
 ---
 
 ## How It Works (hooks path)
 
 ```
-  You type a prompt (Claude Code / Codex / Copilot)
+  You type a prompt
+  (Claude · Cursor · Codex · Copilot · Kimi · Goose)
       |
       v
   Hook fires — auto-detects which agent
@@ -225,10 +232,9 @@ memor dashboard
 ```
 
 Dark fintech-inspired UI showing:
-- **Savings hero** — tokens before vs after, % saved (primary KPI when proxy is active)
-- **Dual-path status** — proxy, hook, and daemon health pills
-- **Hero metrics** — total memories, recall count, avg latency, coverage — with sparkline bars
-- **Agent breakdown** — per-agent recall stats (Claude, Cursor, Codex, Copilot) with hit rates
+- **System Status** — metric cards for proxy / hook / daemon / proxied agents, plus token savings and compressed content types when the ledger has data
+- **Memory Bank** — session chunks, memories, projects, globals, total recalls — with sparkline bars
+- **Agent breakdown** — per-agent recall stats (Claude, Cursor, Codex, Copilot, Kimi, Goose) with hit rates
 - **Daily recall activity** — stacked bar chart of hits vs misses over time
 - **Session efficiency** — real token savings measured from API usage data (avg tokens/turn with vs without recall)
 - **Per-project breakdown** — artifact counts, token totals, last activity
@@ -305,44 +311,41 @@ memor bench-embed --project <name>   Compare embedding models
 
 ```
 memor/
-+-- types.py              Core dataclasses: Artifact, Scope, Hit, RetrievalTrace
-+-- interfaces.py         Protocols: Embedder, LLM, MemoryStore
-+-- cli.py                Typer CLI entry point
-+-- daemon.py             Auto-ingest + auto-distill + compaction watcher
-+-- project.py            Git-root project resolver (filesystem-aware)
-+-- recall.py             Shared recall core (used by hook + skill)
-+-- redact.py             Secret detection and redaction at ingest
-+-- feedback.py           Feedback analyzer (positive usage + negative signals)
-+-- global_memories.py    Cross-project promotion to _global scope
++-- types.py / interfaces.py   Core types + Embedder/LLM/MemoryStore protocols
++-- cli.py                     Typer CLI (hooks, proxy, daemon, eval, service)
++-- daemon.py                  Multi-agent ingest + distill + compaction
++-- recall.py                  Shared recall core (hook + skill + proxy inject)
++-- service.py                 launchd/systemd: daemon + dashboard (+ proxy)
++-- redact.py / feedback.py    Secret redaction; positive/negative quality loop
++-- global_memories.py         Cross-project promotion to _global scope
 |
-+-- retrieve/
-|   +-- retriever.py      Hybrid retrieval (dense + BM25, RRF) + relevance gate + scoring
++-- ingest/
+|   +-- claude_code.py         ~/.claude/projects/ JSONL
+|   +-- kimi.py                ~/.kimi/sessions/ wire.jsonl
+|   +-- goose.py               Goose sessions.db
+|   +-- sources.py             Registry used by daemon + backfill
 |
-+-- store/
-|   +-- sqlite_store.py   SQLite + sqlite-vec + FTS5 (WAL mode, dimension safety)
++-- hook_cli.py / hook_server.py
+|                              Hook entry + agent detect/format
+|                              (Claude, Cursor, Codex, Copilot, Kimi, Goose)
 |
-+-- embed/
-|   +-- local.py          model2vec (potion-base-8M, 256-dim, ~60MB)
-|   +-- api.py            OpenAI-compatible embedding API (optional)
-|   +-- fake.py           Deterministic SHA-256 embedder (tests)
++-- proxy/                     Opt-in token-savings path (localhost:8421)
+|   +-- server.py / pipeline.py  Compress → forward → ledger
+|   +-- install.py               Wire agent config + backups
+|   +-- mcp_retrieve.py          memor_retrieve MCP tool
 |
-+-- service.py            Background service management (launchd/systemd)
-+-- dashboard/
-|   +-- server.py         FastAPI dashboard backend
-|   +-- static/index.html Self-contained dashboard (no CDN deps)
++-- compress/                  Log / search / JSON crushers for tool payloads
 |
-+-- distill/
-|   +-- extractive.py     TF-IDF + clustering + auto-classification
-|   +-- distiller.py      Extractive + optional LLM abstractive
++-- retrieve/retriever.py      Hybrid dense + BM25 (RRF) + relevance gate
++-- store/sqlite_store.py      SQLite + sqlite-vec + FTS5 + proxy_savings
 |
-+-- eval/
-    +-- runner.py          4-baseline eval runner
-    +-- judge.py           LLM-as-judge evaluation
-    +-- embed_benchmark.py Embedding model comparison
++-- dashboard/                 FastAPI + static UI (status, savings, agents)
++-- distill/                   Extractive default; optional local GGUF LLM
++-- embed/                     model2vec local (default) + API/fake
++-- eval/                      Counterfactual, proxy benchmark fixtures, baselines
++-- llm/                       Anthropic / OpenAI-compat / llama.cpp backends
 
-memor/hook_cli.py          Hook entry point — auto-detects Claude/Cursor/Codex/Copilot
-memor/hook_server.py       Hook server with agent detection + response formatting
-skill/recall.py            Standalone recall script
+skill/recall.py                Standalone recall script
 ```
 
 ---
@@ -394,7 +397,7 @@ cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest  # 304 tests
+pytest  # 445 tests
 ```
 
 ---
