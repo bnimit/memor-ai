@@ -748,7 +748,8 @@ def proxy(port: int = typer.Option(None, help="Port to serve on"),
 
 
 @app.command("install-proxy")
-def install_proxy(agent: str = typer.Option(..., help="Agent: claude or codex")):
+def install_proxy(agent: str = typer.Option(
+        ..., help="Agent: claude, or codex (experimental — Chat Completions API only)")):
     """Install proxy for an agent and ensure the proxy service is running."""
     from memor.proxy.install import install_claude_proxy, install_codex_proxy
     from memor.config import proxy_port as get_proxy_port
@@ -772,6 +773,11 @@ def install_proxy(agent: str = typer.Option(..., help="Agent: claude or codex"))
             typer.echo(f"\nInstalled Codex proxy:")
             typer.echo(f"  Updated ~/.codex/config.toml")
             typer.echo(f"  Set openai_base_url=http://127.0.0.1:{port}/v1")
+            typer.echo()
+            typer.echo("  Note: Codex proxy support is experimental. Memor compresses the")
+            typer.echo("  Chat Completions API (/v1/chat/completions). Codex versions that use")
+            typer.echo("  the Responses API (/v1/responses) will bypass the proxy and report")
+            typer.echo("  no savings. Memory via hooks is unaffected.")
         
         typer.echo(f"  Backup saved to ~/.memor/proxy-backup-{agent}.*")
         typer.echo()

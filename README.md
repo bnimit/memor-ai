@@ -53,9 +53,11 @@ Memory works out of the box via hooks. To also compress tool payloads and track 
 memor install-proxy --agent claude   # or: codex
 ```
 
-This points your agent at a local proxy on `127.0.0.1:8421`, compresses latest-turn tool content before it reaches the provider, and logs savings to the dashboard. Hooks skip memory inject for that agent (the proxy injects once instead). Cursor and Copilot always use hooks only.
+This points your agent at a local proxy on `127.0.0.1:8421`, compresses latest-turn tool content before it reaches the provider, and logs savings to the dashboard. Hooks keep running for that agent, so memory works exactly as before. Cursor and Copilot always use hooks only.
 
 To revert: `memor uninstall-proxy --agent claude`
+
+> **Codex support is experimental.** The proxy implements the OpenAI Chat Completions API (`/v1/chat/completions`). Codex CLI may instead use the Responses API (`/v1/responses`) depending on version and model, in which case requests will not route through the proxy and you will see no savings. Memory via hooks is unaffected. Track it in [#26](https://github.com/bnimit/memor-ai/issues/26).
 
 ---
 
@@ -122,10 +124,10 @@ Memor runs two complementary local paths — combine them or use either alone:
 
 | Agent | Memory (hooks) | Proxy / savings |
 |-------|----------------|-----------------|
-| **Claude Code** | Yes (skipped when proxied) | Yes — `memor install-proxy --agent claude` |
-| **Codex CLI** | Yes (skipped when proxied) | Yes — `memor install-proxy --agent codex` |
-| **Cursor** | Yes (never skipped) | No — hooks only |
-| **Copilot CLI** | Yes (never skipped) | No — hooks only |
+| **Claude Code** | Yes | Yes — `memor install-proxy --agent claude` |
+| **Codex CLI** | Yes | Experimental — `memor install-proxy --agent codex` (Chat Completions only) |
+| **Cursor** | Yes | No — hooks only |
+| **Copilot CLI** | Yes | No — hooks only |
 
 ### Hook install details
 
@@ -136,7 +138,7 @@ Memor runs two complementary local paths — combine them or use either alone:
 | **Copilot CLI** | `userPromptSubmitted` + `additionalContext` | `~/.copilot/hooks/memor.json` | `memor install-hook --agent copilot` |
 | **Cursor** | `beforeSubmitPrompt` + `additionalContext` | `~/.claude/settings.json` (loaded as Claude user hooks) | automatic — covered by the Claude install |
 
-A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. When an agent is on the proxy path, hooks skip memory inject for that agent only (proxy injects once instead). The dashboard tracks recalls per agent so you can see usage across all your environments.
+A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. Hooks stay in charge of memory inject even when the proxy is active; the proxy's own inject is best-effort, because it cannot see your working directory to scope the project. The dashboard tracks recalls per agent so you can see usage across all your environments.
 
 > **Note:** Cloud-hosted agents (Codex cloud, Copilot cloud agent) run in remote sandboxes and cannot reach local hooks. MCP server support for sandboxed agents is planned ([#26](https://github.com/bnimit/memor-ai/issues/26)).
 
@@ -259,9 +261,9 @@ memor help                           Print the full manual
 memor install-hook                   Install hook + download model (interactive agent picker)
   --agent claude|codex|copilot       Choose agent directly
 memor install-proxy                  Install local proxy for token savings
-  --agent claude|codex               Claude Code or Codex CLI only
+  --agent claude|codex               Claude Code, or Codex CLI (experimental)
 memor uninstall-proxy                Restore original agent config
-  --agent claude|codex               Remove proxy and re-enable hook inject
+  --agent claude|codex               Point the agent back at its provider
 memor proxy                          Run proxy server in foreground (localhost:8421)
 memor daemon                         Auto-ingest + distill (background watcher)
 memor dashboard                      Web dashboard on localhost:8420
@@ -340,15 +342,20 @@ skill/recall.py            Standalone recall script
 
 ## Security
 
-**Nothing leaves your machine.** In the default configuration:
+**Nothing leaves your machine.** In the default configuration (hooks only, no proxy):
 
-- **No telemetry, no analytics, no phone-home.** Zero outbound network calls.
+- **No telemetry, no analytics, no phone-home.** Memor itself makes zero outbound network calls.
 - **Embeddings run locally** via model2vec static token embeddings — no inference runtime, no GPU (one-time model download from HuggingFace — no user data sent).
 - **Hook transport is a Unix socket** (`~/.memor/hook.sock`), not a network port.
 - **Dashboard binds localhost only** (`127.0.0.1:8420`).
-- **Proxy binds localhost only** (`127.0.0.1:8421`); provider API keys are forwarded but never stored.
 
-The only optional network paths are the LLM-based abstractive distiller (requires explicitly setting `ANTHROPIC_API_KEY`) and the API embedding backend — both off by default.
+**With the proxy enabled, Memor is on the wire.** `memor install-proxy` puts Memor in the path of every request your agent makes to Anthropic or OpenAI:
+
+- **The proxy binds localhost only** (`127.0.0.1:8421`) and accepts no remote connections.
+- **It makes the outbound call your agent would have made anyway**, to the same provider endpoint, carrying your existing provider API key. Keys are forwarded, never stored or logged.
+- **It rewrites request bodies** — compressing latest-turn tool payloads — so what the provider receives is not byte-identical to what your agent sent. Originals stay local in the CCR store.
+
+The only other optional network paths are the LLM-based abstractive distiller (requires explicitly setting `ANTHROPIC_API_KEY`) and the API embedding backend — both off by default.
 
 ### Secret redaction
 
