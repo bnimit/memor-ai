@@ -1128,7 +1128,7 @@
         var item = el('div', {style: 'font-size:11px;'});
         item.innerHTML =
           '<div style="color:var(--text-muted);margin-bottom:2px;">' + esc(ct.content_type) + '</div>' +
-          '<div style="font-weight:600;color:var(--ok);">' + ct.pct_saved + '% saved</div>';
+          '<div style="font-weight:600;color:var(--ok);">' + fmt(ct.count) + ' compressed</div>';
         ctList.appendChild(item);
       });
     } else {

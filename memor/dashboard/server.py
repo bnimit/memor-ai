@@ -236,24 +236,25 @@ def create_app(db_path: str | None = None) -> FastAPI:
             WHERE timestamp >= ?
         """, (cutoff,)).fetchall()
         
-        ct_totals = {}
+        # The proxy pipeline writes {content_type: payloads_compressed}; the
+        # ledger has no per-type token split, so we report compressed counts.
+        ct_totals: dict[str, int] = {}
         for row in content_type_rows:
-            if row["content_types"]:
+            if not row["content_types"]:
+                continue
+            try:
                 cts = json.loads(row["content_types"])
-                for ct, data in cts.items():
-                    if ct not in ct_totals:
-                        ct_totals[ct] = {"before": 0, "after": 0}
-                    ct_totals[ct]["before"] += data.get("before", 0)
-                    ct_totals[ct]["after"] += data.get("after", 0)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(cts, dict):
+                continue
+            for ct, count in cts.items():
+                if isinstance(count, (int, float)):
+                    ct_totals[ct] = ct_totals.get(ct, 0) + int(count)
         
         content_types = [
-            {
-                "content_type": ct,
-                "tokens_before": data["before"],
-                "tokens_after": data["after"],
-                "pct_saved": round((1 - data["after"] / data["before"]) * 100, 1) if data["before"] > 0 else 0
-            }
-            for ct, data in ct_totals.items()
+            {"content_type": ct, "count": count}
+            for ct, count in sorted(ct_totals.items(), key=lambda kv: -kv[1])
         ]
         
         return {
