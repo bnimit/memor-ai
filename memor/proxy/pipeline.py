@@ -5,6 +5,24 @@ import time
 from memor.compress import compress_text
 from memor.proxy.adapters import extract_latest_tool_payloads, apply_payload_text
 from memor.store.sqlite_store import SqliteStore
+from memor.tokencount import count_tokens
+
+# CCR eviction is cheap but not free; amortise it across requests.
+_EVICT_INTERVAL_SECONDS = 300.0
+_last_evict_at = 0.0
+
+def _maybe_evict(store: SqliteStore) -> None:
+    """Run CCR eviction at most once per _EVICT_INTERVAL_SECONDS. Best effort."""
+    global _last_evict_at
+    now = time.time()
+    if now - _last_evict_at < _EVICT_INTERVAL_SECONDS:
+        return
+    _last_evict_at = now
+    try:
+        from memor.config import ccr_ttl_seconds, ccr_max_bytes
+        store.ccr_evict(ccr_ttl_seconds(), ccr_max_bytes())
+    except Exception:
+        pass
 
 @dataclass
 class PipelineResult:
@@ -23,7 +41,13 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
     unchanged for cache safety. On compression failure per payload, leaves
     that payload unchanged. Sets passthrough=True only if all payloads failed
     or none were compressed.
+
+    Token counts include the CCR marker line, and a payload is left verbatim
+    (no marker, no CCR blob) whenever the marked-up result would not be smaller
+    than the original.
     """
+    _maybe_evict(store)
+    
     # Extract latest tool payloads
     payloads = extract_latest_tool_payloads(provider, body)
     
@@ -51,28 +75,30 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
         
         total_tokens_before += result.tokens_before
         
-        if result.passthrough:
-            # Compression failed, leave unchanged
+        # Compression failed or was a no-op: nothing to reference, nothing to save.
+        if result.passthrough or result.text == payload.text:
             compressed_payloads.append((payload.path, payload.text, None))
             total_tokens_after += result.tokens_before
-        else:
-            # Compression succeeded
-            success_count += 1
-            
-            # Generate CCR ID and store original
-            ccr_id = uuid4().hex
-            store.ccr_put(ccr_id, payload.text, result.content_type, time.time())
-            ccr_ids.append(ccr_id)
-            
-            # Prepend marker line to compressed text
-            marked_text = f"[memor:ccr:{ccr_id}]\n{result.text}"
-            compressed_payloads.append((payload.path, marked_text, result.content_type))
-            
-            total_tokens_after += result.tokens_after
-            
-            # Track content types
-            ct = result.content_type
-            content_type_counts[ct] = content_type_counts.get(ct, 0) + 1
+            continue
+        
+        ccr_id = uuid4().hex
+        marked_text = f"[memor:ccr:{ccr_id}]\n{result.text}"
+        marked_tokens = count_tokens(marked_text)
+        
+        # The marker plus retrieval affordance has to pay for itself.
+        if marked_tokens >= result.tokens_before:
+            compressed_payloads.append((payload.path, payload.text, None))
+            total_tokens_after += result.tokens_before
+            continue
+        
+        success_count += 1
+        store.ccr_put(ccr_id, payload.text, result.content_type, time.time())
+        ccr_ids.append(ccr_id)
+        compressed_payloads.append((payload.path, marked_text, result.content_type))
+        total_tokens_after += marked_tokens
+        
+        ct = result.content_type
+        content_type_counts[ct] = content_type_counts.get(ct, 0) + 1
     
     # Apply compressed payloads to body
     updated_body = body
