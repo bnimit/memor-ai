@@ -5,7 +5,7 @@
 | | | | | |  __/ | | | | | (_) | | |_____| (_| | |
 |_| |_| |_|\___|_| |_| |_|\___/|_|        \__,_|_|
 
-  Measured memory for coding agents.
+  Measured memory and opt-in token savings for coding agents.
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -13,9 +13,9 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
-**Automatic background memory for Claude Code, Cursor, Codex, and Copilot.** Fire and forget — no API keys needed.
+**Automatic background memory for Claude Code, Cursor, Codex, and Copilot — plus optional local token savings for Claude Code and Codex.** Memory is fire-and-forget; proxy is opt-in. No Memor API key required.
 
-Memor watches your coding sessions, extracts decisions and patterns, and recalls relevant context on every prompt. Works with Claude Code, Cursor, OpenAI Codex CLI, and GitHub Copilot CLI. Zero configuration. One install. Your agent remembers everything.
+Memor watches your coding sessions, extracts decisions and patterns, and recalls relevant context on every prompt. Optionally, a local proxy compresses tool payloads before they reach the provider and tracks measurable token savings on the dashboard. Works with Claude Code, Cursor, OpenAI Codex CLI, and GitHub Copilot CLI.
 
 ---
 
@@ -45,9 +45,52 @@ memor dashboard
 
 > **Alternative install:** `pip install memor-cli` works too — just make sure `~/.local/bin` is on your PATH so the `memor` command is available.
 
+### Optional: Token savings proxy
+
+Memory works out of the box via hooks. To also compress tool payloads and track token savings (Claude Code or Codex only):
+
+```bash
+memor install-proxy --agent claude   # or: codex
+```
+
+This points your agent at a local proxy on `127.0.0.1:8421`, compresses latest-turn tool content before it reaches the provider, and logs savings to the dashboard. Hooks skip memory inject for that agent (the proxy injects once instead). Cursor and Copilot always use hooks only.
+
+To revert: `memor uninstall-proxy --agent claude`
+
 ---
 
-## How It Works
+## Dual-Path Architecture
+
+Memor runs two complementary local paths — combine them or use either alone:
+
+```
+                    ┌─────────────────────────────────────┐
+                    │     Memor local service             │
+                    │  daemon + hook + proxy + dashboard  │
+                    └──────────────┬──────────────────────┘
+                                   │
+           ┌───────────────────────┼───────────────────────┐
+           ▼                       ▼                       ▼
+    Path A: Hooks            Path B: Proxy            Shared store
+    (all agents)             (Claude Code, Codex)     SQLite + vec
+           │                       │                  + savings ledger
+           │ memory inject         │ compress + forward + CCR originals
+           │                       │ + memory once
+           ▼                       ▼
+    Claude / Cursor /         Anthropic / OpenAI
+    Codex / Copilot           (your existing providers)
+```
+
+| Path | Purpose | Default |
+|------|---------|---------|
+| **Hooks** | Shared memory recall across all agents | On after `memor install-hook` |
+| **Proxy** | Compress tool payloads; ledger token savings | Opt-in via `memor install-proxy` |
+
+**Memory is fire-and-forget** — install hooks once, every prompt gets relevant context. **Proxy is opt-in** — only for Claude Code and Codex, only when you want measurable token savings. The proxy forwards to your existing Anthropic/OpenAI credentials; Memor does not require its own API key.
+
+---
+
+## How It Works (hooks path)
 
 ```
   You type a prompt (Claude Code / Codex / Copilot)
@@ -75,7 +118,16 @@ memor dashboard
   architecture choices — without you re-explaining
 ```
 
-### Supported Agents
+### Agent matrix
+
+| Agent | Memory (hooks) | Proxy / savings |
+|-------|----------------|-----------------|
+| **Claude Code** | Yes (skipped when proxied) | Yes — `memor install-proxy --agent claude` |
+| **Codex CLI** | Yes (skipped when proxied) | Yes — `memor install-proxy --agent codex` |
+| **Cursor** | Yes (never skipped) | No — hooks only |
+| **Copilot CLI** | Yes (never skipped) | No — hooks only |
+
+### Hook install details
 
 | Agent | Hook protocol | Config location | Install |
 |---|---|---|---|
@@ -84,16 +136,17 @@ memor dashboard
 | **Copilot CLI** | `userPromptSubmitted` + `additionalContext` | `~/.copilot/hooks/memor.json` | `memor install-hook --agent copilot` |
 | **Cursor** | `beforeSubmitPrompt` + `additionalContext` | `~/.claude/settings.json` (loaded as Claude user hooks) | automatic — covered by the Claude install |
 
-A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. The dashboard tracks recalls per agent so you can see usage across all your environments.
+A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. When an agent is on the proxy path, hooks skip memory inject for that agent only (proxy injects once instead). The dashboard tracks recalls per agent so you can see usage across all your environments.
 
 > **Note:** Cloud-hosted agents (Codex cloud, Copilot cloud agent) run in remote sandboxes and cannot reach local hooks. MCP server support for sandboxed agents is planned ([#26](https://github.com/bnimit/memor-ai/issues/26)).
 
-**Two background processes:**
+**Background processes** (supervised by `memor service install`):
 
 1. **Daemon** — polls `~/.claude/projects/` for transcripts, embeds chunks, runs distillation, analyzes feedback (positive and negative), promotes cross-project patterns to global scope, compacts duplicates, auto-compacts the vector index when bloated, tracks session-level token usage. All local.
 2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms. Works across Claude Code, Cursor, Codex, and Copilot.
+3. **Proxy** (optional) — intercepts Anthropic/OpenAI API calls on `127.0.0.1:8421`, compresses latest-turn tool payloads, forwards to your provider, and writes a savings ledger. Started automatically by `memor install-proxy`.
 
-**No API keys required.** Embeddings run locally via [model2vec](https://github.com/MinishLab/model2vec) (potion-base-8M, 256-dim). Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
+**No Memor API key required.** Embeddings and compressors run locally. The proxy forwards your existing Anthropic/OpenAI credentials — keys are never stored. Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
 
 ---
 
@@ -164,6 +217,8 @@ memor dashboard
 ```
 
 Dark fintech-inspired UI showing:
+- **Savings hero** — tokens before vs after, % saved (primary KPI when proxy is active)
+- **Dual-path status** — proxy, hook, and daemon health pills
 - **Hero metrics** — total memories, recall count, avg latency, coverage — with sparkline bars
 - **Agent breakdown** — per-agent recall stats (Claude, Cursor, Codex, Copilot) with hit rates
 - **Daily recall activity** — stacked bar chart of hits vs misses over time
@@ -203,6 +258,11 @@ automatically.
 memor help                           Print the full manual
 memor install-hook                   Install hook + download model (interactive agent picker)
   --agent claude|codex|copilot       Choose agent directly
+memor install-proxy                  Install local proxy for token savings
+  --agent claude|codex               Claude Code or Codex CLI only
+memor uninstall-proxy                Restore original agent config
+  --agent claude|codex               Remove proxy and re-enable hook inject
+memor proxy                          Run proxy server in foreground (localhost:8421)
 memor daemon                         Auto-ingest + distill (background watcher)
 memor dashboard                      Web dashboard on localhost:8420
 memor version                        Print installed version
@@ -285,7 +345,8 @@ skill/recall.py            Standalone recall script
 - **No telemetry, no analytics, no phone-home.** Zero outbound network calls.
 - **Embeddings run locally** via model2vec static token embeddings — no inference runtime, no GPU (one-time model download from HuggingFace — no user data sent).
 - **Hook transport is a Unix socket** (`~/.memor/hook.sock`), not a network port.
-- **Dashboard binds localhost only.**
+- **Dashboard binds localhost only** (`127.0.0.1:8420`).
+- **Proxy binds localhost only** (`127.0.0.1:8421`); provider API keys are forwarded but never stored.
 
 The only optional network paths are the LLM-based abstractive distiller (requires explicitly setting `ANTHROPIC_API_KEY`) and the API embedding backend — both off by default.
 
