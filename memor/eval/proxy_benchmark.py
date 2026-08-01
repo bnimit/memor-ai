@@ -17,6 +17,7 @@ class BenchmarkReport:
     """Result of running the proxy benchmark."""
     tool_rich_mean_pct_saved: float
     tasks: list[dict]
+    gate_passed: bool
 
 def run_benchmark(fixtures_dir: Path, db_path: str | None = None) -> BenchmarkReport:
     """Run compression benchmark on all fixtures in the directory.
@@ -77,9 +78,23 @@ def run_benchmark(fixtures_dir: Path, db_path: str | None = None) -> BenchmarkRe
     else:
         tool_rich_mean = 0.0
     
+    # Gate criteria:
+    # (a) mean tool-rich pct ≥15%
+    # (b) ≥3 tool-rich fixtures with pct_saved > 0
+    # (c) all fixtures passed substring checks
+    tool_rich_with_savings = [t for t in tool_rich_tasks if t["pct_saved"] > 0]
+    all_passed = all(t["passed"] for t in tasks)
+    
+    gate_passed = (
+        tool_rich_mean >= 15.0
+        and len(tool_rich_with_savings) >= 3
+        and all_passed
+    )
+    
     return BenchmarkReport(
         tool_rich_mean_pct_saved=tool_rich_mean,
-        tasks=tasks
+        tasks=tasks,
+        gate_passed=gate_passed
     )
 
 def _check_required_substrings(body: dict, provider: str, required: list[str]) -> bool:

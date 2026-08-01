@@ -302,20 +302,36 @@ def eval_proxy(fixtures_dir: str = typer.Option(None, help="Path to fixtures dir
     typer.echo("=" * 80)
     typer.echo(f"Tool-rich mean savings: {report.tool_rich_mean_pct_saved:.1f}%")
     
-    # Check release gate
-    gate_passed = report.tool_rich_mean_pct_saved >= 15.0
-    all_passed = all(t["passed"] for t in report.tasks)
+    # Check release gate (updated criteria)
+    tool_rich_tasks = [t for t in report.tasks if t["tool_rich"]]
+    tool_rich_with_savings = [t for t in tool_rich_tasks if t["pct_saved"] > 0]
     
-    if gate_passed and all_passed:
-        typer.echo("✓ RELEASE GATE PASSED (≥15% mean savings on tool-rich fixtures)")
+    typer.echo()
+    if report.gate_passed:
+        typer.echo("✓ RELEASE GATE PASSED")
+        typer.echo(f"  ✓ Mean tool-rich savings: {report.tool_rich_mean_pct_saved:.1f}% (≥15%)")
+        typer.echo(f"  ✓ Tool-rich with savings: {len(tool_rich_with_savings)}/{len(tool_rich_tasks)} (≥3)")
+        typer.echo(f"  ✓ All fixtures passed substring checks")
         raise typer.Exit(0)
     else:
         typer.echo("✗ RELEASE GATE FAILED", err=True)
-        if not gate_passed:
-            typer.echo(f"  Mean savings {report.tool_rich_mean_pct_saved:.1f}% < 15%", err=True)
+        if report.tool_rich_mean_pct_saved < 15.0:
+            typer.echo(f"  ✗ Mean savings {report.tool_rich_mean_pct_saved:.1f}% < 15%", err=True)
+        else:
+            typer.echo(f"  ✓ Mean savings {report.tool_rich_mean_pct_saved:.1f}% ≥ 15%", err=True)
+        
+        if len(tool_rich_with_savings) < 3:
+            typer.echo(f"  ✗ Tool-rich with savings: {len(tool_rich_with_savings)}/{len(tool_rich_tasks)} (need ≥3)", err=True)
+        else:
+            typer.echo(f"  ✓ Tool-rich with savings: {len(tool_rich_with_savings)}/{len(tool_rich_tasks)}", err=True)
+        
+        all_passed = all(t["passed"] for t in report.tasks)
         if not all_passed:
             failed = [t["name"] for t in report.tasks if not t["passed"]]
-            typer.echo(f"  Failed fixtures: {', '.join(failed)}", err=True)
+            typer.echo(f"  ✗ Failed fixtures: {', '.join(failed)}", err=True)
+        else:
+            typer.echo(f"  ✓ All fixtures passed substring checks", err=True)
+        
         raise typer.Exit(1)
 
 
