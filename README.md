@@ -55,6 +55,8 @@ memor install-proxy --agent claude   # or: codex
 
 This points your agent at a local proxy on `127.0.0.1:8421`, compresses latest-turn tool content before it reaches the provider, and logs savings to the dashboard. Hooks keep running for that agent, so memory works exactly as before. Cursor and Copilot always use hooks only.
 
+`memor service restart` (e.g. after `pipx upgrade`) keeps the proxy running when it was opted in. If the proxy fails its health check on install, Memor restores your agent’s original API URLs so calls are not left pointing at a dead localhost port. `memor service stop` warns while agents still point at the proxy; `memor service uninstall` restores direct API configs for proxy-enabled agents.
+
 To revert: `memor uninstall-proxy --agent claude`
 
 > **Codex support is experimental.** The proxy implements the OpenAI Chat Completions API (`/v1/chat/completions`). Codex CLI may instead use the Responses API (`/v1/responses`) depending on version and model, in which case requests will not route through the proxy and you will see no savings. Memory via hooks is unaffected. Track it in [#26](https://github.com/bnimit/memor-ai/issues/26).
@@ -283,10 +285,10 @@ memor dashboard                      Web dashboard on localhost:8420
 memor version                        Print installed version
 memor service install                Run daemon + dashboard as background services (launchd/systemd)
   --no-dashboard                     Install only the daemon
-memor service restart                Restart both services (use after `pipx upgrade`)
-memor service stop                   Stop both background services
-memor service uninstall              Remove both background services
-memor service status                 Show daemon + dashboard status
+memor service restart                Restart services (keeps proxy if opted in; use after `pipx upgrade`)
+memor service stop                   Stop services (warns if agents still point at the proxy)
+memor service uninstall              Remove services + restore proxy agent API configs
+memor service status                 Show daemon + dashboard (+ proxy) status
   (dashboard port: set MEMOR_DASHBOARD_PORT, default 8420)
 memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything

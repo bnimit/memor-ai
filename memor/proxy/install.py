@@ -151,6 +151,87 @@ def uninstall_agent_proxy(agent: str) -> None:
     set_proxy_agent(agent, False)
 
 
+def _strip_memor_proxy_urls(agent: str, port: int) -> str:
+    """Best-effort remove Memor localhost base URLs when backup is missing."""
+    config_path, _, _ = _agent_paths(agent)
+    if not config_path.exists():
+        return f"{agent}: no config file to strip"
+    if agent == "claude":
+        settings = json.loads(config_path.read_text() or "{}")
+        env = dict(settings.get("env") or {})
+        url = str(env.get("ANTHROPIC_BASE_URL", ""))
+        if f"127.0.0.1:{port}" in url or f"localhost:{port}" in url:
+            env.pop("ANTHROPIC_BASE_URL", None)
+            if env:
+                settings["env"] = env
+            else:
+                settings.pop("env", None)
+            config_path.write_text(json.dumps(settings, indent=2) + "\n")
+            return f"{agent}: removed ANTHROPIC_BASE_URL"
+        return f"{agent}: no Memor ANTHROPIC_BASE_URL to strip"
+    if agent == "codex":
+        text = config_path.read_text()
+        needle = f'openai_base_url = "http://127.0.0.1:{port}/v1"'
+        alt = f"openai_base_url = 'http://127.0.0.1:{port}/v1'"
+        lines = [
+            ln for ln in text.splitlines()
+            if ln.strip() not in (needle, alt)
+            and not (
+                ln.strip().startswith("openai_base_url")
+                and f"127.0.0.1:{port}" in ln
+            )
+        ]
+        if len(lines) != len(text.splitlines()):
+            config_path.write_text("\n".join(lines).rstrip("\n") + ("\n" if lines else ""))
+            return f"{agent}: removed openai_base_url"
+        return f"{agent}: no Memor openai_base_url to strip"
+    return f"{agent}: unknown agent"
+
+
+def failover_proxy_agents(reason: str = "") -> list[str]:
+    """Restore pre-proxy agent configs (uninstall-shaped) for all opted-in agents.
+
+    Best-effort and never raises: per-agent I/O or JSON errors are caught so
+    other agents still fail over. Each agent's `proxy_agents` flag is cleared
+    in a ``finally`` block. Consumes backups when restore succeeds.
+    """
+    from memor.config import load_config, proxy_port as get_port
+    port = get_port()
+    agents = load_config().get("proxy_agents") or {}
+    enabled = [a for a, on in agents.items() if on]
+    lines: list[str] = []
+    if reason:
+        lines.append(f"proxy failover: {reason}")
+    if not enabled:
+        lines.append("proxy failover: no proxy_agents enabled")
+        return lines
+    for agent in enabled:
+        try:
+            try:
+                config_path, backup_path, _ = _agent_paths(agent)
+            except ValueError:
+                lines.append(f"{agent}: cleared flag (unknown agent)")
+                continue
+            if backup_path.exists():
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                config_path.write_text(backup_path.read_text())
+                backup_path.unlink()
+                lines.append(f"{agent}: restored config from backup; proxy flag cleared")
+            else:
+                detail = _strip_memor_proxy_urls(agent, port)
+                lines.append(f"{detail}; proxy flag cleared (no backup — verify config)")
+        except Exception as e:
+            lines.append(f"{agent}: failover error ({type(e).__name__}: {e}); clearing flag")
+        finally:
+            try:
+                set_proxy_agent(agent, False)
+            except Exception as e:
+                lines.append(
+                    f"{agent}: failed to clear proxy flag ({type(e).__name__}: {e})"
+                )
+    return lines
+
+
 def register_mcp_claude() -> None:
     """Register memor_retrieve MCP server in Claude settings.json."""
     config_path = Path.home() / ".claude" / "settings.json"

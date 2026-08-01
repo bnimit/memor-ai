@@ -88,6 +88,9 @@ def _macos_setup(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "PLIST_DIR", tmp_path)
     monkeypatch.setattr(svc, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(svc, "_port_in_use", lambda port: False)
+    # Isolate from the developer's real ~/.memor proxy_agents / unit files.
+    monkeypatch.setattr(svc, "_should_run_proxy", lambda: False)
+    monkeypatch.setattr("memor.config.load_config", lambda: {"proxy_agents": {}})
     run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
     monkeypatch.setattr(svc.subprocess, "run", run)
     return run

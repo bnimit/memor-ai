@@ -83,12 +83,13 @@ def test_install_with_proxy_writes_proxy_plist(monkeypatch, tmp_path):
 
 
 def test_install_without_proxy_no_proxy_plist(monkeypatch, tmp_path):
-    """Test that install(with_proxy=False) doesn't write proxy unit."""
+    """Test that install(with_proxy=False) doesn't write proxy unit when not opted in."""
     monkeypatch.setattr(svc, "_is_macos", lambda: True)
     monkeypatch.setattr(svc, "_find_memor_bin", lambda: "/bin/memor")
     monkeypatch.setattr(svc, "PLIST_DIR", tmp_path)
     monkeypatch.setattr(svc, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(svc, "_port_in_use", lambda port: False)
+    monkeypatch.setattr(svc, "_should_run_proxy", lambda: False)
     run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
     monkeypatch.setattr(svc.subprocess, "run", run)
     
@@ -103,10 +104,74 @@ def test_install_without_proxy_no_proxy_plist(monkeypatch, tmp_path):
     assert len(bootstraps) == 2
 
 
+def test_should_run_proxy_when_agent_flagged(monkeypatch):
+    monkeypatch.setattr(svc, "_proxy_unit_file_exists", lambda: False)
+    monkeypatch.setattr(
+        "memor.config.load_config",
+        lambda: {"proxy_agents": {"claude": True}},
+    )
+    assert svc._should_run_proxy() is True
+
+
+def test_should_run_proxy_when_unit_file_exists(monkeypatch):
+    monkeypatch.setattr(svc, "_proxy_unit_file_exists", lambda: True)
+    monkeypatch.setattr("memor.config.load_config", lambda: {"proxy_agents": {}})
+    assert svc._should_run_proxy() is True
+
+
+def test_should_run_proxy_false_by_default(monkeypatch):
+    monkeypatch.setattr(svc, "_proxy_unit_file_exists", lambda: False)
+    monkeypatch.setattr("memor.config.load_config", lambda: {"proxy_agents": {}})
+    assert svc._should_run_proxy() is False
+
+
+def test_install_infers_proxy_from_should_run(monkeypatch, tmp_path):
+    """Default install() must bootstrap proxy when _should_run_proxy()."""
+    monkeypatch.setattr(svc, "_is_macos", lambda: True)
+    monkeypatch.setattr(svc, "_find_memor_bin", lambda: "/bin/memor")
+    monkeypatch.setattr(svc, "PLIST_DIR", tmp_path)
+    monkeypatch.setattr(svc, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(svc, "_port_in_use", lambda port: False)
+    monkeypatch.setattr(svc, "_should_run_proxy", lambda: True)
+    run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(svc.subprocess, "run", run)
+
+    svc.install(with_dashboard=True, with_proxy=False)
+
+    proxy_plist = tmp_path / f"{svc.PROXY_LABEL}.plist"
+    assert proxy_plist.exists()
+    bootstraps = [c for c in run.call_args_list if "bootstrap" in c.args[0]]
+    assert len(bootstraps) == 3
+
+
+def test_restart_rebootstraps_proxy_when_opted_in(monkeypatch, tmp_path):
+    """restart() must not drop the proxy after stop+install."""
+    monkeypatch.setattr(svc, "_is_macos", lambda: True)
+    monkeypatch.setattr(svc, "_find_memor_bin", lambda: "/bin/memor")
+    monkeypatch.setattr(svc, "PLIST_DIR", tmp_path)
+    monkeypatch.setattr(svc, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(svc, "_port_in_use", lambda port: False)
+    # After stop, plist still exists → inference keeps proxy.
+    (tmp_path / f"{svc.PROXY_LABEL}.plist").write_text("existing")
+    monkeypatch.setattr(
+        "memor.config.load_config",
+        lambda: {"proxy_agents": {"claude": True}},
+    )
+    run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(svc.subprocess, "run", run)
+
+    svc.restart()
+
+    bootstraps = [c for c in run.call_args_list if "bootstrap" in c.args[0]]
+    assert len(bootstraps) == 3
+    assert (tmp_path / f"{svc.PROXY_LABEL}.plist").exists()
+
+
 def test_uninstall_removes_proxy_plist(monkeypatch, tmp_path):
     """Test that uninstall removes the proxy plist."""
     monkeypatch.setattr(svc, "_is_macos", lambda: True)
     monkeypatch.setattr(svc, "PLIST_DIR", tmp_path)
+    monkeypatch.setattr("memor.config.load_config", lambda: {"proxy_agents": {}})
     run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
     monkeypatch.setattr(svc.subprocess, "run", run)
     
@@ -119,6 +184,47 @@ def test_uninstall_removes_proxy_plist(monkeypatch, tmp_path):
     # Verify proxy plist was removed
     assert not proxy_plist.exists()
     assert str(proxy_plist) in out
+
+
+def test_stop_warns_when_proxy_agents_enabled(monkeypatch, tmp_path):
+    monkeypatch.setattr(svc, "_is_macos", lambda: True)
+    monkeypatch.setattr(svc, "PLIST_DIR", tmp_path)
+    monkeypatch.setattr(svc, "_proxy_port", lambda: 8421)
+    monkeypatch.setattr(
+        "memor.config.load_config",
+        lambda: {"proxy_agents": {"claude": True}},
+    )
+    (tmp_path / f"{svc.DAEMON_LABEL}.plist").write_text("x")
+    run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(svc.subprocess, "run", run)
+
+    out = svc.stop()
+    assert "warning: proxy-enabled agents still point at http://127.0.0.1:8421" in out
+    assert "memor service restart" in out
+
+
+def test_uninstall_failovers_proxy_agents(monkeypatch, tmp_path):
+    monkeypatch.setattr(svc, "_is_macos", lambda: True)
+    monkeypatch.setattr(svc, "PLIST_DIR", tmp_path)
+    monkeypatch.setattr(
+        "memor.config.load_config",
+        lambda: {"proxy_agents": {"claude": True}},
+    )
+    called = {}
+
+    def fake_failover(reason=""):
+        called["reason"] = reason
+        return ["claude: restored config from backup; proxy flag cleared"]
+
+    monkeypatch.setattr(
+        "memor.proxy.install.failover_proxy_agents", fake_failover)
+    run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(svc.subprocess, "run", run)
+    (tmp_path / f"{svc.PROXY_LABEL}.plist").write_text("x")
+
+    out = svc.uninstall()
+    assert "restored config" in out
+    assert "service uninstall" in called.get("reason", "")
 
 
 def test_status_shows_proxy_unit(monkeypatch, tmp_path):
