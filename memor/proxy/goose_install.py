@@ -12,6 +12,38 @@ _OPENAI_DEFAULT_HOST = "https://api.openai.com"
 _OPENAI_DEFAULT_BASE_PATH = "v1/chat/completions"
 _ANTHROPIC_DEFAULT_HOST = "https://api.anthropic.com"
 
+# Goose Desktop can register custom_* providers in config.yaml without writing
+# custom_providers/*.json. Map known provider ids (and model hints) to upstream URLs.
+_KNOWN_CUSTOM_UPSTREAMS: dict[str, tuple[str, str]] = {
+    "custom_deepseek": (
+        "https://api.deepseek.com/v1/chat/completions",
+        "DEEPSEEK_API_KEY",
+    ),
+    "custom_moonshot": (
+        "https://api.moonshot.ai/v1/chat/completions",
+        "MOONSHOT_API_KEY",
+    ),
+    "custom_kimi": (
+        "https://api.kimi.com/coding/v1/chat/completions",
+        "KIMI_API_KEY",
+    ),
+    "custom_openrouter": (
+        "https://openrouter.ai/api/v1/chat/completions",
+        "OPENROUTER_API_KEY",
+    ),
+    "custom_groq": (
+        "https://api.groq.com/openai/v1/chat/completions",
+        "GROQ_API_KEY",
+    ),
+}
+
+_MODEL_UPSTREAM_HINTS: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (re.compile(r"^deepseek", re.I), "https://api.deepseek.com/v1/chat/completions", "DEEPSEEK_API_KEY"),
+    (re.compile(r"^moonshot|^kimi", re.I), "https://api.moonshot.ai/v1/chat/completions", "MOONSHOT_API_KEY"),
+    (re.compile(r"^gpt-|^o[0-9]", re.I), "https://api.openai.com/v1/chat/completions", "OPENAI_API_KEY"),
+    (re.compile(r"^claude", re.I), "https://api.anthropic.com/v1/messages", "ANTHROPIC_API_KEY"),
+)
+
 
 class GooseProviderNotFoundError(FileNotFoundError):
     """Raised when Goose active_provider has no custom_providers JSON file."""
@@ -159,11 +191,15 @@ def _materialize_custom_provider_json(
     base_url: str,
     *,
     config_text: str = "",
+    api_key_env: str | None = None,
 ) -> Path:
     """Create custom_providers JSON when Goose Desktop registered the provider in yaml only."""
     protocol = _protocol_from_upstream_url(base_url)
     engine = "anthropic" if protocol == "anthropic" else "openai"
     model = _read_yaml_provider_model(config_text, provider_name) or "default"
+    if api_key_env is None:
+        inferred = _infer_custom_upstream(provider_name, model if model != "default" else None)
+        api_key_env = inferred[1] if inferred else f"{provider_name.upper()}_API_KEY"
     provider_path = _custom_provider_path(provider_name)
     provider_path.parent.mkdir(parents=True, exist_ok=True)
     data = {
@@ -171,7 +207,7 @@ def _materialize_custom_provider_json(
         "engine": engine,
         "display_name": provider_name.replace("custom_", "").replace("_", " ").title(),
         "description": f"Materialized by memor install-proxy for {provider_name}",
-        "api_key_env": f"{provider_name.upper()}_API_KEY",
+        "api_key_env": api_key_env,
         "base_url": base_url.rstrip("/"),
         "models": [{"name": model, "context_limit": 128000}],
         "requires_auth": True,
@@ -185,6 +221,24 @@ def _resolve_upstream_url_override() -> str | None:
     return (os.environ.get("MEMOR_GOOSE_UPSTREAM_URL") or "").strip() or None
 
 
+def _infer_custom_upstream(
+    provider_name: str,
+    model: str | None,
+) -> tuple[str, str] | None:
+    """Guess upstream URL + api_key_env for Desktop-only custom providers."""
+    if provider_name in _KNOWN_CUSTOM_UPSTREAMS:
+        return _KNOWN_CUSTOM_UPSTREAMS[provider_name]
+    slug = provider_name.removeprefix("custom_")
+    for key, value in _KNOWN_CUSTOM_UPSTREAMS.items():
+        if key.removeprefix("custom_") == slug:
+            return value
+    if model:
+        for pattern, base_url, api_key_env in _MODEL_UPSTREAM_HINTS:
+            if pattern.search(model):
+                return (base_url, api_key_env)
+    return None
+
+
 def discover_goose_upstream(
     port: int | None = None,
     *,
@@ -196,15 +250,23 @@ def discover_goose_upstream(
     if provider_name.startswith("custom_"):
         provider_path = _custom_provider_path(provider_name)
         override = (upstream_url or _resolve_upstream_url_override() or "").strip()
+        config_text = (
+            _goose_config_path().read_text() if _goose_config_path().exists() else ""
+        )
         if not provider_path.exists():
-            config_text = (
-                _goose_config_path().read_text() if _goose_config_path().exists() else ""
-            )
-            if override:
+            materialize_url = override
+            materialize_api_key_env: str | None = None
+            if not materialize_url:
+                model = _read_yaml_provider_model(config_text, provider_name)
+                inferred = _infer_custom_upstream(provider_name, model)
+                if inferred:
+                    materialize_url, materialize_api_key_env = inferred
+            if materialize_url:
                 _materialize_custom_provider_json(
                     provider_name,
-                    override,
+                    materialize_url,
                     config_text=config_text,
+                    api_key_env=materialize_api_key_env,
                 )
             else:
                 hint = (

@@ -138,7 +138,7 @@ Memor runs two complementary local paths — combine them or use either alone:
 | **Cursor** | Yes | No — hooks only |
 | **Copilot CLI** | Yes | No — hooks only |
 | **Kimi CLI** | Yes | Yes — `memor install-proxy --agent kimi` |
-| **Goose** | Yes | Yes — `memor install-proxy --agent goose` |
+| **Goose** | Yes | Yes — `memor install-proxy --agent goose` (auto-detects common Desktop custom providers like `custom_deepseek`; use `--upstream-url` if yours is custom) |
 
 ### Hook install details
 

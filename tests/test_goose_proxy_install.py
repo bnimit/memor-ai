@@ -79,6 +79,53 @@ def test_discover_goose_upstream_missing_custom_provider(mock_home):
         discover_goose_upstream()
 
 
+def _desktop_deepseek_config() -> str:
+    return (
+        "active_provider: custom_deepseek\n"
+        "providers:\n"
+        "  custom_deepseek:\n"
+        "    enabled: true\n"
+        "    model: deepseek-v4-pro\n"
+        "    configured: true\n"
+    )
+
+
+def test_discover_goose_upstream_infers_deepseek_desktop(mock_home):
+    """Desktop-only custom_deepseek (no JSON) infers DeepSeek upstream."""
+    goose_dir = mock_home / ".config" / "goose"
+    goose_dir.mkdir(parents=True)
+    (goose_dir / "config.yaml").write_text(_desktop_deepseek_config())
+
+    protocol, base_url, provider_name, rewrite_kind = discover_goose_upstream()
+
+    assert protocol == "openai"
+    assert base_url == "https://api.deepseek.com/v1/chat/completions"
+    assert provider_name == "custom_deepseek"
+    assert rewrite_kind == "custom_json"
+    provider_path = goose_dir / "custom_providers" / "custom_deepseek.json"
+    assert provider_path.exists()
+    data = json.loads(provider_path.read_text())
+    assert data["api_key_env"] == "DEEPSEEK_API_KEY"
+    assert data["models"][0]["name"] == "deepseek-v4-pro"
+
+
+def test_install_goose_proxy_desktop_deepseek_without_flag(mock_home):
+    """memor install-proxy --agent goose works for Desktop-only custom_deepseek."""
+    goose_dir = mock_home / ".config" / "goose"
+    goose_dir.mkdir(parents=True)
+    (goose_dir / "config.yaml").write_text(_desktop_deepseek_config())
+
+    install_goose_proxy(8421)
+
+    provider_path = goose_dir / "custom_providers" / "custom_deepseek.json"
+    data = json.loads(provider_path.read_text())
+    assert data["base_url"] == "http://127.0.0.1:8421/v1/chat/completions"
+    assert data["headers"]["x-agent"] == "goose"
+    upstream = get_proxy_upstream("goose")
+    assert upstream["base_url"] == "https://api.deepseek.com/v1/chat/completions"
+    assert is_proxy_agent("goose")
+
+
 def test_discover_goose_upstream_materializes_desktop_provider(mock_home):
     """Goose Desktop can register custom providers in yaml without JSON."""
     goose_dir = mock_home / ".config" / "goose"
