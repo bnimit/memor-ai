@@ -12,9 +12,15 @@ def read_dim(db_path: str, default: int) -> int:
 
     Opening a store with the wrong dim trips the dim check, so anything that
     attaches to an existing database has to ask it first.
+
+    Does not create the database file if it is missing (read-only attach).
     """
+    path = Path(db_path)
+    if not path.exists():
+        return default
     try:
-        db = sqlite3.connect(db_path)
+        # URI read-only so a missing/corrupt path cannot create a new empty DB.
+        db = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
         db.row_factory = sqlite3.Row
         row = db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
         db.close()

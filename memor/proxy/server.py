@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
-from memor.store.sqlite_store import SqliteStore
+from memor.store.sqlite_store import SqliteStore, read_dim
 from memor.proxy.pipeline import run_pipeline
 from memor.proxy.forward import (
     forward_request,
@@ -21,6 +21,22 @@ def _assert_localhost(host: str) -> None:
         raise ValueError(f"refusing non-localhost bind: {host}")
 
 
+def _wants_stream(body: dict, headers) -> bool:
+    """True when the client requested SSE streaming.
+
+    Matches body.stream and Accept headers that include text/event-stream
+    (e.g. ``text/event-stream, */*``), case-insensitively.
+    """
+    if body.get("stream"):
+        return True
+    accept = ""
+    try:
+        accept = headers.get("accept") or headers.get("Accept") or ""
+    except Exception:
+        accept = ""
+    return "text/event-stream" in accept.lower()
+
+
 def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
     """Create a FastAPI proxy application.
     
@@ -34,10 +50,11 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
     if db_path is None:
         db_path = str(Path.home() / ".memor" / "memor.db")
     
-    # Initialize store with embedding dimension
+    # Store opens with the DB's recorded dim (CCR + savings don't need embeddings).
+    # Fall back to the embedder dim only for a brand-new database.
     if embedder is None:
         embedder = LocalEmbedder()
-    store = SqliteStore(db_path, dim=embedder.dim)
+    store = SqliteStore(db_path, dim=read_dim(db_path, embedder.dim))
     
     app = FastAPI()
     
@@ -68,8 +85,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         
         upstream_headers = sanitize_request_headers(request.headers)
         
-        # Determine if streaming is requested
-        stream = body.get("stream", False) or request.headers.get("accept") == "text/event-stream"
+        stream = _wants_stream(body, request.headers)
         
         # Forward to Anthropic API
         upstream_url = "https://api.anthropic.com/v1/messages"
@@ -193,8 +209,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         
         upstream_headers = sanitize_request_headers(request.headers)
         
-        # Determine if streaming is requested
-        stream = body.get("stream", False) or request.headers.get("accept") == "text/event-stream"
+        stream = _wants_stream(body, request.headers)
         
         # Forward to OpenAI API
         upstream_url = "https://api.openai.com/v1/chat/completions"

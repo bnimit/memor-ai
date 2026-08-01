@@ -35,8 +35,8 @@ def compress_json(text: str) -> str:
     
     original_count = len(data)
     kept_count = len(kept_items)
-    
-    result = json.dumps(kept_items, separators=(',', ':'))
-    note = f" /* memor: kept {kept_count} of {original_count} items */"
-    
-    return result + note
+    # Keep the payload parseable JSON: trail a metadata object, never a C comment.
+    kept_items.append({
+        "_memor_note": f"kept {kept_count} of {original_count} items",
+    })
+    return json.dumps(kept_items, separators=(',', ':'))
