@@ -360,6 +360,56 @@
     </div>
   </div>
 
+  <!-- ── Proxy Savings Hero ─────────────────────────────── -->
+  <section id="savings-hero-section" style="display:none;">
+    <div class="section-label"><span class="dot"></span> Proxy Savings</div>
+    <div class="chart-card" style="margin-bottom:0;">
+      <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start;">
+        <div style="flex:1;min-width:280px;">
+          <div class="chart-title" style="margin-bottom:6px;">Token Efficiency</div>
+          <div style="font-size:42px;font-weight:800;color:var(--ok);letter-spacing:-1.5px;margin-bottom:4px;" id="savings-pct">&ndash;</div>
+          <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">tokens saved via context compression</div>
+          <div style="display:flex;gap:20px;margin-top:12px;">
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Before</div>
+              <div style="font-size:20px;font-weight:700;color:var(--text);" id="savings-before">&ndash;</div>
+            </div>
+            <div style="font-size:24px;color:var(--text-muted);align-self:center;">→</div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">After</div>
+              <div style="font-size:20px;font-weight:700;color:var(--ok);" id="savings-after">&ndash;</div>
+            </div>
+          </div>
+        </div>
+        <div style="flex:1;min-width:280px;">
+          <div class="chart-title" style="margin-bottom:12px;">System Status</div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span id="status-proxy-pill" class="badge badge-neutral">Proxy</span>
+              <span style="font-size:12px;color:var(--text-muted);">context compression proxy</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span id="status-hook-pill" class="badge badge-neutral">Hook</span>
+              <span style="font-size:12px;color:var(--text-muted);">recall injection hook</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span id="status-daemon-pill" class="badge badge-neutral">Daemon</span>
+              <span style="font-size:12px;color:var(--text-muted);">background service</span>
+            </div>
+          </div>
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border-light);">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">ACTIVE AGENTS</div>
+            <div id="proxy-agents-list" style="font-size:12px;color:var(--text);"></div>
+          </div>
+        </div>
+        <div style="flex:1;min-width:200px;">
+          <div class="chart-title" style="margin-bottom:12px;">Content Types</div>
+          <div id="content-types-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Hero metrics ───────────────────────────────────── -->
   <section>
     <div class="section-label"><span class="dot"></span> Memory Bank</div>
@@ -1052,6 +1102,58 @@
     });
   }
 
+  /* ── Savings hero renderer ────────────────────────────── */
+  function renderSavingsHero(data) {
+    var section = document.getElementById('savings-hero-section');
+    if (!data || !data.summary || data.summary.tokens_before === 0) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+    var summary = data.summary;
+    document.getElementById('savings-pct').textContent = summary.pct_saved + '% saved';
+    document.getElementById('savings-before').textContent = fmt(summary.tokens_before);
+    document.getElementById('savings-after').textContent = fmt(summary.tokens_after);
+
+    var ctList = document.getElementById('content-types-list');
+    ctList.innerHTML = '';
+    if (data.content_types && data.content_types.length > 0) {
+      data.content_types.slice(0, 5).forEach(function(ct) {
+        var item = el('div', {style: 'font-size:11px;'});
+        item.innerHTML =
+          '<div style="color:var(--text-muted);margin-bottom:2px;">' + esc(ct.content_type) + '</div>' +
+          '<div style="font-weight:600;color:var(--ok);">' + ct.pct_saved + '% saved</div>';
+        ctList.appendChild(item);
+      });
+    } else {
+      ctList.innerHTML = '<div style="font-size:11px;color:var(--text-muted);">No data yet</div>';
+    }
+  }
+
+  function renderProxyStatus(data) {
+    var proxyPill = document.getElementById('status-proxy-pill');
+    var hookPill = document.getElementById('status-hook-pill');
+    var daemonPill = document.getElementById('status-daemon-pill');
+    
+    proxyPill.className = 'badge ' + (data.proxy ? 'badge-ok' : 'badge-neutral');
+    proxyPill.textContent = data.proxy ? 'Proxy ✓' : 'Proxy ✗';
+    
+    hookPill.className = 'badge ' + (data.hook ? 'badge-ok' : 'badge-neutral');
+    hookPill.textContent = data.hook ? 'Hook ✓' : 'Hook ✗';
+    
+    daemonPill.className = 'badge ' + (data.daemon ? 'badge-ok' : 'badge-neutral');
+    daemonPill.textContent = data.daemon ? 'Daemon ✓' : 'Daemon ✗';
+
+    var agentsList = document.getElementById('proxy-agents-list');
+    var agents = data.proxy_agents || {};
+    var activeAgents = Object.keys(agents).filter(function(a) { return agents[a]; });
+    if (activeAgents.length > 0) {
+      agentsList.textContent = activeAgents.join(', ');
+    } else {
+      agentsList.innerHTML = '<span style="color:var(--text-muted);">None configured</span>';
+    }
+  }
+
   /* ── Data loaders ──────────────────────────────────────── */
   async function loadSummary()    { try { renderSummary(await api('/api/summary')); } catch(e) { console.warn('summary',e); } }
   async function loadProjects()   { try { renderProjects(await api('/api/projects')); } catch(e) { console.warn('projects',e); } }
@@ -1063,6 +1165,8 @@
   async function loadROITrend()   { try { renderROITrend(await api('/api/roi-trend')); } catch(e) { console.warn('roi-trend',e); } }
   async function loadQuality()    { try { renderQuality(await api('/api/quality')); } catch(e) { console.warn('quality',e); } }
   async function loadAgentBreakdown() { try { renderAgentBreakdown(await api('/api/agent-breakdown')); } catch(e) { console.warn('agent-breakdown',e); } }
+  async function loadSavingsHero() { try { renderSavingsHero(await api('/api/savings-ledger?days=30')); } catch(e) { console.warn('savings-hero',e); } }
+  async function loadProxyStatus() { try { renderProxyStatus(await api('/api/proxy-status')); } catch(e) { console.warn('proxy-status',e); } }
   async function loadRecalls() {
     try {
       var url = '/api/recalls?limit=50' + (projectFilter ? '&project=' + encodeURIComponent(projectFilter) : '');
@@ -1071,7 +1175,7 @@
   }
 
   async function refresh() {
-    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(), loadQuality(), loadAgentBreakdown()]);
+    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(), loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus()]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 
     renderMiniBars('mb-chunks', null);

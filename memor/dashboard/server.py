@@ -208,6 +208,101 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "embedder_dim": int(dim_row["value"]) if dim_row else None,
         }
 
+    @app.get("/api/savings-ledger")
+    def savings_ledger(days: int = Query(30, ge=1, le=90)):
+        import json
+        import time as _time
+        store = _store()
+        cutoff = _time.time() - (days * 86400)
+        
+        # Summary
+        summary = store.get_proxy_savings_summary(days)
+        
+        # Per-day series
+        per_day = store.db.execute("""
+            SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+                   SUM(tokens_before) as tokens_before,
+                   SUM(tokens_after) as tokens_after
+            FROM proxy_savings
+            WHERE timestamp >= ?
+            GROUP BY day
+            ORDER BY day
+        """, (cutoff,)).fetchall()
+        
+        # Content types breakdown
+        content_type_rows = store.db.execute("""
+            SELECT content_types
+            FROM proxy_savings
+            WHERE timestamp >= ?
+        """, (cutoff,)).fetchall()
+        
+        ct_totals = {}
+        for row in content_type_rows:
+            if row["content_types"]:
+                cts = json.loads(row["content_types"])
+                for ct, data in cts.items():
+                    if ct not in ct_totals:
+                        ct_totals[ct] = {"before": 0, "after": 0}
+                    ct_totals[ct]["before"] += data.get("before", 0)
+                    ct_totals[ct]["after"] += data.get("after", 0)
+        
+        content_types = [
+            {
+                "content_type": ct,
+                "tokens_before": data["before"],
+                "tokens_after": data["after"],
+                "pct_saved": round((1 - data["after"] / data["before"]) * 100, 1) if data["before"] > 0 else 0
+            }
+            for ct, data in ct_totals.items()
+        ]
+        
+        return {
+            "summary": summary,
+            "per_day": [dict(r) for r in per_day],
+            "content_types": content_types,
+        }
+
+    @app.get("/api/proxy-status")
+    def proxy_status():
+        import socket
+        from memor.config import load_config, proxy_port
+        
+        cfg = load_config()
+        port = proxy_port()
+        
+        # Check proxy: TCP connect to 127.0.0.1:proxy_port
+        proxy_healthy = False
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1.0)
+            result = sock.connect_ex(("127.0.0.1", port))
+            proxy_healthy = (result == 0)
+            sock.close()
+        except Exception:
+            pass
+        
+        # Check hook: ~/.memor/hook.sock exists
+        hook_path = Path.home() / ".memor" / "hook.sock"
+        hook_healthy = hook_path.exists()
+        
+        # Check daemon: simple heuristic - check if pid file exists or service running
+        daemon_healthy = False
+        pid_file = Path.home() / ".memor" / "daemon.pid"
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                import psutil
+                daemon_healthy = psutil.pid_exists(pid)
+            except Exception:
+                pass
+        
+        return {
+            "proxy": proxy_healthy,
+            "hook": hook_healthy,
+            "daemon": daemon_healthy,
+            "proxy_agents": cfg.get("proxy_agents", {}),
+        }
+
     return app
 
 
