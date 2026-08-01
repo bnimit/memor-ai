@@ -51,6 +51,17 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         # Run compression pipeline
         result = run_pipeline("anthropic", body, store)
         
+        # Inject recalled memories after pipeline, before forward
+        from memor.proxy.memory import inject_memory
+        from memor.project import resolve_project
+        project_hint = (request.headers.get("x-memor-project") or 
+                       request.headers.get("x-project") or "")
+        project = resolve_project(project_hint) if project_hint else "unknown"
+        result.body = inject_memory(
+            "anthropic", result.body, 
+            project=project, db_path=db_path, embedder=embedder
+        )
+        
         # Prepare headers for upstream request
         # Copy all headers except 'host'
         upstream_headers = {
@@ -169,6 +180,17 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         
         # Run compression pipeline
         result = run_pipeline("openai", body, store)
+        
+        # Inject recalled memories after pipeline, before forward
+        from memor.proxy.memory import inject_memory
+        from memor.project import resolve_project
+        project_hint = (request.headers.get("x-memor-project") or 
+                       request.headers.get("x-project") or "")
+        project = resolve_project(project_hint) if project_hint else "unknown"
+        result.body = inject_memory(
+            "openai", result.body, 
+            project=project, db_path=db_path, embedder=embedder
+        )
         
         # Prepare headers for upstream request
         # Copy all headers except 'host'
