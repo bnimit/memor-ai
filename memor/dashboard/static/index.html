@@ -143,7 +143,7 @@
     margin-bottom: 8px;
   }
   .metric-value {
-    font-size: 28px; font-weight: 700; letter-spacing: -1px;
+    font-size: 22px; font-weight: 600; letter-spacing: -0.5px;
     color: var(--text); line-height: 1;
   }
   .metric-sub {
@@ -360,29 +360,13 @@
     </div>
   </div>
 
-  <!-- ── Proxy Savings Hero ─────────────────────────────── -->
-  <section id="savings-hero-section" style="display:none;">
-    <div class="section-label"><span class="dot"></span> Proxy Savings</div>
+  <!-- ── Dual-Path Status (always visible) ─────────────── -->
+  <section>
+    <div class="section-label"><span class="dot"></span> System Status</div>
     <div class="chart-card" style="margin-bottom:0;">
       <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start;">
         <div style="flex:1;min-width:280px;">
-          <div class="chart-title" style="margin-bottom:6px;">Token Efficiency</div>
-          <div style="font-size:42px;font-weight:800;color:var(--ok);letter-spacing:-1.5px;margin-bottom:4px;" id="savings-pct">&ndash;</div>
-          <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">tokens saved via context compression</div>
-          <div style="display:flex;gap:20px;margin-top:12px;">
-            <div>
-              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Before</div>
-              <div style="font-size:20px;font-weight:700;color:var(--text);" id="savings-before">&ndash;</div>
-            </div>
-            <div style="font-size:24px;color:var(--text-muted);align-self:center;">→</div>
-            <div>
-              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">After</div>
-              <div style="font-size:20px;font-weight:700;color:var(--ok);" id="savings-after">&ndash;</div>
-            </div>
-          </div>
-        </div>
-        <div style="flex:1;min-width:280px;">
-          <div class="chart-title" style="margin-bottom:12px;">System Status</div>
+          <div class="chart-title" style="margin-bottom:12px;">Services</div>
           <div style="display:flex;flex-direction:column;gap:10px;">
             <div style="display:flex;align-items:center;gap:10px;">
               <span id="status-proxy-pill" class="badge badge-neutral">Proxy</span>
@@ -402,7 +386,23 @@
             <div id="proxy-agents-list" style="font-size:12px;color:var(--text);"></div>
           </div>
         </div>
-        <div style="flex:1;min-width:200px;">
+        <div id="savings-display" style="flex:1;min-width:280px;display:none;">
+          <div class="chart-title" style="margin-bottom:6px;">Token Efficiency</div>
+          <div style="font-size:36px;font-weight:800;color:var(--ok);letter-spacing:-1.5px;margin-bottom:4px;" id="savings-pct">&ndash;</div>
+          <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">tokens saved via context compression</div>
+          <div style="display:flex;gap:20px;margin-top:12px;">
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Before</div>
+              <div style="font-size:20px;font-weight:700;color:var(--text);" id="savings-before">&ndash;</div>
+            </div>
+            <div style="font-size:24px;color:var(--text-muted);align-self:center;">→</div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">After</div>
+              <div style="font-size:20px;font-weight:700;color:var(--ok);" id="savings-after">&ndash;</div>
+            </div>
+          </div>
+        </div>
+        <div id="content-types-display" style="flex:1;min-width:200px;display:none;">
           <div class="chart-title" style="margin-bottom:12px;">Content Types</div>
           <div id="content-types-list" style="display:flex;flex-direction:column;gap:8px;"></div>
         </div>
@@ -462,14 +462,14 @@
     <div class="metric-grid" id="agent-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));"></div>
   </section>
 
-  <!-- ── Token ROI hero ─────────────────────────────────── -->
+  <!-- ── Token ROI (demoted) ───────────────────────────────── -->
   <section>
     <div class="chart-card" id="roi-card" style="display:none;">
       <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
         <div>
           <div class="chart-title" style="margin-bottom:4px;">Token ROI</div>
-          <div style="font-size:32px;font-weight:700;color:var(--ok);letter-spacing:-1px;" id="roi-value">&ndash;</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;" id="roi-desc">fewer tool calls when Memor injects context</div>
+          <div style="font-size:24px;font-weight:600;color:var(--ok);letter-spacing:-0.5px;" id="roi-value">&ndash;</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;" id="roi-desc">fewer tool calls when Memor injects context</div>
         </div>
         <div style="display:flex;gap:24px;flex:1;justify-content:flex-end;">
           <div style="text-align:center;">
@@ -1104,12 +1104,18 @@
 
   /* ── Savings hero renderer ────────────────────────────── */
   function renderSavingsHero(data) {
-    var section = document.getElementById('savings-hero-section');
+    var savingsDisplay = document.getElementById('savings-display');
+    var contentTypesDisplay = document.getElementById('content-types-display');
+    
     if (!data || !data.summary || data.summary.tokens_before === 0) {
-      section.style.display = 'none';
+      savingsDisplay.style.display = 'none';
+      contentTypesDisplay.style.display = 'none';
       return;
     }
-    section.style.display = '';
+    
+    savingsDisplay.style.display = '';
+    contentTypesDisplay.style.display = '';
+    
     var summary = data.summary;
     document.getElementById('savings-pct').textContent = summary.pct_saved + '% saved';
     document.getElementById('savings-before').textContent = fmt(summary.tokens_before);

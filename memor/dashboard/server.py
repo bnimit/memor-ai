@@ -265,12 +265,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/proxy-status")
     def proxy_status():
         import socket
+        import subprocess
         from memor.config import load_config, proxy_port
         
         cfg = load_config()
         port = proxy_port()
         
-        # Check proxy: TCP connect to 127.0.0.1:proxy_port
+        # Check proxy: TCP connect to 127.0.0.1:proxy_port or HTTP /health
         proxy_healthy = False
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -285,16 +286,32 @@ def create_app(db_path: str | None = None) -> FastAPI:
         hook_path = Path.home() / ".memor" / "hook.sock"
         hook_healthy = hook_path.exists()
         
-        # Check daemon: simple heuristic - check if pid file exists or service running
+        # Check daemon: use service status (launchctl/systemd) or log mtime fallback
         daemon_healthy = False
-        pid_file = Path.home() / ".memor" / "daemon.pid"
-        if pid_file.exists():
-            try:
-                pid = int(pid_file.read_text().strip())
-                import psutil
-                daemon_healthy = psutil.pid_exists(pid)
-            except Exception:
-                pass
+        try:
+            import platform
+            if platform.system() == "Darwin":
+                # macOS: check launchctl
+                label = "ai.memor.daemon"
+                r = subprocess.run(
+                    ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+                    capture_output=True, text=True, timeout=2
+                )
+                daemon_healthy = (r.returncode == 0 and "pid =" in r.stdout)
+            else:
+                # Linux: check systemd
+                r = subprocess.run(
+                    ["systemctl", "--user", "is-active", "memor-daemon"],
+                    capture_output=True, text=True, timeout=2
+                )
+                daemon_healthy = (r.stdout.strip() == "active")
+        except Exception:
+            # Fallback: check daemon.log mtime (recently touched = running)
+            import time as _time
+            log_path = Path.home() / ".memor" / "daemon.log"
+            if log_path.exists():
+                mtime = log_path.stat().st_mtime
+                daemon_healthy = (_time.time() - mtime < 300)  # touched in last 5 min
         
         return {
             "proxy": proxy_healthy,
