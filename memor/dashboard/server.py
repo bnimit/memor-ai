@@ -263,6 +263,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "content_types": content_types,
         }
 
+    @app.get("/api/proxy-savings-by-agent")
+    def proxy_savings_by_agent(days: int = Query(30, ge=1, le=90)):
+        store = _store()
+        return {"agents": store.get_proxy_savings_by_agent(days)}
+
     @app.get("/api/proxy-status")
     def proxy_status():
         import socket
@@ -274,6 +279,8 @@ def create_app(db_path: str | None = None) -> FastAPI:
         
         # Check proxy: TCP connect to 127.0.0.1:proxy_port or HTTP /health
         proxy_healthy = False
+        proxy_mode = None
+        compressor_ready = None
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1.0)
@@ -282,6 +289,20 @@ def create_app(db_path: str | None = None) -> FastAPI:
             sock.close()
         except Exception:
             pass
+
+        if proxy_healthy:
+            try:
+                import json
+                import urllib.request
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/health", method="GET")
+                with urllib.request.urlopen(req, timeout=1.0) as resp:
+                    health = json.loads(resp.read().decode("utf-8"))
+                    if health.get("ok"):
+                        proxy_mode = health.get("mode")
+                        compressor_ready = health.get("compressor_ready")
+            except Exception:
+                pass
         
         # Check hook: ~/.memor/hook.sock exists
         hook_path = Path.home() / ".memor" / "hook.sock"
@@ -314,12 +335,17 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 mtime = log_path.stat().st_mtime
                 daemon_healthy = (_time.time() - mtime < 300)  # touched in last 5 min
         
-        return {
+        result = {
             "proxy": proxy_healthy,
             "hook": hook_healthy,
             "daemon": daemon_healthy,
             "proxy_agents": cfg.get("proxy_agents", {}),
         }
+        if proxy_mode is not None:
+            result["mode"] = proxy_mode
+        if compressor_ready is not None:
+            result["compressor_ready"] = compressor_ready
+        return result
 
     return app
 

@@ -972,6 +972,38 @@ class SqliteStore:
             "pct_saved": round(pct_saved, 1),
         }
 
+    def get_proxy_savings_by_agent(self, days: int = 30) -> list[dict]:
+        import time as _time
+        cutoff = _time.time() - (days * 86400)
+        rows = self.db.execute("""
+            SELECT agent,
+                   SUM(CASE WHEN passthrough = 0 THEN tokens_before ELSE 0 END) as tokens_before,
+                   SUM(CASE WHEN passthrough = 0 THEN tokens_after ELSE 0 END) as tokens_after,
+                   SUM(CASE WHEN passthrough = 0 THEN 1 ELSE 0 END) as requests,
+                   SUM(CASE WHEN passthrough = 1 THEN 1 ELSE 0 END) as passthrough_requests
+            FROM proxy_savings
+            WHERE timestamp >= ?
+            GROUP BY agent
+            ORDER BY tokens_before DESC
+        """, (cutoff,)).fetchall()
+        result = []
+        for row in rows:
+            tokens_before = row["tokens_before"] or 0
+            tokens_after = row["tokens_after"] or 0
+            if tokens_before > 0:
+                pct_saved = (1 - tokens_after / tokens_before) * 100
+            else:
+                pct_saved = 0.0
+            result.append({
+                "agent": row["agent"],
+                "tokens_before": tokens_before,
+                "tokens_after": tokens_after,
+                "pct_saved": round(pct_saved, 1),
+                "requests": row["requests"] or 0,
+                "passthrough_requests": row["passthrough_requests"] or 0,
+            })
+        return result
+
     def ccr_put(self, blob_id: str, text: str, content_type: str, created_at: float) -> None:
         byte_len = len(text.encode("utf-8"))
         self.db.execute(

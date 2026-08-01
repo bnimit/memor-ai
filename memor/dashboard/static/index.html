@@ -372,7 +372,7 @@
         <div class="metric-info">
           <div class="metric-label">Proxy</div>
           <div class="metric-value" id="status-proxy">&ndash;</div>
-          <div class="metric-sub">context compression</div>
+          <div class="metric-sub" id="status-proxy-sub">context compression</div>
         </div>
       </div>
       <div class="metric-card">
@@ -411,6 +411,12 @@
         </div>
       </div>
     </div>
+  </section>
+
+  <!-- ── Proxy savings by agent ──────────────────────────── -->
+  <section id="proxy-savings-section" style="display:none;">
+    <div class="section-label"><span class="dot"></span> Proxy savings by agent</div>
+    <div class="metric-grid" id="proxy-savings-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));"></div>
   </section>
 
   <!-- ── Hero metrics ───────────────────────────────────── -->
@@ -1153,6 +1159,15 @@
     setStatusCard('status-hook', !!data.hook);
     setStatusCard('status-daemon', !!data.daemon);
 
+    var proxySub = document.getElementById('status-proxy-sub');
+    if (data.proxy && data.mode) {
+      var modeLabel = data.mode === 'compress' ? 'compressing' : data.mode;
+      if (data.compressor_ready === false) modeLabel += ' (degraded)';
+      proxySub.textContent = modeLabel;
+    } else {
+      proxySub.textContent = 'context compression';
+    }
+
     var agentsEl = document.getElementById('status-agents');
     var agentsSub = document.getElementById('status-agents-sub');
     var agents = data.proxy_agents || {};
@@ -1170,6 +1185,36 @@
     }
   }
 
+  function renderProxySavingsByAgent(data) {
+    var section = document.getElementById('proxy-savings-section');
+    var grid = document.getElementById('proxy-savings-grid');
+    grid.innerHTML = '';
+
+    var agents = (data && data.agents) ? data.agents : [];
+    if (!agents.length) {
+      section.style.display = 'none';
+      return;
+    }
+
+    section.style.display = '';
+    var colors = { claude: '#d97706', codex: '#10b981', goose: '#6366f1', kimi: '#ec4899' };
+    agents.forEach(function(row) {
+      var agent = row.agent || 'unknown';
+      var color = colors[agent] || 'var(--text-muted)';
+      var card = el('div', {class: 'metric-card'});
+      var passthroughNote = row.passthrough_requests > 0
+        ? ' · ' + fmt(row.passthrough_requests) + ' passthrough'
+        : '';
+      card.innerHTML =
+        '<div class="metric-info">' +
+          '<div class="metric-label" style="color:' + color + ';">' + esc(agent.charAt(0).toUpperCase() + agent.slice(1)) + '</div>' +
+          '<div class="metric-value" style="color:var(--ok);">' + row.pct_saved + '%</div>' +
+          '<div class="metric-sub">' + fmt(row.tokens_before) + ' → ' + fmt(row.tokens_after) + ' · ' + fmt(row.requests) + ' req' + passthroughNote + '</div>' +
+        '</div>';
+      grid.appendChild(card);
+    });
+  }
+
   /* ── Data loaders ──────────────────────────────────────── */
   async function loadSummary()    { try { renderSummary(await api('/api/summary')); } catch(e) { console.warn('summary',e); } }
   async function loadProjects()   { try { renderProjects(await api('/api/projects')); } catch(e) { console.warn('projects',e); } }
@@ -1183,6 +1228,7 @@
   async function loadAgentBreakdown() { try { renderAgentBreakdown(await api('/api/agent-breakdown')); } catch(e) { console.warn('agent-breakdown',e); } }
   async function loadSavingsHero() { try { renderSavingsHero(await api('/api/savings-ledger?days=30')); } catch(e) { console.warn('savings-hero',e); } }
   async function loadProxyStatus() { try { renderProxyStatus(await api('/api/proxy-status')); } catch(e) { console.warn('proxy-status',e); } }
+  async function loadProxySavingsByAgent() { try { renderProxySavingsByAgent(await api('/api/proxy-savings-by-agent?days=30')); } catch(e) { console.warn('proxy-savings-by-agent',e); } }
   async function loadRecalls() {
     try {
       var url = '/api/recalls?limit=50' + (projectFilter ? '&project=' + encodeURIComponent(projectFilter) : '');
@@ -1191,7 +1237,7 @@
   }
 
   async function refresh() {
-    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(), loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus()]);
+    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(), loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(), loadProxySavingsByAgent()]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 
     renderMiniBars('mb-chunks', null);
