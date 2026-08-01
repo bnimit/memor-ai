@@ -5,6 +5,12 @@ from unittest.mock import MagicMock
 import memor.service as svc
 
 
+def test_proxy_unit_absent_by_default():
+    """The proxy is opt-in: plain `memor service install` must not install it."""
+    units = svc._units("/bin/memor", port=8420)
+    assert [u["key"] for u in units] == ["daemon", "dashboard"]
+
+
 def test_proxy_unit_in_units_when_with_proxy():
     """Verify proxy unit is included when with_proxy=True."""
     units = svc._units("/bin/memor", with_dashboard=True, with_proxy=True, port=8420)
