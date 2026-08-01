@@ -1,0 +1,33 @@
+{
+  "name": "database_logs",
+  "provider": "openai",
+  "tool_rich": true,
+  "required_substrings": ["SELECT", "ERROR", "deadlock"],
+  "body": {
+    "model": "gpt-4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Check database logs"
+      },
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_db_1",
+            "type": "function",
+            "function": {
+              "name": "get_logs",
+              "arguments": "{\"service\": \"postgres\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_db_1",
+        "content": "2024-08-01 10:00:01 UTC [INFO] Database started\n2024-08-01 10:00:02 UTC [INFO] Accepting connections on port 5432\n2024-08-01 10:01:15 UTC [INFO] Connection from 192.168.1.100:54321\n2024-08-01 10:01:16 UTC [INFO] User 'app_user' authenticated\n2024-08-01 10:01:17 UTC [DEBUG] Query: SELECT * FROM users WHERE id = 123\n2024-08-01 10:01:17 UTC [DEBUG] Query returned 1 row\n2024-08-01 10:02:30 UTC [DEBUG] Query: SELECT * FROM orders WHERE user_id = 123\n2024-08-01 10:02:30 UTC [DEBUG] Query returned 5 rows\n2024-08-01 10:03:45 UTC [INFO] Connection from 192.168.1.101:54322\n2024-08-01 10:03:46 UTC [INFO] User 'admin' authenticated\n2024-08-01 10:04:00 UTC [DEBUG] Query: UPDATE inventory SET quantity = quantity - 1 WHERE product_id = 456\n2024-08-01 10:04:01 UTC [ERROR] deadlock detected\n2024-08-01 10:04:01 UTC [DETAIL] Process 12345 waits for ShareLock on transaction 67890\n2024-08-01 10:04:01 UTC [HINT] See server log for query details\n2024-08-01 10:04:01 UTC [ERROR] current transaction is aborted, commands ignored until end of transaction block\n2024-08-01 10:05:00 UTC [INFO] Transaction rolled back\n2024-08-01 10:05:01 UTC [INFO] Connection closed"
+      }
+    ]
+  }
+}
