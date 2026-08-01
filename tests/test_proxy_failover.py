@@ -51,3 +51,21 @@ def test_failover_strips_url_without_backup(mock_home):
     env = json.loads(settings.read_text()).get("env", {})
     assert "ANTHROPIC_BASE_URL" not in env
     assert env.get("OTHER") == "x"
+
+
+def test_failover_continues_after_per_agent_error(mock_home):
+    """Per-agent I/O/JSON errors must not abort the loop or leave flags set."""
+    (mock_home / ".claude").mkdir()
+    (mock_home / ".claude" / "settings.json").write_text("{not-json")
+    (mock_home / ".codex").mkdir()
+    (mock_home / ".codex" / "config.toml").write_text(
+        'openai_base_url = "http://127.0.0.1:8421/v1"\n'
+    )
+    set_proxy_agent("claude", True)
+    set_proxy_agent("codex", True)
+
+    lines = failover_proxy_agents("multi")
+    assert any("claude" in ln and "failover error" in ln for ln in lines)
+    assert any("codex" in ln and "removed openai_base_url" in ln for ln in lines)
+    assert not is_proxy_agent("claude")
+    assert not is_proxy_agent("codex")

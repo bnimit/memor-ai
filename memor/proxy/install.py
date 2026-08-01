@@ -191,8 +191,9 @@ def _strip_memor_proxy_urls(agent: str, port: int) -> str:
 def failover_proxy_agents(reason: str = "") -> list[str]:
     """Restore pre-proxy agent configs (uninstall-shaped) for all opted-in agents.
 
-    Consumes backups so the next `install-proxy` can snapshot a clean pre-proxy
-    config. Clears each `proxy_agents` flag. Returns human-readable lines.
+    Best-effort and never raises: per-agent I/O or JSON errors are caught so
+    other agents still fail over. Each agent's `proxy_agents` flag is cleared
+    in a ``finally`` block. Consumes backups when restore succeeds.
     """
     from memor.config import load_config, proxy_port as get_port
     port = get_port()
@@ -206,21 +207,28 @@ def failover_proxy_agents(reason: str = "") -> list[str]:
         return lines
     for agent in enabled:
         try:
-            config_path, backup_path, _ = _agent_paths(agent)
-        except ValueError:
-            set_proxy_agent(agent, False)
-            lines.append(f"{agent}: cleared flag (unknown agent)")
-            continue
-        if backup_path.exists():
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_text(backup_path.read_text())
-            backup_path.unlink()
-            set_proxy_agent(agent, False)
-            lines.append(f"{agent}: restored config from backup; proxy flag cleared")
-        else:
-            detail = _strip_memor_proxy_urls(agent, port)
-            set_proxy_agent(agent, False)
-            lines.append(f"{detail}; proxy flag cleared (no backup — verify config)")
+            try:
+                config_path, backup_path, _ = _agent_paths(agent)
+            except ValueError:
+                lines.append(f"{agent}: cleared flag (unknown agent)")
+                continue
+            if backup_path.exists():
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                config_path.write_text(backup_path.read_text())
+                backup_path.unlink()
+                lines.append(f"{agent}: restored config from backup; proxy flag cleared")
+            else:
+                detail = _strip_memor_proxy_urls(agent, port)
+                lines.append(f"{detail}; proxy flag cleared (no backup — verify config)")
+        except Exception as e:
+            lines.append(f"{agent}: failover error ({type(e).__name__}: {e}); clearing flag")
+        finally:
+            try:
+                set_proxy_agent(agent, False)
+            except Exception as e:
+                lines.append(
+                    f"{agent}: failed to clear proxy flag ({type(e).__name__}: {e})"
+                )
     return lines
 
 
