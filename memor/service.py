@@ -20,12 +20,14 @@ from pathlib import Path
 
 DAEMON_LABEL = "ai.memor.daemon"
 DASHBOARD_LABEL = "ai.memor.dashboard"
+PROXY_LABEL = "ai.memor.proxy"
 # Back-compat alias.
 LABEL = DAEMON_LABEL
 
 STATE_DIR = Path.home() / ".memor"
 DAEMON_LOG = STATE_DIR / "daemon.log"
 DASHBOARD_LOG = STATE_DIR / "dashboard.log"
+PROXY_LOG = STATE_DIR / "proxy.log"
 LOG_FILE = DAEMON_LOG  # back-compat alias
 
 # macOS
@@ -57,11 +59,17 @@ def _dashboard_port() -> int:
         return DEFAULT_DASHBOARD_PORT
 
 
-def _units(memor_bin: str, *, with_dashboard: bool = True, port: int | None = None) -> list[dict]:
+def _proxy_port() -> int:
+    from memor.config import proxy_port
+    return proxy_port()
+
+
+def _units(memor_bin: str, *, with_dashboard: bool = True, with_proxy: bool = True, port: int | None = None) -> list[dict]:
     """Describe the services to manage. Each entry has the launchd label,
     systemd unit name, program args (after the memor binary), and log file."""
     if port is None:
         port = _dashboard_port()
+    proxy_p = _proxy_port()
     units = [{
         "key": "daemon",
         "label": DAEMON_LABEL,
@@ -79,13 +87,26 @@ def _units(memor_bin: str, *, with_dashboard: bool = True, port: int | None = No
             "args": [memor_bin, "dashboard", "--port", str(port), "--no-open"],
             "log": DASHBOARD_LOG,
         })
+    if with_proxy:
+        units.append({
+            "key": "proxy",
+            "label": PROXY_LABEL,
+            "systemd_name": "memor-proxy",
+            "description": "Memor proxy — context compression for AI agents",
+            "args": [memor_bin, "proxy", "--port", str(proxy_p)],
+            "log": PROXY_LOG,
+        })
     return units
 
 
 def _all_unit_labels() -> list[tuple[str, str]]:
     """(launchd label, systemd name) for every unit we might have installed,
-    used by uninstall/stop/status which must act regardless of with_dashboard."""
-    return [(DAEMON_LABEL, "memor-daemon"), (DASHBOARD_LABEL, "memor-dashboard")]
+    used by uninstall/stop/status which must act regardless of with_dashboard/with_proxy."""
+    return [
+        (DAEMON_LABEL, "memor-daemon"),
+        (DASHBOARD_LABEL, "memor-dashboard"),
+        (PROXY_LABEL, "memor-proxy"),
+    ]
 
 
 def _plist_path(label: str) -> Path:
@@ -157,11 +178,11 @@ def _port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-def install(with_dashboard: bool = True) -> str:
+def install(with_dashboard: bool = True, with_proxy: bool = True) -> str:
     memor_bin = _find_memor_bin()
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     port = _dashboard_port()
-    units = _units(memor_bin, with_dashboard=with_dashboard, port=port)
+    units = _units(memor_bin, with_dashboard=with_dashboard, with_proxy=with_proxy, port=port)
 
     warnings = []
     if with_dashboard and _port_in_use(port):
@@ -287,10 +308,19 @@ def _linux_unit_status(name: str) -> str:
 def status() -> str:
     rows = []
     for label, name in _all_unit_labels():
-        key = "daemon" if label == DAEMON_LABEL else "dashboard"
+        if label == DAEMON_LABEL:
+            key = "daemon"
+        elif label == DASHBOARD_LABEL:
+            key = "dashboard"
+        elif label == PROXY_LABEL:
+            key = "proxy"
+        else:
+            key = "unknown"
         st = _macos_unit_status(label) if _is_macos() else _linux_unit_status(name)
         if key == "dashboard" and st.startswith("running"):
             st += f" → http://localhost:{_dashboard_port()}"
+        elif key == "proxy" and st.startswith("running"):
+            st += f" → http://localhost:{_proxy_port()}"
         rows.append(f"  {key}: {st}")
     if all("not installed" in r for r in rows):
         return "Not installed. Run: memor service install"

@@ -49,9 +49,9 @@ def test_is_macos():
 # ---- units + port ----
 
 def test_units_includes_dashboard_by_default():
-    units = _units("/bin/memor", with_dashboard=True, port=8420)
+    units = _units("/bin/memor", with_dashboard=True, with_proxy=True, port=8420)
     keys = {u["key"] for u in units}
-    assert keys == {"daemon", "dashboard"}
+    assert keys == {"daemon", "dashboard", "proxy"}
     dash = next(u for u in units if u["key"] == "dashboard")
     assert "dashboard" in dash["args"] and "8420" in dash["args"]
     # As a KeepAlive background service it must never pop a browser tab.
@@ -61,7 +61,7 @@ def test_units_includes_dashboard_by_default():
 
 
 def test_units_no_dashboard():
-    units = _units("/bin/memor", with_dashboard=False, port=8420)
+    units = _units("/bin/memor", with_dashboard=False, with_proxy=False, port=8420)
     assert {u["key"] for u in units} == {"daemon"}
 
 
@@ -95,19 +95,19 @@ def _macos_setup(monkeypatch, tmp_path):
 
 def test_install_writes_both_units(monkeypatch, tmp_path):
     run = _macos_setup(monkeypatch, tmp_path)
-    out = svc.install(with_dashboard=True)
+    out = svc.install(with_dashboard=True, with_proxy=True)
     assert (tmp_path / f"{DAEMON_LABEL}.plist").exists()
     assert (tmp_path / f"{DASHBOARD_LABEL}.plist").exists()
     dash = (tmp_path / f"{DASHBOARD_LABEL}.plist").read_text()
     assert "<string>dashboard</string>" in dash
     bootstraps = [c for c in run.call_args_list if "bootstrap" in c.args[0]]
-    assert len(bootstraps) == 2
+    assert len(bootstraps) == 3  # daemon, dashboard, proxy
     assert "dashboard" in out
 
 
 def test_install_no_dashboard_writes_only_daemon(monkeypatch, tmp_path):
     _macos_setup(monkeypatch, tmp_path)
-    svc.install(with_dashboard=False)
+    svc.install(with_dashboard=False, with_proxy=False)
     assert (tmp_path / f"{DAEMON_LABEL}.plist").exists()
     assert not (tmp_path / f"{DASHBOARD_LABEL}.plist").exists()
 

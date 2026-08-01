@@ -681,6 +681,70 @@ def proxy(port: int = typer.Option(None, help="Port to serve on"),
     uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
 
 
+@app.command("install-proxy")
+def install_proxy(agent: str = typer.Option(..., help="Agent: claude or codex")):
+    """Install proxy for an agent and ensure the proxy service is running."""
+    from memor.proxy.install import install_claude_proxy, install_codex_proxy
+    from memor.config import proxy_port as get_proxy_port
+    from memor import service
+    
+    agent = agent.lower()
+    if agent not in ["claude", "codex"]:
+        typer.echo(f"Unknown agent '{agent}'. Choose: claude or codex", err=True)
+        raise typer.Exit(1)
+    
+    port = get_proxy_port()
+    
+    try:
+        if agent == "claude":
+            install_claude_proxy(port)
+            typer.echo(f"\nInstalled Claude Code proxy:")
+            typer.echo(f"  Updated ~/.claude/settings.json")
+            typer.echo(f"  Set ANTHROPIC_BASE_URL=http://127.0.0.1:{port}")
+        elif agent == "codex":
+            install_codex_proxy(port)
+            typer.echo(f"\nInstalled Codex proxy:")
+            typer.echo(f"  Updated ~/.codex/config.toml")
+            typer.echo(f"  Set openai_base_url=http://127.0.0.1:{port}/v1")
+        
+        typer.echo(f"  Backup saved to ~/.memor/proxy-backup-{agent}.*")
+        typer.echo()
+        
+        # Ensure the proxy service is running
+        typer.echo("Ensuring proxy service is running...")
+        service.install(with_dashboard=True, with_proxy=True)
+        typer.echo()
+        typer.echo(f"Proxy ready at http://127.0.0.1:{port}")
+        typer.echo(f"All {agent} API calls will now flow through memor for context compression.")
+        
+    except Exception as e:
+        typer.echo(f"Failed to install proxy: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command("uninstall-proxy")
+def uninstall_proxy(agent: str = typer.Option(..., help="Agent: claude or codex")):
+    """Uninstall proxy for an agent (restores original config)."""
+    from memor.proxy.install import uninstall_agent_proxy
+    
+    agent = agent.lower()
+    if agent not in ["claude", "codex"]:
+        typer.echo(f"Unknown agent '{agent}'. Choose: claude or codex", err=True)
+        raise typer.Exit(1)
+    
+    try:
+        uninstall_agent_proxy(agent)
+        typer.echo(f"\nUninstalled {agent} proxy:")
+        typer.echo(f"  Restored original config from backup")
+        typer.echo(f"  Cleared proxy_agent flag")
+        typer.echo()
+        typer.echo(f"The {agent} agent will now use its default API endpoints.")
+        
+    except Exception as e:
+        typer.echo(f"Failed to uninstall proxy: {e}", err=True)
+        raise typer.Exit(1)
+
+
 @app.command("version")
 def version():
     """Print the memor version."""
