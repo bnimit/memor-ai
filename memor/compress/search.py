@@ -9,7 +9,7 @@ def compress_search(text: str) -> str:
         return text
     
     # Pattern for error/fail lines
-    error_pattern = re.compile(r'(?i)\b(error|fail)\b', re.IGNORECASE)
+    error_pattern = re.compile(r'\b(error|fail)\b', re.IGNORECASE)
     
     # Collect error/fail lines
     error_lines = [line for line in lines if error_pattern.search(line)]

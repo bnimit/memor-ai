@@ -17,7 +17,7 @@ def compress_json(text: str) -> str:
         return json.dumps(data, separators=(',', ':'))
     
     # Pattern for error-ish content
-    error_pattern = re.compile(r'(?i)(error|fail|exception|fatal|critical)', re.IGNORECASE)
+    error_pattern = re.compile(r'(error|fail|exception|fatal|critical)', re.IGNORECASE)
     
     kept_items = []
     
