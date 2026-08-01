@@ -128,10 +128,9 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
     if embedder is _UNSET:
         embedder = _get_embedder()
 
-    # The hook deliberately still recalls for proxied agents. Proxy-side inject
-    # is best-effort (it cannot see the working directory, so project scoping is
-    # weak); skipping here traded a duplicate-inject risk for zero memory.
-    # Re-enable the skip only once proxy inject is reliable.
+    from memor.config import is_proxy_agent
+    if is_proxy_agent(agent):
+        return format_hook_response(agent, "")
 
     if embedder is None:
         msg = _status_message("no_embedder", project, 0, 0, 0.0)
