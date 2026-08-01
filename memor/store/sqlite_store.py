@@ -86,6 +86,28 @@ class SqliteStore:
           tool_call_count INTEGER DEFAULT 0,
           had_recall INTEGER DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_turn_metrics_session ON turn_metrics(session_id);
+        CREATE TABLE IF NOT EXISTS proxy_savings(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp REAL,
+          agent TEXT,
+          provider TEXT,
+          session_id TEXT,
+          tokens_before INTEGER,
+          tokens_after INTEGER,
+          content_types TEXT,
+          passthrough INTEGER DEFAULT 0,
+          upstream_input_tokens INTEGER,
+          upstream_cache_read_tokens INTEGER,
+          upstream_output_tokens INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS ccr_blobs(
+          id TEXT PRIMARY KEY,
+          text TEXT NOT NULL,
+          content_type TEXT,
+          byte_len INTEGER,
+          created_at REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ccr_created ON ccr_blobs(created_at);
         """)
         self.db.commit()
 
@@ -775,3 +797,71 @@ class SqliteStore:
         if llm_mems > 0:
             return "full"
         return "extractive"
+
+    def record_proxy_savings(self, row: dict) -> int:
+        content_types_json = json.dumps(row.get("content_types", {}))
+        cur = self.db.execute(
+            "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
+            "tokens_before, tokens_after, content_types, passthrough, "
+            "upstream_input_tokens, upstream_cache_read_tokens, upstream_output_tokens) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (row.get("timestamp"), row.get("agent"), row.get("provider"),
+             row.get("session_id"), row.get("tokens_before"), row.get("tokens_after"),
+             content_types_json, row.get("passthrough", 0),
+             row.get("upstream_input_tokens"), row.get("upstream_cache_read_tokens"),
+             row.get("upstream_output_tokens")))
+        self.db.commit()
+        return cur.lastrowid
+
+    def get_proxy_savings_summary(self, days: int = 30) -> dict:
+        import time as _time
+        cutoff = _time.time() - (days * 86400)
+        row = self.db.execute("""
+            SELECT SUM(tokens_before) as tokens_before,
+                   SUM(tokens_after) as tokens_after
+            FROM proxy_savings
+            WHERE timestamp >= ?
+        """, (cutoff,)).fetchone()
+        tokens_before = row["tokens_before"] or 0
+        tokens_after = row["tokens_after"] or 0
+        if tokens_before > 0:
+            pct_saved = (1 - tokens_after / tokens_before) * 100
+        else:
+            pct_saved = 0.0
+        return {
+            "tokens_before": tokens_before,
+            "tokens_after": tokens_after,
+            "pct_saved": round(pct_saved, 1),
+        }
+
+    def ccr_put(self, blob_id: str, text: str, content_type: str, created_at: float) -> None:
+        byte_len = len(text.encode("utf-8"))
+        self.db.execute(
+            "INSERT OR REPLACE INTO ccr_blobs(id, text, content_type, byte_len, created_at) "
+            "VALUES(?,?,?,?,?)",
+            (blob_id, text, content_type, byte_len, created_at))
+        self.db.commit()
+
+    def ccr_get(self, blob_id: str) -> str | None:
+        row = self.db.execute("SELECT text FROM ccr_blobs WHERE id=?", (blob_id,)).fetchone()
+        return row["text"] if row else None
+
+    def ccr_evict(self, ttl_seconds: int, max_bytes: int) -> int:
+        import time as _time
+        now = _time.time()
+        cutoff = now - ttl_seconds
+        expired = self.db.execute(
+            "SELECT id FROM ccr_blobs WHERE created_at < ?", (cutoff,)).fetchall()
+        evicted = len(expired)
+        for r in expired:
+            self.db.execute("DELETE FROM ccr_blobs WHERE id=?", (r["id"],))
+        rows = self.db.execute(
+            "SELECT id, byte_len FROM ccr_blobs ORDER BY created_at ASC").fetchall()
+        total_bytes = sum(r["byte_len"] for r in rows)
+        while total_bytes > max_bytes and rows:
+            oldest = rows.pop(0)
+            self.db.execute("DELETE FROM ccr_blobs WHERE id=?", (oldest["id"],))
+            total_bytes -= oldest["byte_len"]
+            evicted += 1
+        self.db.commit()
+        return evicted
