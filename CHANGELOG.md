@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.1] - 2026-08-01
+
+### Docs
+- Expanded PyPI package description and keywords (claude-code, cursor, kimi, goose, ai-agents, ai-memory) so installs match the multi-agent + dual-path product.
+
 ## [0.10.0] - 2026-08-01
 
 ### Added

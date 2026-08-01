@@ -4,15 +4,31 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memor-cli"
-version = "0.10.0"
-description = "Measured memory for coding agents. Fire and forget — no API keys needed."
+version = "0.10.1"
+description = "Local shared memory for coding agents (Claude Code, Cursor, Codex, Copilot, Kimi, Goose) plus opt-in token-savings proxy. Fire and forget — no Memor API key."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [
   { name = "Nimit Bhandari", email = "nimitbhandari17@gmail.com" },
 ]
-keywords = ["memory", "agent", "claude", "embeddings", "coding-assistant"]
+keywords = [
+  "memory",
+  "agent",
+  "ai-agents",
+  "ai-memory",
+  "claude",
+  "claude-code",
+  "cursor",
+  "codex",
+  "copilot",
+  "kimi",
+  "goose",
+  "embeddings",
+  "coding-assistant",
+  "local-first",
+  "rag",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
