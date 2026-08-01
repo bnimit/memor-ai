@@ -432,7 +432,7 @@ def reingest(project: str = typer.Option(None, help="Only reingest a specific pr
         embedder = _make_embedder()
         store = SqliteStore(str(DEFAULT_DB), dim=embedder.dim)
         typer.echo(f"Re-ingesting from {d}...")
-        state, distilled = run_poll_cycle({}, store, embedder, d)
+        state, distilled, _ = run_poll_cycle({}, store, embedder, d)
         save_state(state)
         save_distilled_state(distilled)
         chunks = store.db.execute(
@@ -527,10 +527,47 @@ def scan(db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
 @app.command("daemon")
 def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
            projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/")):
-    """Run the auto-ingest daemon (foreground). Watches ~/.claude/projects/ for new transcripts."""
+    """Run the auto-ingest daemon (foreground). Watches Claude, Kimi, and Goose sessions."""
     from memor.daemon import run_daemon, CLAUDE_PROJECTS_DIR
     d = Path(projects_dir) if projects_dir else CLAUDE_PROJECTS_DIR
     run_daemon(poll_interval=poll_interval, projects_dir=d)
+
+
+@app.command("backfill")
+def backfill(
+    projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/"),
+    db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+):
+    """One-shot ingest of Claude, Kimi, and Goose sessions into the memory store."""
+    from memor.daemon import (
+        CLAUDE_PROJECTS_DIR, DEFAULT_DB, _make_embedder, _make_llm, run_backfill,
+    )
+    from memor.store.sqlite_store import SqliteStore
+
+    db_path = _db_path(db) if db else str(DEFAULT_DB)
+    embedder = _make_embedder()
+    store = SqliteStore(db_path, dim=embedder.dim)
+    llm = _make_llm()
+    claude_dir = Path(projects_dir) if projects_dir else CLAUDE_PROJECTS_DIR
+    typer.echo("Backfilling local agent sessions (Claude + Kimi + Goose)...")
+    counts = run_backfill(
+        store,
+        embedder,
+        projects_dir=claude_dir,
+        llm=llm,
+    )
+    if counts:
+        for agent, n in sorted(counts.items()):
+            typer.echo(f"  {agent}: {n} chunks")
+    else:
+        typer.echo("  nothing new to ingest")
+    chunks = store.db.execute(
+        "SELECT COUNT(*) as c FROM artifacts WHERE kind='session_chunk' AND active=1"
+    ).fetchone()["c"]
+    memories = store.db.execute(
+        "SELECT COUNT(*) as c FROM artifacts WHERE kind='memory' AND active=1"
+    ).fetchone()["c"]
+    typer.echo(f"Store now: {chunks} chunks, {memories} memories")
 
 
 def _install_hook_logic(settings_path: Path, hook_command: str) -> None:
@@ -602,10 +639,91 @@ def _install_hook_logic_copilot(hooks_path: Path, hook_command: str) -> None:
     hooks_path.write_text(json.dumps(data, indent=2))
 
 
+def _stamp_hook_command(agent: str, hook_command: str) -> str:
+    """Prefix the hook command so memor-hook can label the calling agent."""
+    return f"env MEMOR_HOOK_AGENT={agent} {hook_command}"
+
+
+def kimi_config_path(home: Path | None = None) -> Path:
+    """Prefer ~/.kimi/config.toml; fall back to ~/.kimi-code/config.toml."""
+    root = home if home is not None else Path.home()
+    primary = root / ".kimi" / "config.toml"
+    if primary.exists():
+        return primary
+    alt = root / ".kimi-code" / "config.toml"
+    if alt.exists():
+        return alt
+    return primary
+
+
+def _install_hook_logic_kimi(config_path: Path, hook_command: str) -> None:
+    """Add a UserPromptSubmit [[hooks]] entry to Kimi's config.toml."""
+    import re
+
+    stamped = _stamp_hook_command("kimi", hook_command)
+    text = config_path.read_text() if config_path.exists() else ""
+    # Empty `hooks = []` conflicts with [[hooks]] array-of-tables syntax.
+    lines = [
+        line for line in text.splitlines()
+        if line.strip().replace(" ", "") != "hooks=[]"
+    ]
+    text = "\n".join(lines)
+    # Drop any prior memor [[hooks]] block so reinstall is idempotent.
+    parts = re.split(r"(?=^\[\[hooks\]\])", text, flags=re.M)
+    kept: list[str] = []
+    for part in parts:
+        if part.startswith("[[hooks]]") and "memor-hook" in part:
+            continue
+        kept.append(part)
+    text = "".join(kept).rstrip()
+    block = (
+        "[[hooks]]\n"
+        'event = "UserPromptSubmit"\n'
+        f'command = "{stamped}"\n'
+        "timeout = 5\n"
+    )
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    if text:
+        config_path.write_text(text + "\n\n" + block)
+    else:
+        config_path.write_text(block)
+
+
+def _install_hook_logic_goose(plugin_dir: Path, hook_command: str) -> None:
+    """Install an Open Plugins hook plugin under ~/.agents/plugins/memor/."""
+    stamped = _stamp_hook_command("goose", hook_command)
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(json.dumps({
+        "name": "memor",
+        "version": "0.1.0",
+        "description": "Memor shared memory recall on every prompt",
+    }, indent=2) + "\n")
+    hooks_dir = plugin_dir / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    data = {
+        "hooks": {
+            "UserPromptSubmit": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": stamped,
+                            "timeout": 5,
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    (hooks_dir / "hooks.json").write_text(json.dumps(data, indent=2) + "\n")
+
+
 AGENT_CHOICES = [
     ("claude", "~/.claude/settings.json", "Claude Code"),
     ("codex", "~/.codex/hooks/hooks.json", "Codex CLI"),
     ("copilot", "~/.copilot/hooks/memor.json", "Copilot CLI"),
+    ("kimi", "~/.kimi/config.toml", "Kimi CLI"),
+    ("goose", "~/.agents/plugins/memor/", "Goose"),
 ]
 
 
@@ -614,20 +732,23 @@ def _prompt_agent() -> str:
     for i, (key, _, label) in enumerate(AGENT_CHOICES, 1):
         typer.echo(f"  {i}. {label}")
     typer.echo()
+    n = len(AGENT_CHOICES)
     while True:
-        choice = typer.prompt("Choose (1-3)", default="1")
+        choice = typer.prompt(f"Choose (1-{n})", default="1")
         try:
             idx = int(choice) - 1
             if 0 <= idx < len(AGENT_CHOICES):
                 return AGENT_CHOICES[idx][0]
         except ValueError:
             pass
-        typer.echo("Invalid choice. Enter 1, 2, or 3.")
+        typer.echo(f"Invalid choice. Enter 1-{n}.")
 
 
 @app.command("install-hook")
-def install_hook(agent: str | None = typer.Option(None, help="Agent: claude, codex, copilot (interactive if omitted)")):
-    """Install the recall hook for Claude Code, Codex, or Copilot."""
+def install_hook(agent: str | None = typer.Option(
+        None,
+        help="Agent: claude, codex, copilot, kimi, goose (interactive if omitted)")):
+    """Install the recall hook for a supported coding agent."""
     import shutil
     agent_keys = {key for key, _, _ in AGENT_CHOICES}
 
@@ -637,7 +758,9 @@ def install_hook(agent: str | None = typer.Option(None, help="Agent: claude, cod
         agent = agent.lower()
 
     if agent not in agent_keys:
-        typer.echo(f"Unknown agent '{agent}'. Choose: claude, codex, copilot", err=True)
+        typer.echo(
+            f"Unknown agent '{agent}'. Choose: {', '.join(sorted(agent_keys))}",
+            err=True)
         raise typer.Exit(1)
 
     hook_bin = shutil.which("memor-hook")
@@ -658,6 +781,11 @@ def install_hook(agent: str | None = typer.Option(None, help="Agent: claude, cod
         _install_hook_logic_codex(config_path, hook_bin)
     elif agent == "copilot":
         _install_hook_logic_copilot(config_path, hook_bin)
+    elif agent == "kimi":
+        config_path = kimi_config_path()
+        _install_hook_logic_kimi(config_path, hook_bin)
+    elif agent == "goose":
+        _install_hook_logic_goose(config_path, hook_bin)
 
     typer.echo(f"\nHook installed for {agent_name}: {hook_bin}")
     typer.echo(f"Config updated: {config_path}")
