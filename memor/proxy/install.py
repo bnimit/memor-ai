@@ -68,6 +68,9 @@ def install_claude_proxy(port: int) -> None:
     
     # Set proxy_agent flag
     set_proxy_agent("claude", True)
+    
+    # Register MCP server
+    register_mcp_claude()
 
 
 def install_codex_proxy(port: int) -> None:
@@ -108,6 +111,9 @@ def install_codex_proxy(port: int) -> None:
     
     # Set proxy_agent flag
     set_proxy_agent("codex", True)
+    
+    # Register MCP server
+    register_mcp_codex()
 
 
 def uninstall_agent_proxy(agent: str) -> None:

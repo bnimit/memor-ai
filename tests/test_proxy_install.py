@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import pytest
+from unittest.mock import patch
 from memor.proxy.install import (
     backup_agent_config,
     install_claude_proxy,
@@ -290,3 +291,91 @@ def test_roundtrip_install_uninstall_codex(mock_home):
     assert config == original
     assert "openai_base_url" not in config
     assert not is_proxy_agent("codex")
+
+
+def test_install_claude_proxy_registers_mcp(mock_home, monkeypatch):
+    """Claude proxy install also registers memor_retrieve MCP server."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    
+    # Mock shutil.which to return a fake binary path
+    fake_binary = "/fake/path/memor-retrieve-mcp"
+    with patch("shutil.which", return_value=fake_binary):
+        install_claude_proxy(8421)
+    
+    # Verify settings include both proxy and MCP
+    settings = json.loads(settings_path.read_text())
+    assert settings["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8421"
+    assert "mcpServers" in settings
+    assert "memor_retrieve" in settings["mcpServers"]
+    assert settings["mcpServers"]["memor_retrieve"]["command"] == fake_binary
+    assert settings["mcpServers"]["memor_retrieve"]["args"] == []
+    
+    # Verify MCP backup was created
+    mcp_backup = memor_dir / "mcp-backup-claude.json"
+    assert mcp_backup.exists()
+
+
+def test_install_codex_proxy_registers_mcp(mock_home, monkeypatch):
+    """Codex proxy install also registers memor_retrieve MCP server."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    codex_dir = mock_home / ".codex"
+    codex_dir.mkdir()
+    config_path = codex_dir / "config.toml"
+    
+    # Mock shutil.which to return a fake binary path
+    fake_binary = "/fake/path/memor-retrieve-mcp"
+    with patch("shutil.which", return_value=fake_binary):
+        install_codex_proxy(8421)
+    
+    # Verify config includes both proxy and MCP
+    config = config_path.read_text()
+    assert 'openai_base_url = "http://127.0.0.1:8421/v1"' in config
+    assert "[mcp_servers.memor_retrieve]" in config
+    assert f'command = "{fake_binary}"' in config
+    
+    # Verify MCP backup was created
+    mcp_backup = memor_dir / "mcp-backup-codex.toml"
+    assert mcp_backup.exists()
+
+
+def test_uninstall_removes_mcp_server(mock_home):
+    """Uninstall removes both proxy URL and MCP server by restoring original config."""
+    memor_dir = mock_home / ".memor"
+    memor_dir.mkdir()
+    
+    claude_dir = mock_home / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.json"
+    
+    # Start with clean settings
+    original = {"existing": "value"}
+    settings_path.write_text(json.dumps(original, indent=2))
+    
+    # Install proxy (which includes MCP)
+    fake_binary = "/fake/path/memor-retrieve-mcp"
+    with patch("shutil.which", return_value=fake_binary):
+        install_claude_proxy(8421)
+    
+    set_proxy_agent("claude", True)
+    
+    # Verify both proxy and MCP are present
+    settings = json.loads(settings_path.read_text())
+    assert "ANTHROPIC_BASE_URL" in settings["env"]
+    assert "mcpServers" in settings
+    assert "memor_retrieve" in settings["mcpServers"]
+    
+    # Uninstall
+    uninstall_agent_proxy("claude")
+    
+    # Verify both proxy and MCP are removed (restored to original)
+    settings = json.loads(settings_path.read_text())
+    assert settings == original
+    assert "env" not in settings
+    assert "mcpServers" not in settings
