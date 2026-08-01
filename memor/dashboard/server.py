@@ -208,19 +208,123 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "embedder_dim": int(dim_row["value"]) if dim_row else None,
         }
 
+    @app.get("/api/savings-ledger")
+    def savings_ledger(days: int = Query(30, ge=1, le=90)):
+        import json
+        import time as _time
+        store = _store()
+        cutoff = _time.time() - (days * 86400)
+        
+        # Summary
+        summary = store.get_proxy_savings_summary(days)
+        
+        # Per-day series
+        per_day = store.db.execute("""
+            SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+                   SUM(tokens_before) as tokens_before,
+                   SUM(tokens_after) as tokens_after
+            FROM proxy_savings
+            WHERE timestamp >= ?
+            GROUP BY day
+            ORDER BY day
+        """, (cutoff,)).fetchall()
+        
+        # Content types breakdown
+        content_type_rows = store.db.execute("""
+            SELECT content_types
+            FROM proxy_savings
+            WHERE timestamp >= ?
+        """, (cutoff,)).fetchall()
+        
+        # The proxy pipeline writes {content_type: payloads_compressed}; the
+        # ledger has no per-type token split, so we report compressed counts.
+        ct_totals: dict[str, int] = {}
+        for row in content_type_rows:
+            if not row["content_types"]:
+                continue
+            try:
+                cts = json.loads(row["content_types"])
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(cts, dict):
+                continue
+            for ct, count in cts.items():
+                if isinstance(count, (int, float)):
+                    ct_totals[ct] = ct_totals.get(ct, 0) + int(count)
+        
+        content_types = [
+            {"content_type": ct, "count": count}
+            for ct, count in sorted(ct_totals.items(), key=lambda kv: -kv[1])
+        ]
+        
+        return {
+            "summary": summary,
+            "per_day": [dict(r) for r in per_day],
+            "content_types": content_types,
+        }
+
+    @app.get("/api/proxy-status")
+    def proxy_status():
+        import socket
+        import subprocess
+        from memor.config import load_config, proxy_port
+        
+        cfg = load_config()
+        port = proxy_port()
+        
+        # Check proxy: TCP connect to 127.0.0.1:proxy_port or HTTP /health
+        proxy_healthy = False
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1.0)
+            result = sock.connect_ex(("127.0.0.1", port))
+            proxy_healthy = (result == 0)
+            sock.close()
+        except Exception:
+            pass
+        
+        # Check hook: ~/.memor/hook.sock exists
+        hook_path = Path.home() / ".memor" / "hook.sock"
+        hook_healthy = hook_path.exists()
+        
+        # Check daemon: use service status (launchctl/systemd) or log mtime fallback
+        daemon_healthy = False
+        try:
+            import platform
+            if platform.system() == "Darwin":
+                # macOS: check launchctl
+                label = "ai.memor.daemon"
+                r = subprocess.run(
+                    ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+                    capture_output=True, text=True, timeout=2
+                )
+                daemon_healthy = (r.returncode == 0 and "pid =" in r.stdout)
+            else:
+                # Linux: check systemd
+                r = subprocess.run(
+                    ["systemctl", "--user", "is-active", "memor-daemon"],
+                    capture_output=True, text=True, timeout=2
+                )
+                daemon_healthy = (r.stdout.strip() == "active")
+        except Exception:
+            # Fallback: check daemon.log mtime (recently touched = running)
+            import time as _time
+            log_path = Path.home() / ".memor" / "daemon.log"
+            if log_path.exists():
+                mtime = log_path.stat().st_mtime
+                daemon_healthy = (_time.time() - mtime < 300)  # touched in last 5 min
+        
+        return {
+            "proxy": proxy_healthy,
+            "hook": hook_healthy,
+            "daemon": daemon_healthy,
+            "proxy_agents": cfg.get("proxy_agents", {}),
+        }
+
     return app
 
 
 def _get_dim(db_path: str) -> int:
     """Read dim from meta table, default to 1536 (OpenAI)."""
-    import sqlite3
-    try:
-        db = sqlite3.connect(db_path)
-        db.row_factory = sqlite3.Row
-        row = db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
-        db.close()
-        if row:
-            return int(row["value"])
-    except Exception:
-        pass
-    return 1536
+    from memor.store.sqlite_store import read_dim
+    return read_dim(db_path, 1536)

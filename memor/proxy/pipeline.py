@@ -1,0 +1,118 @@
+from __future__ import annotations
+from dataclasses import dataclass
+from uuid import uuid4
+import time
+from memor.compress import compress_text
+from memor.proxy.adapters import extract_latest_tool_payloads, apply_payload_text
+from memor.store.sqlite_store import SqliteStore
+from memor.tokencount import count_tokens
+
+# CCR eviction is cheap but not free; amortise it across requests.
+_EVICT_INTERVAL_SECONDS = 300.0
+_last_evict_at = 0.0
+
+def _maybe_evict(store: SqliteStore) -> None:
+    """Run CCR eviction at most once per _EVICT_INTERVAL_SECONDS. Best effort."""
+    global _last_evict_at
+    now = time.time()
+    if now - _last_evict_at < _EVICT_INTERVAL_SECONDS:
+        return
+    _last_evict_at = now
+    try:
+        from memor.config import ccr_ttl_seconds, ccr_max_bytes
+        store.ccr_evict(ccr_ttl_seconds(), ccr_max_bytes())
+    except Exception:
+        pass
+
+@dataclass
+class PipelineResult:
+    """Result of running the compression pipeline."""
+    body: dict
+    tokens_before: int
+    tokens_after: int
+    content_types: dict
+    passthrough: bool
+    ccr_ids: list[str]
+
+def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResult:
+    """Run the compression pipeline on latest-turn tool payloads.
+    
+    Compresses only the latest turn's tool payloads, leaving earlier turns
+    unchanged for cache safety. On compression failure per payload, leaves
+    that payload unchanged. Sets passthrough=True only if all payloads failed
+    or none were compressed.
+
+    Token counts include the CCR marker line, and a payload is left verbatim
+    (no marker, no CCR blob) whenever the marked-up result would not be smaller
+    than the original.
+    """
+    _maybe_evict(store)
+    
+    # Extract latest tool payloads
+    payloads = extract_latest_tool_payloads(provider, body)
+    
+    if not payloads:
+        # No payloads to compress
+        return PipelineResult(
+            body=body,
+            tokens_before=0,
+            tokens_after=0,
+            content_types={},
+            passthrough=True,
+            ccr_ids=[]
+        )
+    
+    # Compress each payload
+    compressed_payloads = []
+    ccr_ids = []
+    content_type_counts = {}
+    total_tokens_before = 0
+    total_tokens_after = 0
+    success_count = 0
+    
+    for payload in payloads:
+        result = compress_text(payload.text)
+        
+        total_tokens_before += result.tokens_before
+        
+        # Compression failed or was a no-op: nothing to reference, nothing to save.
+        if result.passthrough or result.text == payload.text:
+            compressed_payloads.append((payload.path, payload.text, None))
+            total_tokens_after += result.tokens_before
+            continue
+        
+        ccr_id = uuid4().hex
+        marked_text = f"[memor:ccr:{ccr_id}]\n{result.text}"
+        marked_tokens = count_tokens(marked_text)
+        
+        # The marker plus retrieval affordance has to pay for itself.
+        if marked_tokens >= result.tokens_before:
+            compressed_payloads.append((payload.path, payload.text, None))
+            total_tokens_after += result.tokens_before
+            continue
+        
+        success_count += 1
+        store.ccr_put(ccr_id, payload.text, result.content_type, time.time())
+        ccr_ids.append(ccr_id)
+        compressed_payloads.append((payload.path, marked_text, result.content_type))
+        total_tokens_after += marked_tokens
+        
+        ct = result.content_type
+        content_type_counts[ct] = content_type_counts.get(ct, 0) + 1
+    
+    # Apply compressed payloads to body
+    updated_body = body
+    for path, new_text, content_type in compressed_payloads:
+        updated_body = apply_payload_text(updated_body, path, new_text)
+    
+    # Determine passthrough: True if all failed or none compressed
+    passthrough = (success_count == 0)
+    
+    return PipelineResult(
+        body=updated_body,
+        tokens_before=total_tokens_before,
+        tokens_after=total_tokens_after,
+        content_types=content_type_counts,
+        passthrough=passthrough,
+        ccr_ids=ccr_ids
+    )

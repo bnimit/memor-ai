@@ -36,6 +36,7 @@ dependencies = [
 [project.optional-dependencies]
 api-embed = ["openai>=1.0"]
 anthropic = ["anthropic>=0.40"]
+llm = ["llama-cpp-python>=0.3.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [project.urls]
@@ -46,6 +47,7 @@ Issues = "https://github.com/bnimit/memor-ai/issues"
 [project.scripts]
 memor = "memor.cli:app"
 memor-hook = "memor.hook_cli:main"
+memor-retrieve-mcp = "memor.proxy.mcp_retrieve:main"
 
 [tool.setuptools.packages.find]
 include = ["memor*"]

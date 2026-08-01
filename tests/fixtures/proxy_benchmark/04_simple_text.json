@@ -1,0 +1,21 @@
+{
+  "name": "simple_text",
+  "provider": "anthropic",
+  "tool_rich": false,
+  "required_substrings": ["Hello", "world"],
+  "body": {
+    "model": "claude-sonnet-4-0",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "call_3",
+            "content": "Hello world! This is a simple text response with minimal content."
+          }
+        ]
+      }
+    ]
+  }
+}

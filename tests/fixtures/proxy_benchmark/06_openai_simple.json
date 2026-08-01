@@ -1,0 +1,33 @@
+{
+  "name": "openai_simple",
+  "provider": "openai",
+  "tool_rich": false,
+  "required_substrings": ["Task", "completed"],
+  "body": {
+    "model": "gpt-4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Execute command"
+      },
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_simple_1",
+            "type": "function",
+            "function": {
+              "name": "run",
+              "arguments": "{\"cmd\": \"echo done\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_simple_1",
+        "content": "Task completed successfully."
+      }
+    ]
+  }
+}

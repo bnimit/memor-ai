@@ -14,6 +14,16 @@ IDLE_TIMEOUT_S = 600
 
 
 def detect_agent(req: dict) -> str:
+    # Install stamps MEMOR_HOOK_AGENT into the hook command; hook_cli forwards it
+    # as `_memor_agent` so Kimi (Claude-shaped payload) and Goose stay distinct.
+    stamped = req.get("_memor_agent")
+    if stamped in ("claude", "codex", "copilot", "cursor", "kimi", "goose"):
+        return stamped
+    # Goose uses `event` (not `hook_event_name`) and puts the prompt in `message`.
+    if req.get("event") == "UserPromptSubmit" or (
+        "event" in req and "message" in req and "hook_event_name" not in req
+    ):
+        return "goose"
     event = req.get("hook_event_name", "")
     if event == "userPromptSubmitted":
         return "copilot"
@@ -36,12 +46,37 @@ def detect_agent(req: dict) -> str:
 def format_hook_response(agent: str, additional_context: str) -> dict:
     if agent == "copilot":
         return {"additionalContext": additional_context}
+    # Goose's advise-tier parser looks for hookSpecificOutput.additionalContext
+    # and does not require hookEventName.
+    if agent == "goose":
+        return {
+            "hookSpecificOutput": {
+                "additionalContext": additional_context,
+            }
+        }
     return {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
             "additionalContext": additional_context,
         }
     }
+
+
+def serialize_hook_stdout(agent: str, result: dict) -> str:
+    """Encode the hook response for the calling agent.
+
+    Kimi appends non-empty stdout as context text. Emitting JSON would inject the
+    JSON string literally, so Kimi gets the plain additionalContext instead.
+    """
+    if agent == "kimi":
+        hso = result.get("hookSpecificOutput") or {}
+        text = (
+            hso.get("additionalContext")
+            or result.get("additionalContext")
+            or ""
+        )
+        return text
+    return json.dumps(result)
 
 _embedder = None
 _last_activity = 0.0
@@ -73,20 +108,30 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
     from memor.recall import recall, _status_message
     from memor.project import resolve_project
 
-    cwd = req.get("cwd", "")
+    agent = detect_agent(req)
+    cwd = req.get("cwd") or req.get("working_dir") or ""
     if not cwd:
         # Cursor sends `workspace_roots` (a list) instead of `cwd`; fall back to
         # the first root so the recall is scoped to the real project.
         roots = req.get("workspace_roots") or []
         if roots:
             cwd = roots[0]
+    # Goose UserPromptSubmit payloads omit working_dir; the hook runs with the
+    # session project as process cwd.
+    if not cwd and agent == "goose":
+        cwd = str(Path.cwd())
     project = resolve_project(cwd) if cwd else "unknown"
-    query = req.get("prompt", "")
+    # Goose puts the prompt in `message`; everyone else uses `prompt`.
+    query = req.get("prompt") or req.get("message") or ""
     session_id = req.get("session_id", "")
 
     if embedder is _UNSET:
         embedder = _get_embedder()
-    agent = detect_agent(req)
+
+    # The hook deliberately still recalls for proxied agents. Proxy-side inject
+    # is best-effort (it cannot see the working directory, so project scoping is
+    # weak); skipping here traded a duplicate-inject risk for zero memory.
+    # Re-enable the skip only once proxy inject is reliable.
 
     if embedder is None:
         msg = _status_message("no_embedder", project, 0, 0, 0.0)

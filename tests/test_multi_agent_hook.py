@@ -1,7 +1,9 @@
-"""Tests for multi-agent hook support (Claude Code, Codex, Copilot)."""
+"""Tests for multi-agent hook support (Claude, Codex, Copilot, Kimi, Goose)."""
 import json
 import sqlite3
-from memor.hook_server import detect_agent, format_hook_response, handle_request
+from memor.hook_server import (
+    detect_agent, format_hook_response, handle_request, serialize_hook_stdout,
+)
 from memor.store.sqlite_store import SqliteStore
 from memor.embed.fake import FakeEmbedder
 from memor.types import Artifact
@@ -12,6 +14,24 @@ from memor.types import Artifact
 def test_detect_claude_code():
     req = {"cwd": "/proj", "prompt": "auth flow", "session_id": "s1"}
     assert detect_agent(req) == "claude"
+
+
+def test_detect_kimi_via_stamp():
+    # Kimi payloads look like Claude; install stamps _memor_agent via env.
+    req = {"cwd": "/proj", "prompt": "auth flow", "session_id": "s1",
+           "hook_event_name": "UserPromptSubmit", "_memor_agent": "kimi"}
+    assert detect_agent(req) == "kimi"
+
+
+def test_detect_goose():
+    req = {"event": "UserPromptSubmit", "session_id": "s1",
+           "matcher_context": "auth flow", "message": "auth flow"}
+    assert detect_agent(req) == "goose"
+
+
+def test_detect_goose_via_stamp():
+    req = {"event": "UserPromptSubmit", "message": "x", "_memor_agent": "goose"}
+    assert detect_agent(req) == "goose"
 
 
 def test_detect_codex():
@@ -104,6 +124,30 @@ def test_format_response_copilot():
     assert resp == {"additionalContext": "recalled memories here"}
 
 
+def test_format_response_goose():
+    resp = format_hook_response("goose", "recalled memories here")
+    assert resp == {
+        "hookSpecificOutput": {
+            "additionalContext": "recalled memories here",
+        }
+    }
+
+
+def test_format_response_kimi_uses_claude_shape():
+    resp = format_hook_response("kimi", "recalled memories here")
+    assert resp["hookSpecificOutput"]["additionalContext"] == "recalled memories here"
+
+
+def test_serialize_kimi_stdout_is_plain_text():
+    resp = format_hook_response("kimi", "recalled memories here")
+    assert serialize_hook_stdout("kimi", resp) == "recalled memories here"
+
+
+def test_serialize_goose_stdout_is_json():
+    resp = format_hook_response("goose", "ctx")
+    assert json.loads(serialize_hook_stdout("goose", resp)) == resp
+
+
 # --- handle_request returns correct format per agent ---
 
 def _make_db(tmp_path):
@@ -159,6 +203,33 @@ def test_handle_request_cursor_resolves_project_from_workspace_roots(tmp_path):
     assert row["agent"] == "cursor"
 
 
+def test_handle_request_goose_uses_message_and_cwd(tmp_path, monkeypatch):
+    db_path, e = _make_db(tmp_path)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    req = {"event": "UserPromptSubmit", "session_id": "g1",
+           "message": "password hashing"}
+    resp = handle_request(req, db_path=db_path, embedder=e)
+    assert "hookSpecificOutput" in resp
+    assert "hookEventName" not in resp["hookSpecificOutput"]
+    store = SqliteStore(db_path, dim=16)
+    row = store.db.execute(
+        "SELECT project, agent FROM recall_log ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["agent"] == "goose"
+    assert row["project"] == "proj"
+
+
+def test_handle_request_kimi_stamped(tmp_path):
+    db_path, e = _make_db(tmp_path)
+    req = {"cwd": "/proj", "prompt": "password hashing", "session_id": "k1",
+           "hook_event_name": "UserPromptSubmit", "_memor_agent": "kimi"}
+    handle_request(req, db_path=db_path, embedder=e)
+    store = SqliteStore(db_path, dim=16)
+    row = store.db.execute("SELECT agent FROM recall_log").fetchone()
+    assert row["agent"] == "kimi"
+
+
 # --- install-hook config generation ---
 
 def test_install_hook_codex(tmp_path):
@@ -197,6 +268,52 @@ def test_install_hook_codex_updates_existing(tmp_path):
     assert len(memor_entries) == 1
     old_entries = [e for e in entries if "old-hook" in e.get("command", "")]
     assert len(old_entries) == 1
+
+
+def test_install_hook_kimi(tmp_path):
+    from memor.cli import _install_hook_logic_kimi
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        'default_model = "kimi-for-coding"\nhooks = []\n\n[loop_control]\nmax = 1\n'
+    )
+    _install_hook_logic_kimi(config_path, "/usr/bin/memor-hook")
+    text = config_path.read_text()
+    assert "hooks = []" not in text
+    assert 'event = "UserPromptSubmit"' in text
+    assert "MEMOR_HOOK_AGENT=kimi" in text
+    assert "memor-hook" in text
+    assert "[loop_control]" in text
+
+
+def test_install_hook_kimi_idempotent(tmp_path):
+    from memor.cli import _install_hook_logic_kimi
+    config_path = tmp_path / "config.toml"
+    _install_hook_logic_kimi(config_path, "/usr/bin/memor-hook")
+    _install_hook_logic_kimi(config_path, "/opt/memor-hook")
+    text = config_path.read_text()
+    assert text.count("[[hooks]]") == 1
+    assert "/opt/memor-hook" in text
+
+
+def test_install_hook_goose(tmp_path):
+    from memor.cli import _install_hook_logic_goose
+    plugin_dir = tmp_path / "memor"
+    _install_hook_logic_goose(plugin_dir, "/usr/bin/memor-hook")
+    plugin = json.loads((plugin_dir / "plugin.json").read_text())
+    assert plugin["name"] == "memor"
+    hooks = json.loads((plugin_dir / "hooks" / "hooks.json").read_text())
+    cmd = hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+    assert "MEMOR_HOOK_AGENT=goose" in cmd
+    assert "memor-hook" in cmd
+
+
+def test_kimi_config_path_prefers_dot_kimi(tmp_path):
+    from memor.cli import kimi_config_path
+    (tmp_path / ".kimi").mkdir()
+    (tmp_path / ".kimi" / "config.toml").write_text("x = 1\n")
+    (tmp_path / ".kimi-code").mkdir()
+    (tmp_path / ".kimi-code" / "config.toml").write_text("x = 2\n")
+    assert kimi_config_path(tmp_path) == tmp_path / ".kimi" / "config.toml"
 
 
 # --- Agent tracking in recall_log ---

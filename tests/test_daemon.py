@@ -120,9 +120,10 @@ def test_poll_cycle_ingests_new_files(tmp_path):
     )
 
     state = {}
-    state, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
+    state, _, counts = run_poll_cycle(state, store, embedder, tmp_path / "projects")
     assert str(t) in state
     assert state[str(t)] == t.stat().st_mtime
+    assert counts.get("claude", 0) >= 1
 
 def test_poll_cycle_skips_already_ingested(tmp_path):
     from memor.embed.fake import FakeEmbedder
@@ -141,9 +142,10 @@ def test_poll_cycle_skips_already_ingested(tmp_path):
 
     # Pre-populate state with current mtime
     state = {str(t): t.stat().st_mtime}
-    state_after, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
+    state_after, _, counts = run_poll_cycle(state, store, embedder, tmp_path / "projects")
     # State should be unchanged (file was skipped)
     assert state_after == state
+    assert counts == {}
 
 def test_poll_cycle_reingests_modified_file(tmp_path):
     from memor.embed.fake import FakeEmbedder
@@ -162,7 +164,7 @@ def test_poll_cycle_reingests_modified_file(tmp_path):
 
     # Pre-populate state with an older mtime
     state = {str(t): t.stat().st_mtime - 100}
-    state_after, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
+    state_after, _, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
     # State should now reflect the current mtime
     assert state_after[str(t)] == t.stat().st_mtime
 
@@ -184,10 +186,29 @@ def test_poll_cycle_handles_bad_file(tmp_path):
     )
 
     state = {}
-    state, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
+    state, _, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
     # Good file should be in state, bad file should not (error -> no state update)
     assert str(good) in state
     assert str(bad) not in state
+
+
+def test_poll_cycle_missing_goose_db_does_not_crash(tmp_path):
+    from memor.embed.fake import FakeEmbedder
+    from memor.store.sqlite_store import SqliteStore
+
+    db = str(tmp_path / "test.db")
+    embedder = FakeEmbedder(dim=16)
+    store = SqliteStore(db, dim=embedder.dim)
+    state, _, counts = run_poll_cycle(
+        {},
+        store,
+        embedder,
+        tmp_path / "projects",
+        kimi_sessions_dir=tmp_path / "no-kimi",
+        goose_db_path=tmp_path / "missing" / "sessions.db",
+    )
+    assert state == {}
+    assert counts == {}
 
 
 # -- distilled state -----------------------------------------------------------

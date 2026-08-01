@@ -9,7 +9,8 @@ class OpenAICompatLLM:
         # the field (server default) for normal use.
         self.temperature = temperature
 
-    def complete(self, prompt: str, *, max_tokens: int = 1024) -> str:
+    def complete(self, prompt: str, *, max_tokens: int = 1024, grammar: str | None = None) -> str:
+        # grammar accepted for interface parity; ignored (no GBNF over HTTP)
         payload = {
             "model": self.model,
             "max_tokens": max_tokens,

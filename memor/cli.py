@@ -16,17 +16,8 @@ def _db_path(db: str) -> str:
     return str(Path(db).expanduser())
 
 def _get_dim(db_path: str) -> int:
-    import sqlite3
-    try:
-        db = sqlite3.connect(db_path)
-        db.row_factory = sqlite3.Row
-        row = db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
-        db.close()
-        if row:
-            return int(row["value"])
-    except Exception:
-        pass
-    return 256
+    from memor.store.sqlite_store import read_dim
+    return read_dim(db_path, 256)
 
 def _embedder(fake: bool):
     if fake:
@@ -87,6 +78,7 @@ EVALUATION
   memor eval-judge --project <name>    LLM-as-judge evaluation
   memor eval-counterfactual --project  Win/tie/loss vs no-memory baseline
   memor bench-embed --project <name>   Compare embedding models
+  memor eval-proxy                     Proxy compression benchmark (release gate)
 
 CONFIGURATION
   Everything works locally with zero API keys.
@@ -260,6 +252,80 @@ def bench_embed(project: str = typer.Option(...), db: str = "memor.db",
                    f"{r.embed_latency_ms:>10.1f} {r.retrieval_latency_ms:>10.1f}")
 
 
+@app.command("eval-proxy")
+def eval_proxy(fixtures_dir: str = typer.Option(None, help="Path to fixtures directory")):
+    """Run the proxy compression benchmark (release gate: ≥15% mean savings on tool-rich fixtures)."""
+    from memor.eval.proxy_benchmark import run_benchmark
+    
+    if fixtures_dir is None:
+        # Default to shipped fixtures
+        fixtures_dir = Path(__file__).parent / "eval" / "proxy_benchmark_fixtures"
+        if not fixtures_dir.exists():
+            # Try relative to package root
+            import memor
+            pkg_root = Path(memor.__file__).parent.parent
+            fixtures_dir = pkg_root / "tests" / "fixtures" / "proxy_benchmark"
+    else:
+        fixtures_dir = Path(fixtures_dir)
+    
+    if not fixtures_dir.exists():
+        typer.echo(f"Fixtures directory not found: {fixtures_dir}", err=True)
+        raise typer.Exit(1)
+    
+    typer.echo(f"Running proxy benchmark on fixtures in: {fixtures_dir}")
+    report = run_benchmark(fixtures_dir)
+    
+    # Print results
+    typer.echo()
+    typer.echo("=" * 80)
+    typer.echo(f"{'Fixture':<25} {'Rich':<5} {'Before':>7} {'After':>7} {'Saved':>7} {'Pass':>5}")
+    typer.echo("=" * 80)
+    
+    for task in report.tasks:
+        rich = "✓" if task["tool_rich"] else " "
+        passed = "✓" if task["passed"] else "✗"
+        typer.echo(
+            f"{task['name']:<25} {rich:<5} "
+            f"{task['tokens_before']:>7} {task['tokens_after']:>7} "
+            f"{task['pct_saved']:>6.1f}% {passed:>5}"
+        )
+    
+    typer.echo("=" * 80)
+    typer.echo(f"Tool-rich mean savings: {report.tool_rich_mean_pct_saved:.1f}%")
+    
+    # Check release gate (updated criteria)
+    tool_rich_tasks = [t for t in report.tasks if t["tool_rich"]]
+    tool_rich_with_savings = [t for t in tool_rich_tasks if t["pct_saved"] > 0]
+    
+    typer.echo()
+    if report.gate_passed:
+        typer.echo("✓ RELEASE GATE PASSED")
+        typer.echo(f"  ✓ Mean tool-rich savings: {report.tool_rich_mean_pct_saved:.1f}% (≥15%)")
+        typer.echo(f"  ✓ Tool-rich with savings: {len(tool_rich_with_savings)}/{len(tool_rich_tasks)} (≥3)")
+        typer.echo(f"  ✓ All fixtures passed substring checks")
+        raise typer.Exit(0)
+    else:
+        typer.echo("✗ RELEASE GATE FAILED", err=True)
+        if report.tool_rich_mean_pct_saved < 15.0:
+            typer.echo(f"  ✗ Mean savings {report.tool_rich_mean_pct_saved:.1f}% < 15%", err=True)
+        else:
+            typer.echo(f"  ✓ Mean savings {report.tool_rich_mean_pct_saved:.1f}% ≥ 15%", err=True)
+        
+        if len(tool_rich_with_savings) < 3:
+            typer.echo(f"  ✗ Tool-rich with savings: {len(tool_rich_with_savings)}/{len(tool_rich_tasks)} (need ≥3)", err=True)
+        else:
+            typer.echo(f"  ✓ Tool-rich with savings: {len(tool_rich_with_savings)}/{len(tool_rich_tasks)}", err=True)
+        
+        all_passed = all(t["passed"] for t in report.tasks)
+        if not all_passed:
+            failed = [t["name"] for t in report.tasks if not t["passed"]]
+            typer.echo(f"  ✗ Failed fixtures: {', '.join(failed)}", err=True)
+        else:
+            typer.echo(f"  ✓ All fixtures passed substring checks", err=True)
+        
+        raise typer.Exit(1)
+
+
 @app.command("distill")
 def distill(project: str = typer.Option(...), db: str = "memor.db",
             fake: bool = False, llm_provider: str = "anthropic", llm_model: str = "claude-sonnet-4-6"):
@@ -285,6 +351,31 @@ def distill(project: str = typer.Option(...), db: str = "memor.db",
         total += len(ids)
         typer.echo(f"  session {sid}: {len(ids)} memories")
     typer.echo(f"distilled {total} memories from {len(by_session)} sessions")
+
+
+@app.command("redistill")
+def redistill_cmd(project: str = typer.Option(...), db: str = "memor.db",
+                  questions: bool = False, yes: bool = False):
+    """Re-distill a project's raw sessions with the local model (opt-in backfill)."""
+    import os
+    os.environ.setdefault("MEMOR_LLM_DISTILL", "1")
+    from memor.daemon import _make_llm, redistill_project
+    from memor.embed.local import LocalEmbedder
+    from memor.store.sqlite_store import SqliteStore
+    llm = _make_llm()
+    if llm is None:
+        typer.echo("No local model available. Install llama-cpp-python + set MEMOR_LLM_DISTILL=1.")
+        raise typer.Exit(1)
+    if not yes:
+        typer.echo("This re-distills the whole project locally (minutes to hours "
+                   "on CPU). Old distilled memories are deactivated (reversible). "
+                   "Re-run with --yes to proceed.")
+        raise typer.Exit(0)
+    e = LocalEmbedder()
+    s = SqliteStore(db, dim=e.dim)
+    def prog(i, n, sid): typer.echo(f"[{i}/{n}] {sid}")
+    stats = redistill_project(s, e, llm, project, gen_questions=questions, progress=prog)
+    typer.echo(f"Redistill complete: {stats}")
 
 
 @app.command("ingest-project")
@@ -366,7 +457,7 @@ def reingest(project: str = typer.Option(None, help="Only reingest a specific pr
         embedder = _make_embedder()
         store = SqliteStore(str(DEFAULT_DB), dim=embedder.dim)
         typer.echo(f"Re-ingesting from {d}...")
-        state, distilled = run_poll_cycle({}, store, embedder, d)
+        state, distilled, _ = run_poll_cycle({}, store, embedder, d)
         save_state(state)
         save_distilled_state(distilled)
         chunks = store.db.execute(
@@ -461,10 +552,47 @@ def scan(db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
 @app.command("daemon")
 def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
            projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/")):
-    """Run the auto-ingest daemon (foreground). Watches ~/.claude/projects/ for new transcripts."""
+    """Run the auto-ingest daemon (foreground). Watches Claude, Kimi, and Goose sessions."""
     from memor.daemon import run_daemon, CLAUDE_PROJECTS_DIR
     d = Path(projects_dir) if projects_dir else CLAUDE_PROJECTS_DIR
     run_daemon(poll_interval=poll_interval, projects_dir=d)
+
+
+@app.command("backfill")
+def backfill(
+    projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/"),
+    db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+):
+    """One-shot ingest of Claude, Kimi, and Goose sessions into the memory store."""
+    from memor.daemon import (
+        CLAUDE_PROJECTS_DIR, DEFAULT_DB, _make_embedder, _make_llm, run_backfill,
+    )
+    from memor.store.sqlite_store import SqliteStore
+
+    db_path = _db_path(db) if db else str(DEFAULT_DB)
+    embedder = _make_embedder()
+    store = SqliteStore(db_path, dim=embedder.dim)
+    llm = _make_llm()
+    claude_dir = Path(projects_dir) if projects_dir else CLAUDE_PROJECTS_DIR
+    typer.echo("Backfilling local agent sessions (Claude + Kimi + Goose)...")
+    counts = run_backfill(
+        store,
+        embedder,
+        projects_dir=claude_dir,
+        llm=llm,
+    )
+    if counts:
+        for agent, n in sorted(counts.items()):
+            typer.echo(f"  {agent}: {n} chunks")
+    else:
+        typer.echo("  nothing new to ingest")
+    chunks = store.db.execute(
+        "SELECT COUNT(*) as c FROM artifacts WHERE kind='session_chunk' AND active=1"
+    ).fetchone()["c"]
+    memories = store.db.execute(
+        "SELECT COUNT(*) as c FROM artifacts WHERE kind='memory' AND active=1"
+    ).fetchone()["c"]
+    typer.echo(f"Store now: {chunks} chunks, {memories} memories")
 
 
 def _install_hook_logic(settings_path: Path, hook_command: str) -> None:
@@ -536,10 +664,91 @@ def _install_hook_logic_copilot(hooks_path: Path, hook_command: str) -> None:
     hooks_path.write_text(json.dumps(data, indent=2))
 
 
+def _stamp_hook_command(agent: str, hook_command: str) -> str:
+    """Prefix the hook command so memor-hook can label the calling agent."""
+    return f"env MEMOR_HOOK_AGENT={agent} {hook_command}"
+
+
+def kimi_config_path(home: Path | None = None) -> Path:
+    """Prefer ~/.kimi/config.toml; fall back to ~/.kimi-code/config.toml."""
+    root = home if home is not None else Path.home()
+    primary = root / ".kimi" / "config.toml"
+    if primary.exists():
+        return primary
+    alt = root / ".kimi-code" / "config.toml"
+    if alt.exists():
+        return alt
+    return primary
+
+
+def _install_hook_logic_kimi(config_path: Path, hook_command: str) -> None:
+    """Add a UserPromptSubmit [[hooks]] entry to Kimi's config.toml."""
+    import re
+
+    stamped = _stamp_hook_command("kimi", hook_command)
+    text = config_path.read_text() if config_path.exists() else ""
+    # Empty `hooks = []` conflicts with [[hooks]] array-of-tables syntax.
+    lines = [
+        line for line in text.splitlines()
+        if line.strip().replace(" ", "") != "hooks=[]"
+    ]
+    text = "\n".join(lines)
+    # Drop any prior memor [[hooks]] block so reinstall is idempotent.
+    parts = re.split(r"(?=^\[\[hooks\]\])", text, flags=re.M)
+    kept: list[str] = []
+    for part in parts:
+        if part.startswith("[[hooks]]") and "memor-hook" in part:
+            continue
+        kept.append(part)
+    text = "".join(kept).rstrip()
+    block = (
+        "[[hooks]]\n"
+        'event = "UserPromptSubmit"\n'
+        f'command = "{stamped}"\n'
+        "timeout = 5\n"
+    )
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    if text:
+        config_path.write_text(text + "\n\n" + block)
+    else:
+        config_path.write_text(block)
+
+
+def _install_hook_logic_goose(plugin_dir: Path, hook_command: str) -> None:
+    """Install an Open Plugins hook plugin under ~/.agents/plugins/memor/."""
+    stamped = _stamp_hook_command("goose", hook_command)
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(json.dumps({
+        "name": "memor",
+        "version": "0.1.0",
+        "description": "Memor shared memory recall on every prompt",
+    }, indent=2) + "\n")
+    hooks_dir = plugin_dir / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    data = {
+        "hooks": {
+            "UserPromptSubmit": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": stamped,
+                            "timeout": 5,
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    (hooks_dir / "hooks.json").write_text(json.dumps(data, indent=2) + "\n")
+
+
 AGENT_CHOICES = [
     ("claude", "~/.claude/settings.json", "Claude Code"),
     ("codex", "~/.codex/hooks/hooks.json", "Codex CLI"),
     ("copilot", "~/.copilot/hooks/memor.json", "Copilot CLI"),
+    ("kimi", "~/.kimi/config.toml", "Kimi CLI"),
+    ("goose", "~/.agents/plugins/memor/", "Goose"),
 ]
 
 
@@ -548,20 +757,23 @@ def _prompt_agent() -> str:
     for i, (key, _, label) in enumerate(AGENT_CHOICES, 1):
         typer.echo(f"  {i}. {label}")
     typer.echo()
+    n = len(AGENT_CHOICES)
     while True:
-        choice = typer.prompt("Choose (1-3)", default="1")
+        choice = typer.prompt(f"Choose (1-{n})", default="1")
         try:
             idx = int(choice) - 1
             if 0 <= idx < len(AGENT_CHOICES):
                 return AGENT_CHOICES[idx][0]
         except ValueError:
             pass
-        typer.echo("Invalid choice. Enter 1, 2, or 3.")
+        typer.echo(f"Invalid choice. Enter 1-{n}.")
 
 
 @app.command("install-hook")
-def install_hook(agent: str | None = typer.Option(None, help="Agent: claude, codex, copilot (interactive if omitted)")):
-    """Install the recall hook for Claude Code, Codex, or Copilot."""
+def install_hook(agent: str | None = typer.Option(
+        None,
+        help="Agent: claude, codex, copilot, kimi, goose (interactive if omitted)")):
+    """Install the recall hook for a supported coding agent."""
     import shutil
     agent_keys = {key for key, _, _ in AGENT_CHOICES}
 
@@ -571,7 +783,9 @@ def install_hook(agent: str | None = typer.Option(None, help="Agent: claude, cod
         agent = agent.lower()
 
     if agent not in agent_keys:
-        typer.echo(f"Unknown agent '{agent}'. Choose: claude, codex, copilot", err=True)
+        typer.echo(
+            f"Unknown agent '{agent}'. Choose: {', '.join(sorted(agent_keys))}",
+            err=True)
         raise typer.Exit(1)
 
     hook_bin = shutil.which("memor-hook")
@@ -592,6 +806,11 @@ def install_hook(agent: str | None = typer.Option(None, help="Agent: claude, cod
         _install_hook_logic_codex(config_path, hook_bin)
     elif agent == "copilot":
         _install_hook_logic_copilot(config_path, hook_bin)
+    elif agent == "kimi":
+        config_path = kimi_config_path()
+        _install_hook_logic_kimi(config_path, hook_bin)
+    elif agent == "goose":
+        _install_hook_logic_goose(config_path, hook_bin)
 
     typer.echo(f"\nHook installed for {agent_name}: {hook_bin}")
     typer.echo(f"Config updated: {config_path}")
@@ -631,6 +850,99 @@ def dashboard(port: int = typer.Option(8420, help="Port to serve on"),
         threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{port}")).start()
     typer.echo(f"Memor dashboard: http://localhost:{port}")
     uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
+
+
+@app.command("proxy")
+def proxy(port: int = typer.Option(None, help="Port to serve on"),
+          db: str = typer.Option(str(Path.home() / ".memor" / "memor.db"))):
+    """Launch the HTTP proxy server for Anthropic API with context compression."""
+    import uvicorn
+    from memor.proxy.server import create_proxy_app, _assert_localhost
+    from memor.config import proxy_port as get_proxy_port
+    
+    # Use config default if not specified
+    if port is None:
+        port = get_proxy_port()
+    
+    db_resolved = _db_path(db)
+    
+    # Verify localhost bind
+    _assert_localhost("127.0.0.1")
+    
+    app_instance = create_proxy_app(db_resolved)
+    typer.echo(f"Memor proxy server: http://127.0.0.1:{port}")
+    typer.echo(f"Forward Anthropic API requests to: http://127.0.0.1:{port}/v1/messages")
+    uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
+
+
+@app.command("install-proxy")
+def install_proxy(agent: str = typer.Option(
+        ..., help="Agent: claude, or codex (experimental — Chat Completions API only)")):
+    """Install proxy for an agent and ensure the proxy service is running."""
+    from memor.proxy.install import install_claude_proxy, install_codex_proxy
+    from memor.config import proxy_port as get_proxy_port
+    from memor import service
+    
+    agent = agent.lower()
+    if agent not in ["claude", "codex"]:
+        typer.echo(f"Unknown agent '{agent}'. Choose: claude or codex", err=True)
+        raise typer.Exit(1)
+    
+    port = get_proxy_port()
+    
+    try:
+        if agent == "claude":
+            install_claude_proxy(port)
+            typer.echo(f"\nInstalled Claude Code proxy:")
+            typer.echo(f"  Updated ~/.claude/settings.json")
+            typer.echo(f"  Set ANTHROPIC_BASE_URL=http://127.0.0.1:{port}")
+        elif agent == "codex":
+            install_codex_proxy(port)
+            typer.echo(f"\nInstalled Codex proxy:")
+            typer.echo(f"  Updated ~/.codex/config.toml")
+            typer.echo(f"  Set openai_base_url=http://127.0.0.1:{port}/v1")
+            typer.echo()
+            typer.echo("  Note: Codex proxy support is experimental. Memor compresses the")
+            typer.echo("  Chat Completions API (/v1/chat/completions). Codex versions that use")
+            typer.echo("  the Responses API (/v1/responses) will bypass the proxy and report")
+            typer.echo("  no savings. Memory via hooks is unaffected.")
+        
+        typer.echo(f"  Backup saved to ~/.memor/proxy-backup-{agent}.*")
+        typer.echo()
+        
+        # Ensure the proxy service is running
+        typer.echo("Ensuring proxy service is running...")
+        service.install(with_dashboard=True, with_proxy=True)
+        typer.echo()
+        typer.echo(f"Proxy ready at http://127.0.0.1:{port}")
+        typer.echo(f"All {agent} API calls will now flow through memor for context compression.")
+        
+    except Exception as e:
+        typer.echo(f"Failed to install proxy: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command("uninstall-proxy")
+def uninstall_proxy(agent: str = typer.Option(..., help="Agent: claude or codex")):
+    """Uninstall proxy for an agent (restores original config)."""
+    from memor.proxy.install import uninstall_agent_proxy
+    
+    agent = agent.lower()
+    if agent not in ["claude", "codex"]:
+        typer.echo(f"Unknown agent '{agent}'. Choose: claude or codex", err=True)
+        raise typer.Exit(1)
+    
+    try:
+        uninstall_agent_proxy(agent)
+        typer.echo(f"\nUninstalled {agent} proxy:")
+        typer.echo(f"  Restored original config from backup")
+        typer.echo(f"  Cleared proxy_agent flag")
+        typer.echo()
+        typer.echo(f"The {agent} agent will now use its default API endpoints.")
+        
+    except Exception as e:
+        typer.echo(f"Failed to uninstall proxy: {e}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("version")

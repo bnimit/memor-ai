@@ -7,6 +7,29 @@ from memor.types import Artifact, Scope, SessionUsage
 def _serialize(v: list[float]) -> bytes:
     return struct.pack("%sf" % len(v), *v)
 
+def read_dim(db_path: str, default: int) -> int:
+    """Read the embedding dimension a database was built with.
+
+    Opening a store with the wrong dim trips the dim check, so anything that
+    attaches to an existing database has to ask it first.
+
+    Does not create the database file if it is missing (read-only attach).
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return default
+    try:
+        # URI read-only so a missing/corrupt path cannot create a new empty DB.
+        db = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
+        db.row_factory = sqlite3.Row
+        row = db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
+        db.close()
+        if row:
+            return int(row["value"])
+    except Exception:
+        pass
+    return default
+
 def _choose_chunk_size(active_count: int) -> int:
     if active_count < 1000:
         return 64
@@ -32,6 +55,7 @@ class SqliteStore:
         self._migrate_quality_decay()
         self._migrate_negative_count()
         self._migrate_recall_agent()
+        self._migrate_key_vectors()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -86,6 +110,37 @@ class SqliteStore:
           tool_call_count INTEGER DEFAULT 0,
           had_recall INTEGER DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_turn_metrics_session ON turn_metrics(session_id);
+        CREATE TABLE IF NOT EXISTS key_vectors(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_id TEXT NOT NULL,
+          key_type TEXT NOT NULL,
+          key_text TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_key_mem ON key_vectors(memory_id);
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_keys USING vec0(embedding float[{self.dim}]);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_keys USING fts5(
+          key_id UNINDEXED, key_text, tokenize='porter unicode61');
+        CREATE TABLE IF NOT EXISTS proxy_savings(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp REAL,
+          agent TEXT,
+          provider TEXT,
+          session_id TEXT,
+          tokens_before INTEGER,
+          tokens_after INTEGER,
+          content_types TEXT,
+          passthrough INTEGER DEFAULT 0,
+          upstream_input_tokens INTEGER,
+          upstream_cache_read_tokens INTEGER,
+          upstream_output_tokens INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS ccr_blobs(
+          id TEXT PRIMARY KEY,
+          text TEXT NOT NULL,
+          content_type TEXT,
+          byte_len INTEGER,
+          created_at REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ccr_created ON ccr_blobs(created_at);
         """)
         self.db.commit()
 
@@ -130,6 +185,20 @@ class SqliteStore:
                 self.db.commit()
             except Exception:
                 pass
+
+    def _migrate_key_vectors(self):
+        """Create key_vectors/vec_keys/fts_keys on DBs created before Project 1.
+        _init_schema already creates them for new DBs; this is a no-op then."""
+        self.db.executescript(f"""
+        CREATE TABLE IF NOT EXISTS key_vectors(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_id TEXT NOT NULL, key_type TEXT NOT NULL, key_text TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_key_mem ON key_vectors(memory_id);
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_keys USING vec0(embedding float[{self.dim}]);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_keys USING fts5(
+          key_id UNINDEXED, key_text, tokenize='porter unicode61');
+        """)
+        self.db.commit()
 
     def _migrate_fts(self):
         """One-time backfill of the FTS index for databases created before
@@ -280,6 +349,97 @@ class SqliteStore:
                 continue
             out.append((self._row_to_artifact(r), float(r["bm25_rank"])))
         return out
+
+    def add_keys(self, memory_id: str, keys: list[tuple[str, str]],
+                 vectors: list[list[float]]) -> None:
+        cur = self.db.cursor()
+        for (ktype, ktext), v in zip(keys, vectors):
+            cur.execute(
+                "INSERT INTO key_vectors(memory_id, key_type, key_text) VALUES(?,?,?)",
+                (memory_id, ktype, ktext))
+            kid = cur.lastrowid
+            cur.execute("INSERT INTO vec_keys(rowid, embedding) VALUES(?,?)",
+                        (kid, _serialize(v)))
+            cur.execute("INSERT INTO fts_keys(key_id, key_text) VALUES(?,?)",
+                        (kid, ktext))
+        self.db.commit()
+
+    def search_keys(self, vector: list[float], scope: Scope, k: int) -> list[tuple[str, float]]:
+        from memor.types import GLOBAL_PROJECT
+        fetch = min(max(k * 20, 200), self._VEC_KNN_LIMIT)
+        rows = self.db.execute("""
+          SELECT kv.memory_id AS mid, v.distance AS distance
+          FROM (SELECT rowid, distance FROM vec_keys
+                WHERE embedding MATCH ? AND k = ?) v
+          JOIN key_vectors kv ON kv.id = v.rowid
+          JOIN artifacts a ON a.id = kv.memory_id
+          WHERE a.active = 1
+            AND (? IS NULL OR a.project = ? OR a.project = ?)
+          ORDER BY v.distance ASC
+        """, (_serialize(vector), fetch,
+              scope.project, scope.project, GLOBAL_PROJECT)).fetchall()
+        best: dict[str, float] = {}
+        for r in rows:
+            sim = 1.0 - float(r["distance"])
+            mid = r["mid"]
+            if mid not in best or sim > best[mid]:
+                best[mid] = sim
+        ranked = sorted(best.items(), key=lambda kv: kv[1], reverse=True)
+        return ranked[:k]
+
+    def search_keys_lexical(self, query: str, scope: Scope, k: int) -> list[tuple[str, float]]:
+        """Lexical BM25 over key_text via fts_keys, resolved to memory_ids (best
+        bm25 per memory). Mirrors search_lexical but for the key surface."""
+        from memor.types import GLOBAL_PROJECT
+        terms = re.findall(r"[A-Za-z0-9_]+", query.lower())
+        if not terms:
+            return []
+        match = " OR ".join(terms)
+        rows = self.db.execute("""
+          SELECT kv.memory_id AS mid, bm25(fts_keys) AS rank
+          FROM fts_keys f JOIN key_vectors kv ON kv.id = f.key_id
+          JOIN artifacts a ON a.id = kv.memory_id
+          WHERE fts_keys MATCH ? AND a.active = 1
+            AND (? IS NULL OR a.project = ? OR a.project = ?)
+          ORDER BY rank ASC
+        """, (match, scope.project, scope.project, GLOBAL_PROJECT)).fetchall()
+        best: dict[str, float] = {}
+        for r in rows:
+            mid = r["mid"]
+            if mid not in best or r["rank"] < best[mid]:  # lower bm25 = better
+                best[mid] = r["rank"]
+        ranked = sorted(best.items(), key=lambda kv: kv[1])  # ascending bm25
+        return ranked[:k]
+
+    def delete_keys(self, memory_id: str) -> None:
+        rows = self.db.execute(
+            "SELECT id FROM key_vectors WHERE memory_id=?", (memory_id,)).fetchall()
+        for r in rows:
+            self.db.execute("DELETE FROM vec_keys WHERE rowid=?", (r["id"],))
+            self.db.execute("DELETE FROM fts_keys WHERE key_id=?", (r["id"],))
+        self.db.execute("DELETE FROM key_vectors WHERE memory_id=?", (memory_id,))
+        self.db.commit()
+
+    def count_keys(self) -> int:
+        return self.db.execute("SELECT COUNT(*) AS c FROM key_vectors").fetchone()["c"]
+
+    def find_similar_fact(self, vector: list[float], project: str,
+                          threshold: float = 0.92) -> str | None:
+        from memor.types import GLOBAL_PROJECT
+        rows = self.db.execute(f"""
+          SELECT kv.memory_id AS mid, v.distance AS distance
+          FROM (SELECT rowid, distance FROM vec_keys
+                WHERE embedding MATCH ? AND k = {self._VEC_KNN_LIMIT}) v
+          JOIN key_vectors kv ON kv.id = v.rowid
+          JOIN artifacts a ON a.id = kv.memory_id
+          WHERE a.active = 1 AND kv.key_type = 'fact'
+            AND (a.project = ? OR a.project = ?)
+          ORDER BY v.distance ASC LIMIT 1
+        """, (_serialize(vector), project, GLOBAL_PROJECT)).fetchall()
+        if not rows:
+            return None
+        sim = 1.0 - float(rows[0]["distance"])
+        return rows[0]["mid"] if sim >= threshold else None
 
     def neighbors(self, ids: list[str], types: list[str], hops: int = 1) -> list[Artifact]:
         qmarks_ids = ",".join("?" * len(ids))
@@ -775,3 +935,71 @@ class SqliteStore:
         if llm_mems > 0:
             return "full"
         return "extractive"
+
+    def record_proxy_savings(self, row: dict) -> int:
+        content_types_json = json.dumps(row.get("content_types", {}))
+        cur = self.db.execute(
+            "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
+            "tokens_before, tokens_after, content_types, passthrough, "
+            "upstream_input_tokens, upstream_cache_read_tokens, upstream_output_tokens) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (row.get("timestamp"), row.get("agent"), row.get("provider"),
+             row.get("session_id"), row.get("tokens_before"), row.get("tokens_after"),
+             content_types_json, row.get("passthrough", 0),
+             row.get("upstream_input_tokens"), row.get("upstream_cache_read_tokens"),
+             row.get("upstream_output_tokens")))
+        self.db.commit()
+        return cur.lastrowid
+
+    def get_proxy_savings_summary(self, days: int = 30) -> dict:
+        import time as _time
+        cutoff = _time.time() - (days * 86400)
+        row = self.db.execute("""
+            SELECT SUM(tokens_before) as tokens_before,
+                   SUM(tokens_after) as tokens_after
+            FROM proxy_savings
+            WHERE timestamp >= ?
+        """, (cutoff,)).fetchone()
+        tokens_before = row["tokens_before"] or 0
+        tokens_after = row["tokens_after"] or 0
+        if tokens_before > 0:
+            pct_saved = (1 - tokens_after / tokens_before) * 100
+        else:
+            pct_saved = 0.0
+        return {
+            "tokens_before": tokens_before,
+            "tokens_after": tokens_after,
+            "pct_saved": round(pct_saved, 1),
+        }
+
+    def ccr_put(self, blob_id: str, text: str, content_type: str, created_at: float) -> None:
+        byte_len = len(text.encode("utf-8"))
+        self.db.execute(
+            "INSERT OR REPLACE INTO ccr_blobs(id, text, content_type, byte_len, created_at) "
+            "VALUES(?,?,?,?,?)",
+            (blob_id, text, content_type, byte_len, created_at))
+        self.db.commit()
+
+    def ccr_get(self, blob_id: str) -> str | None:
+        row = self.db.execute("SELECT text FROM ccr_blobs WHERE id=?", (blob_id,)).fetchone()
+        return row["text"] if row else None
+
+    def ccr_evict(self, ttl_seconds: int, max_bytes: int) -> int:
+        import time as _time
+        now = _time.time()
+        cutoff = now - ttl_seconds
+        expired = self.db.execute(
+            "SELECT id FROM ccr_blobs WHERE created_at < ?", (cutoff,)).fetchall()
+        evicted = len(expired)
+        for r in expired:
+            self.db.execute("DELETE FROM ccr_blobs WHERE id=?", (r["id"],))
+        rows = self.db.execute(
+            "SELECT id, byte_len FROM ccr_blobs ORDER BY created_at ASC").fetchall()
+        total_bytes = sum(r["byte_len"] for r in rows)
+        while total_bytes > max_bytes and rows:
+            oldest = rows.pop(0)
+            self.db.execute("DELETE FROM ccr_blobs WHERE id=?", (oldest["id"],))
+            total_bytes -= oldest["byte_len"]
+            evicted += 1
+        self.db.commit()
+        return evicted

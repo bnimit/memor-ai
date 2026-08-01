@@ -7,3 +7,8 @@ dist/
 build/
 *.egg-info/
 docs/superpowers/
+
+# session scratch + superpowers artifacts (not for release)
+scratch_*.py
+.superpowers/
+/scratch/

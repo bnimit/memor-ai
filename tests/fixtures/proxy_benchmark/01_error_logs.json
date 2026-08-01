@@ -1,0 +1,21 @@
+{
+  "name": "error_logs",
+  "provider": "anthropic",
+  "tool_rich": true,
+  "required_substrings": ["ERROR", "Traceback", "FileNotFoundError"],
+  "body": {
+    "model": "claude-sonnet-4-0",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "call_1",
+            "content": "INFO: Starting application\nINFO: Connecting to database\nINFO: Loading configuration\nINFO: Initializing modules\nINFO: Starting web server\nINFO: Server listening on port 8000\nINFO: Request received: GET /api/users\nINFO: Database query: SELECT * FROM users\nINFO: Query returned 0 rows\nINFO: Processing request\nINFO: Generating response\nINFO: Request received: POST /api/data\nINFO: Parsing request body\nINFO: Validating input\nINFO: Input validation passed\nINFO: Starting data processing\nINFO: Processing batch 1 of 10\nINFO: Processing batch 2 of 10\nINFO: Processing batch 3 of 10\nERROR: Exception occurred during processing\nTraceback (most recent call last):\n  File \"/app/main.py\", line 142, in process_data\n    result = load_file(file_path)\n  File \"/app/utils.py\", line 67, in load_file\n    with open(path, 'r') as f:\nFileNotFoundError: [Errno 2] No such file or directory: '/data/input.txt'\nINFO: Rolling back transaction\nINFO: Cleaning up resources\nINFO: Request completed with status 500"
+          }
+        ]
+      }
+    ]
+  }
+}
