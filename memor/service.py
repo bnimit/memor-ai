@@ -64,7 +64,7 @@ def _proxy_port() -> int:
     return proxy_port()
 
 
-def _units(memor_bin: str, *, with_dashboard: bool = True, with_proxy: bool = True, port: int | None = None) -> list[dict]:
+def _units(memor_bin: str, *, with_dashboard: bool = True, with_proxy: bool = False, port: int | None = None) -> list[dict]:
     """Describe the services to manage. Each entry has the launchd label,
     systemd unit name, program args (after the memor binary), and log file."""
     if port is None:
@@ -178,7 +178,8 @@ def _port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-def install(with_dashboard: bool = True, with_proxy: bool = True) -> str:
+def install(with_dashboard: bool = True, with_proxy: bool = False) -> str:
+    """Install background services. The proxy is opt-in via `memor install-proxy`."""
     memor_bin = _find_memor_bin()
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     port = _dashboard_port()
