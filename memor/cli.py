@@ -87,6 +87,7 @@ EVALUATION
   memor eval-judge --project <name>    LLM-as-judge evaluation
   memor eval-counterfactual --project  Win/tie/loss vs no-memory baseline
   memor bench-embed --project <name>   Compare embedding models
+  memor eval-proxy                     Proxy compression benchmark (release gate)
 
 CONFIGURATION
   Everything works locally with zero API keys.
@@ -258,6 +259,64 @@ def bench_embed(project: str = typer.Option(...), db: str = "memor.db",
     for r in results:
         typer.echo(f"{r.model_name:<30} {r.dim:>5} {r.recall_at_k:>10.3f} {r.ndcg_at_k:>10.3f} "
                    f"{r.embed_latency_ms:>10.1f} {r.retrieval_latency_ms:>10.1f}")
+
+
+@app.command("eval-proxy")
+def eval_proxy(fixtures_dir: str = typer.Option(None, help="Path to fixtures directory")):
+    """Run the proxy compression benchmark (release gate: ≥15% mean savings on tool-rich fixtures)."""
+    from memor.eval.proxy_benchmark import run_benchmark
+    
+    if fixtures_dir is None:
+        # Default to shipped fixtures
+        fixtures_dir = Path(__file__).parent / "eval" / "proxy_benchmark_fixtures"
+        if not fixtures_dir.exists():
+            # Try relative to package root
+            import memor
+            pkg_root = Path(memor.__file__).parent.parent
+            fixtures_dir = pkg_root / "tests" / "fixtures" / "proxy_benchmark"
+    else:
+        fixtures_dir = Path(fixtures_dir)
+    
+    if not fixtures_dir.exists():
+        typer.echo(f"Fixtures directory not found: {fixtures_dir}", err=True)
+        raise typer.Exit(1)
+    
+    typer.echo(f"Running proxy benchmark on fixtures in: {fixtures_dir}")
+    report = run_benchmark(fixtures_dir)
+    
+    # Print results
+    typer.echo()
+    typer.echo("=" * 80)
+    typer.echo(f"{'Fixture':<25} {'Rich':<5} {'Before':>7} {'After':>7} {'Saved':>7} {'Pass':>5}")
+    typer.echo("=" * 80)
+    
+    for task in report.tasks:
+        rich = "✓" if task["tool_rich"] else " "
+        passed = "✓" if task["passed"] else "✗"
+        typer.echo(
+            f"{task['name']:<25} {rich:<5} "
+            f"{task['tokens_before']:>7} {task['tokens_after']:>7} "
+            f"{task['pct_saved']:>6.1f}% {passed:>5}"
+        )
+    
+    typer.echo("=" * 80)
+    typer.echo(f"Tool-rich mean savings: {report.tool_rich_mean_pct_saved:.1f}%")
+    
+    # Check release gate
+    gate_passed = report.tool_rich_mean_pct_saved >= 15.0
+    all_passed = all(t["passed"] for t in report.tasks)
+    
+    if gate_passed and all_passed:
+        typer.echo("✓ RELEASE GATE PASSED (≥15% mean savings on tool-rich fixtures)")
+        raise typer.Exit(0)
+    else:
+        typer.echo("✗ RELEASE GATE FAILED", err=True)
+        if not gate_passed:
+            typer.echo(f"  Mean savings {report.tool_rich_mean_pct_saved:.1f}% < 15%", err=True)
+        if not all_passed:
+            failed = [t["name"] for t in report.tasks if not t["passed"]]
+            typer.echo(f"  Failed fixtures: {', '.join(failed)}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("distill")

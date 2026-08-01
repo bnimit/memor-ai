@@ -1,0 +1,33 @@
+{
+  "name": "openai_test_output",
+  "provider": "openai",
+  "tool_rich": true,
+  "required_substrings": ["FAILED", "test_user_authentication", "AssertionError"],
+  "body": {
+    "model": "gpt-4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Run the test suite"
+      },
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_test_1",
+            "type": "function",
+            "function": {
+              "name": "run_command",
+              "arguments": "{\"command\": \"pytest tests/\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_test_1",
+        "content": "============================= test session starts ==============================\nplatform linux -- Python 3.11.0, pytest-7.4.0, pluggy-1.3.0\nrootdir: /app\nplugins: cov-4.1.0, asyncio-0.21.0\ncollected 45 items\n\ntests/test_api.py ........                                               [ 17%]\ntests/test_auth.py F.....                                                [ 31%]\ntests/test_database.py ...........                                       [ 55%]\ntests/test_handlers.py ..........                                        [ 77%]\ntests/test_utils.py ..........                                           [100%]\n\n=================================== FAILURES ===================================\n________________________________ test_user_authentication ______________________\n\n    def test_user_authentication():\n        user = User(username='test', password='secret')\n        token = authenticate(user)\n>       assert token is not None\nE       AssertionError: assert None is not None\n\ntests/test_auth.py:42: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_auth.py::test_user_authentication - AssertionError: assert ...\n========================= 1 failed, 44 passed in 2.34s ========================="
+      }
+    ]
+  }
+}
