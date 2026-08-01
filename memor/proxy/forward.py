@@ -1,7 +1,43 @@
 """HTTP request forwarding for the proxy server."""
 from __future__ import annotations
-from typing import AsyncIterator
+from typing import AsyncIterator, Mapping
 import httpx
+
+
+# Connection-scoped headers that are meaningless (or harmful) to relay.
+_HOP_BY_HOP = frozenset({
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+})
+
+# Headers that describe the framing/encoding of a body we re-serialize.
+_BODY_FRAMING = frozenset({"content-length", "content-encoding"})
+
+
+def sanitize_request_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """Drop hop-by-hop and body-framing headers before forwarding upstream.
+
+    The proxy rewrites the request body, so the client's Content-Length and
+    Content-Encoding no longer describe what we send; httpx recomputes them.
+    """
+    drop = _HOP_BY_HOP | _BODY_FRAMING | {"host"}
+    return {k: v for k, v in headers.items() if k.lower() not in drop}
+
+
+def sanitize_response_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """Drop hop-by-hop and body-framing headers from an upstream response.
+
+    httpx transparently decodes the upstream body, so relaying the original
+    Content-Encoding/Content-Length would describe bytes the client never sees.
+    """
+    return {k: v for k, v in headers.items() if k.lower() not in _HOP_BY_HOP | _BODY_FRAMING}
 
 
 class StreamingForwardResponse:
