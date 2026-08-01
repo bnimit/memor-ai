@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
-from memor.store.sqlite_store import SqliteStore
+from memor.store.sqlite_store import SqliteStore, read_dim
 from memor.proxy.pipeline import run_pipeline
 from memor.proxy.forward import (
     forward_request,
@@ -34,10 +34,11 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
     if db_path is None:
         db_path = str(Path.home() / ".memor" / "memor.db")
     
-    # Initialize store with embedding dimension
+    # Store opens with the DB's recorded dim (CCR + savings don't need embeddings).
+    # Fall back to the embedder dim only for a brand-new database.
     if embedder is None:
         embedder = LocalEmbedder()
-    store = SqliteStore(db_path, dim=embedder.dim)
+    store = SqliteStore(db_path, dim=read_dim(db_path, embedder.dim))
     
     app = FastAPI()
     

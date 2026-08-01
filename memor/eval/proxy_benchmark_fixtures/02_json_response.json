@@ -1,0 +1,21 @@
+{
+  "name": "json_response",
+  "provider": "anthropic",
+  "tool_rich": true,
+  "required_substrings": ["user_123", "alice@example.com", "\"status\":\"active\""],
+  "body": {
+    "model": "claude-sonnet-4-0",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "call_2",
+            "content": "{\n  \"users\": [\n    {\n      \"id\": \"user_123\",\n      \"name\": \"Alice Smith\",\n      \"email\": \"alice@example.com\",\n      \"status\": \"active\",\n      \"created_at\": \"2024-01-15T10:30:00Z\",\n      \"metadata\": {\n        \"department\": \"Engineering\",\n        \"role\": \"Senior Developer\",\n        \"projects\": [\"proj_1\", \"proj_2\", \"proj_3\"],\n        \"skills\": [\"Python\", \"JavaScript\", \"Go\", \"Rust\", \"C++\"],\n        \"certifications\": [\"AWS\", \"GCP\", \"Azure\"]\n      }\n    },\n    {\n      \"id\": \"user_456\",\n      \"name\": \"Bob Johnson\",\n      \"email\": \"bob@example.com\",\n      \"status\": \"inactive\",\n      \"created_at\": \"2024-01-10T08:15:00Z\",\n      \"metadata\": {\n        \"department\": \"Marketing\",\n        \"role\": \"Manager\",\n        \"projects\": [\"proj_4\"],\n        \"skills\": [\"SEO\", \"Analytics\"],\n        \"certifications\": []\n      }\n    },\n    {\n      \"id\": \"user_789\",\n      \"name\": \"Charlie Davis\",\n      \"email\": \"charlie@example.com\",\n      \"status\": \"active\",\n      \"created_at\": \"2024-02-20T14:45:00Z\",\n      \"metadata\": {\n        \"department\": \"Sales\",\n        \"role\": \"Associate\",\n        \"projects\": [],\n        \"skills\": [\"Communication\", \"Negotiation\"],\n        \"certifications\": []\n      }\n    }\n  ],\n  \"total\": 3,\n  \"page\": 1,\n  \"per_page\": 10\n}"
+          }
+        ]
+      }
+    ]
+  }
+}

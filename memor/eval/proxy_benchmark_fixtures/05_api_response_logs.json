@@ -1,0 +1,33 @@
+{
+  "name": "api_response_logs",
+  "provider": "openai",
+  "tool_rich": true,
+  "required_substrings": ["ERROR", "500", "timeout"],
+  "body": {
+    "model": "gpt-4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Check API logs"
+      },
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_logs_1",
+            "type": "function",
+            "function": {
+              "name": "get_logs",
+              "arguments": "{\"service\": \"api-gateway\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_logs_1",
+        "content": "INFO: [2024-08-01 10:00:00] Starting API gateway service\nINFO: [2024-08-01 10:00:01] Listening on port 8080\nINFO: [2024-08-01 10:00:05] Health check: OK\nINFO: [2024-08-01 10:01:15] Request: GET /api/v1/users\nINFO: [2024-08-01 10:01:15] Query params: page=1, limit=50\nINFO: [2024-08-01 10:01:15] Auth token validated\nINFO: [2024-08-01 10:01:16] Database query executed\nINFO: [2024-08-01 10:01:16] Response: 200 OK (142ms)\nINFO: [2024-08-01 10:02:30] Request: POST /api/v1/orders\nINFO: [2024-08-01 10:02:30] Body size: 2.3 KB\nINFO: [2024-08-01 10:02:30] Validating request body\nINFO: [2024-08-01 10:02:31] Creating new order\nINFO: [2024-08-01 10:02:31] Order ID: ord_123456\nINFO: [2024-08-01 10:02:31] Response: 201 Created (89ms)\nINFO: [2024-08-01 10:03:45] Request: GET /api/v1/products\nINFO: [2024-08-01 10:03:45] Cache hit: products_page_1\nINFO: [2024-08-01 10:03:45] Response: 200 OK (5ms)\nINFO: [2024-08-01 10:04:00] Request: PUT /api/v1/users/123\nINFO: [2024-08-01 10:04:00] Auth token validated\nINFO: [2024-08-01 10:04:00] Updating user profile\nINFO: [2024-08-01 10:04:01] Calling downstream service: user-service\nINFO: [2024-08-01 10:04:01] Downstream request timeout (30s)\nINFO: [2024-08-01 10:04:31] Retrying downstream request (attempt 1/3)\nINFO: [2024-08-01 10:05:01] Downstream request timeout (30s)\nINFO: [2024-08-01 10:05:01] Retrying downstream request (attempt 2/3)\nINFO: [2024-08-01 10:05:31] Downstream request timeout (30s)\nERROR: [2024-08-01 10:05:31] Downstream service timeout after 3 attempts\nERROR: [2024-08-01 10:05:31] Service: user-service, endpoint: /users/123\nERROR: [2024-08-01 10:05:31] Response: 500 Internal Server Error\nINFO: [2024-08-01 10:05:31] Circuit breaker opened for user-service\nINFO: [2024-08-01 10:06:00] Request: GET /api/v1/orders/456\nINFO: [2024-08-01 10:06:00] Response: 200 OK (23ms)"
+      }
+    ]
+  }
+}

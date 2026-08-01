@@ -190,6 +190,13 @@ def install(with_dashboard: bool = True, with_proxy: bool = False) -> str:
         warnings.append(
             f"  warning: port {port} is already in use — the dashboard service may "
             f"crash-loop. Stop the other process or set MEMOR_DASHBOARD_PORT.")
+    if with_proxy:
+        pport = _proxy_port()
+        if _port_in_use(pport):
+            warnings.append(
+                f"  warning: port {pport} is already in use — the proxy service may "
+                f"crash-loop. Stop the other process or change proxy.port in "
+                f"~/.memor/config.json.")
 
     lines = []
     if _is_macos():

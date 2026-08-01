@@ -37,6 +37,22 @@ def test_proxy_label_in_all_unit_labels():
     assert svc.PROXY_LABEL in label_list
 
 
+def test_install_with_proxy_warns_when_proxy_port_in_use(monkeypatch, tmp_path):
+    """install(with_proxy=True) should warn if the proxy port is already taken."""
+    monkeypatch.setattr(svc, "_is_macos", lambda: True)
+    monkeypatch.setattr(svc, "_find_memor_bin", lambda: "/bin/memor")
+    monkeypatch.setattr(svc, "PLIST_DIR", tmp_path)
+    monkeypatch.setattr(svc, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(svc, "_proxy_port", lambda: 8421)
+    monkeypatch.setattr(svc, "_port_in_use", lambda port: port == 8421)
+    run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(svc.subprocess, "run", run)
+
+    out = svc.install(with_dashboard=False, with_proxy=True)
+    assert "port 8421 is already in use" in out
+    assert "proxy service may" in out
+
+
 def test_install_with_proxy_writes_proxy_plist(monkeypatch, tmp_path):
     """Test that install(with_proxy=True) writes the proxy unit on macOS."""
     monkeypatch.setattr(svc, "_is_macos", lambda: True)

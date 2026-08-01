@@ -13,6 +13,19 @@ def test_health(tmp_path):
     assert r.json()["ok"] is True
 
 
+def test_create_proxy_app_uses_db_dim_not_embedder_dim(tmp_path):
+    """Existing DBs were often built with dim=256; proxy embedder may differ."""
+    from memor.store.sqlite_store import SqliteStore
+
+    db = str(tmp_path / "m.db")
+    SqliteStore(db, dim=256)
+    # FakeEmbedder dim=16 would previously SystemExit on open.
+    e = FakeEmbedder(dim=16)
+    app = create_proxy_app(db, embedder=e)
+    c = TestClient(app)
+    assert c.get("/health").status_code == 200
+
+
 def test_messages_runs_pipeline_and_forwards(tmp_path, monkeypatch):
     from memor.proxy import server
     from memor.proxy.forward import ForwardResponse
