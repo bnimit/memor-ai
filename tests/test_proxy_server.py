@@ -15,18 +15,19 @@ def test_health(tmp_path):
 
 def test_messages_runs_pipeline_and_forwards(tmp_path, monkeypatch):
     from memor.proxy import server
+    from memor.proxy.forward import ForwardResponse
+    
     async def fake_forward(*, method, url, headers, content, stream):
         assert "api.anthropic.com" in url
         assert "x-api-key" in {k.lower() for k in headers}
         # return non-stream JSON response shape
-        class R:
-            status_code = 200
-            headers = {"content-type": "application/json"}
-            async def aiter_bytes(self):
-                yield b'{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":2}}'
-            async def aread(self):
-                return b'{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":2}}'
-        return R()
+        response_body = b'{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":2}}'
+        return ForwardResponse(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            content=response_body
+        )
+    
     monkeypatch.setattr(server, "forward_request", fake_forward)
     e = FakeEmbedder(dim=16)
     app = create_proxy_app(str(tmp_path / "m.db"), embedder=e)
@@ -38,3 +39,44 @@ def test_messages_runs_pipeline_and_forwards(tmp_path, monkeypatch):
     }
     r = c.post("/v1/messages", json=body, headers={"x-api-key": "test-key", "anthropic-version": "2023-06-01"})
     assert r.status_code == 200
+
+
+def test_messages_streaming(tmp_path, monkeypatch):
+    from memor.proxy import server
+    from memor.proxy.forward import StreamingForwardResponse
+    
+    async def fake_forward(*, method, url, headers, content, stream):
+        assert "api.anthropic.com" in url
+        assert stream is True
+        # Return mock streaming response
+        class MockStreamingResponse:
+            async def __aenter__(self):
+                self.status_code = 200
+                self.headers = {"content-type": "text/event-stream"}
+                return self
+            
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+            
+            async def aiter_bytes(self):
+                yield b'data: {"type":"content_block_start"}\n\n'
+                yield b'data: {"type":"content_block_delta","delta":{"text":"hi"}}\n\n'
+                yield b'data: {"type":"message_stop"}\n\n'
+        
+        return MockStreamingResponse()
+    
+    monkeypatch.setattr(server, "forward_request", fake_forward)
+    e = FakeEmbedder(dim=16)
+    app = create_proxy_app(str(tmp_path / "m.db"), embedder=e)
+    c = TestClient(app)
+    body = {
+        "model": "claude-sonnet-4-0",
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 16,
+        "stream": True,
+    }
+    r = c.post("/v1/messages", json=body, headers={"x-api-key": "test-key"})
+    assert r.status_code == 200
+    # Verify we got streaming content
+    content = r.content
+    assert b"content_block_start" in content

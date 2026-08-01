@@ -65,22 +65,22 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         upstream_url = "https://api.anthropic.com/v1/messages"
         upstream_content = json.dumps(result.body).encode("utf-8")
         
-        upstream_response = await forward_request(
-            method="POST",
-            url=upstream_url,
-            headers=upstream_headers,
-            content=upstream_content,
-            stream=stream,
-        )
-        
         # Parse usage from response for non-streaming
         upstream_input_tokens = None
         upstream_cache_read_tokens = None
         upstream_output_tokens = None
-        response_content = None
         
         if not stream:
-            # Read response once and reuse
+            # Non-streaming: get response with buffered content
+            upstream_response = await forward_request(
+                method="POST",
+                url=upstream_url,
+                headers=upstream_headers,
+                content=upstream_content,
+                stream=False,
+            )
+            
+            # Read response once and parse usage
             response_content = await upstream_response.aread()
             if upstream_response.status_code == 200:
                 try:
@@ -91,43 +91,74 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                     upstream_output_tokens = usage.get("output_tokens")
                 except (json.JSONDecodeError, KeyError):
                     pass
-        
-        # Record savings to database
-        # Extract session_id from headers if available
-        session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-        agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
-        
-        store.record_proxy_savings({
-            "timestamp": time.time(),
-            "agent": agent,
-            "provider": "anthropic",
-            "session_id": session_id,
-            "tokens_before": result.tokens_before,
-            "tokens_after": result.tokens_after,
-            "content_types": result.content_types,
-            "passthrough": result.passthrough,
-            "upstream_input_tokens": upstream_input_tokens,
-            "upstream_cache_read_tokens": upstream_cache_read_tokens,
-            "upstream_output_tokens": upstream_output_tokens,
-        })
-        
-        # Return response to client
-        if stream:
-            async def stream_response():
-                async for chunk in upstream_response.aiter_bytes():
-                    yield chunk
             
-            return StreamingResponse(
-                stream_response(),
-                status_code=upstream_response.status_code,
-                headers=dict(upstream_response.headers),
-            )
-        else:
-            # For non-streaming, return the full response
+            # Record savings to database
+            session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
+            agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
+            
+            store.record_proxy_savings({
+                "timestamp": time.time(),
+                "agent": agent,
+                "provider": "anthropic",
+                "session_id": session_id,
+                "tokens_before": result.tokens_before,
+                "tokens_after": result.tokens_after,
+                "content_types": result.content_types,
+                "passthrough": result.passthrough,
+                "upstream_input_tokens": upstream_input_tokens,
+                "upstream_cache_read_tokens": upstream_cache_read_tokens,
+                "upstream_output_tokens": upstream_output_tokens,
+            })
+            
+            # Return non-streaming response
             return Response(
                 content=response_content,
                 status_code=upstream_response.status_code,
                 headers=dict(upstream_response.headers),
+            )
+        else:
+            # Streaming: use context manager to keep client alive
+            streaming_ctx = await forward_request(
+                method="POST",
+                url=upstream_url,
+                headers=upstream_headers,
+                content=upstream_content,
+                stream=True,
+            )
+            
+            # Enter context to get metadata
+            resp = await streaming_ctx.__aenter__()
+            
+            # Record savings immediately (before streaming starts)
+            session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
+            agent = request.headers.get("x-agent") or request.headers.get("agent") or "unknown"
+            
+            store.record_proxy_savings({
+                "timestamp": time.time(),
+                "agent": agent,
+                "provider": "anthropic",
+                "session_id": session_id,
+                "tokens_before": result.tokens_before,
+                "tokens_after": result.tokens_after,
+                "content_types": result.content_types,
+                "passthrough": result.passthrough,
+                "upstream_input_tokens": None,  # Not available for streaming
+                "upstream_cache_read_tokens": None,
+                "upstream_output_tokens": None,
+            })
+            
+            # Return streaming response - context will be managed by the generator
+            async def stream_with_context():
+                try:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+                finally:
+                    await streaming_ctx.__aexit__(None, None, None)
+            
+            return StreamingResponse(
+                stream_with_context(),
+                status_code=resp.status_code,
+                headers=resp.headers,
             )
     
     return app

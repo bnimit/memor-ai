@@ -1,6 +1,67 @@
 """HTTP request forwarding for the proxy server."""
 from __future__ import annotations
+from typing import AsyncIterator
 import httpx
+
+
+class StreamingForwardResponse:
+    """Streaming response that keeps the client alive during iteration."""
+    
+    def __init__(self, method: str, url: str, headers: dict[str, str], content: bytes):
+        self._method = method
+        self._url = url
+        self._headers = headers
+        self._content = content
+        self._client = None
+        self._response = None
+        self.status_code = None
+        self.headers = None
+    
+    async def __aenter__(self):
+        """Enter async context - initiate the request."""
+        self._client = httpx.AsyncClient(timeout=None)
+        self._response = await self._client.__aenter__()
+        stream_ctx = self._client.stream(
+            method=self._method,
+            url=self._url,
+            headers=self._headers,
+            content=self._content,
+            follow_redirects=True,
+        )
+        self._stream_response = await stream_ctx.__aenter__()
+        self.status_code = self._stream_response.status_code
+        self.headers = dict(self._stream_response.headers)
+        self._stream_ctx = stream_ctx
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit async context - close the stream and client."""
+        if self._stream_ctx:
+            await self._stream_ctx.__aexit__(exc_type, exc_val, exc_tb)
+        if self._client:
+            await self._client.aclose()
+    
+    async def aiter_bytes(self) -> AsyncIterator[bytes]:
+        """Iterate response bytes."""
+        async for chunk in self._stream_response.aiter_bytes():
+            yield chunk
+
+
+class ForwardResponse:
+    """Non-streaming response with buffered content."""
+    
+    def __init__(self, status_code: int, headers: dict, content: bytes):
+        self.status_code = status_code
+        self.headers = headers
+        self._content = content
+    
+    async def aiter_bytes(self) -> AsyncIterator[bytes]:
+        """Iterate response bytes."""
+        yield self._content
+    
+    async def aread(self) -> bytes:
+        """Read full response content."""
+        return self._content
 
 
 async def forward_request(
@@ -10,7 +71,7 @@ async def forward_request(
     headers: dict[str, str],
     content: bytes,
     stream: bool = False,
-) -> httpx.Response:
+):
     """Forward an HTTP request to the upstream API.
     
     Args:
@@ -21,23 +82,21 @@ async def forward_request(
         stream: Whether to stream the response
     
     Returns:
-        httpx.Response with aiter_bytes() and aread() methods
+        If stream=True: StreamingForwardResponse (use as async context manager)
+        If stream=False: ForwardResponse with buffered content
     """
-    async with httpx.AsyncClient(timeout=None) as client:
-        response = await client.request(
-            method=method,
-            url=url,
-            headers=headers,
-            content=content,
-            follow_redirects=True,
-        )
-        
-        if stream:
-            # For streaming, we need to keep the response body available
-            # Return the response object directly; caller will iterate aiter_bytes()
-            return response
-        else:
-            # For non-streaming, read the full response
-            # This ensures aread() and aiter_bytes() will work
-            await response.aread()
-            return response
+    if not stream:
+        # Non-streaming: read full response and close client immediately
+        async with httpx.AsyncClient(timeout=None) as client:
+            response = await client.request(
+                method=method,
+                url=url,
+                headers=headers,
+                content=content,
+                follow_redirects=True,
+            )
+            content_bytes = await response.aread()
+            return ForwardResponse(response.status_code, dict(response.headers), content_bytes)
+    else:
+        # Streaming: return context manager that keeps client alive
+        return StreamingForwardResponse(method, url, headers, content)

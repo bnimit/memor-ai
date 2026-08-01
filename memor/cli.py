@@ -677,8 +677,8 @@ def proxy(port: int = typer.Option(None, help="Port to serve on"),
     
     app_instance = create_proxy_app(db_resolved)
     typer.echo(f"Memor proxy server: http://127.0.0.1:{port}")
-    typer.echo("Forward Anthropic API requests to: http://127.0.0.1:{port}/v1/messages")
-    uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="info")
+    typer.echo(f"Forward Anthropic API requests to: http://127.0.0.1:{port}/v1/messages")
+    uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
 
 
 @app.command("version")
