@@ -13,14 +13,14 @@ class StreamingForwardResponse:
         self._headers = headers
         self._content = content
         self._client = None
-        self._response = None
+        self._stream_ctx = None
+        self._stream_response = None
         self.status_code = None
         self.headers = None
     
     async def __aenter__(self):
         """Enter async context - initiate the request."""
         self._client = httpx.AsyncClient(timeout=None)
-        self._response = await self._client.__aenter__()
         stream_ctx = self._client.stream(
             method=self._method,
             url=self._url,
