@@ -14,8 +14,12 @@ def detect_content_type(text: str) -> str:
     
     lines = [line for line in text.split('\n') if line.strip()]
     
-    # Check for search results (≥3 lines matching path:line: pattern)
-    search_pattern = re.compile(r'^.+:\d+:')
+    # Check for search results (≥3 lines matching path:line: pattern).
+    # The leading token must look like a path — contain a separator or a file
+    # extension — otherwise clock times such as "10:00:00" read as matches.
+    search_pattern = re.compile(
+        r'^(?:[^\s:]*[/\\][^\s:]*|[^\s:]+\.[A-Za-z0-9_]+):\d+:'
+    )
     search_matches = sum(1 for line in lines if search_pattern.match(line))
     if search_matches >= 3:
         return "search"
