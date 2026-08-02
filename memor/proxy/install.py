@@ -1,4 +1,4 @@
-"""Agent proxy install/uninstall helpers for Claude Code, Codex, Goose, and Kimi."""
+"""Agent proxy install/uninstall helpers for Claude Code, Codex, Goose, Kimi, Cursor, Cline, and OpenCode."""
 from __future__ import annotations
 
 import json
@@ -9,6 +9,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from memor.config import clear_proxy_upstream, set_proxy_agent, set_proxy_upstream
+from memor.proxy.cline_install import (
+    cline_paths,
+    install_cline_proxy,
+    strip_cline_proxy_urls,
+    uninstall_cline_proxy,
+)
+from memor.proxy.cursor_install import (
+    cursor_paths,
+    install_cursor_proxy,
+    strip_cursor_proxy_urls,
+    uninstall_cursor_proxy,
+)
 from memor.proxy.goose_install import (
     _goose_paths,
     install_goose_proxy,
@@ -20,6 +32,12 @@ from memor.proxy.kimi_install import (
     kimi_paths,
     strip_kimi_proxy_urls,
     uninstall_kimi_proxy,
+)
+from memor.proxy.opencode_install import (
+    install_opencode_proxy,
+    opencode_paths,
+    strip_opencode_proxy_urls,
+    uninstall_opencode_proxy,
 )
 
 _ANTHROPIC_DEFAULT = "https://api.anthropic.com/v1/messages"
@@ -336,6 +354,24 @@ AGENT_PROXY_HANDLERS: dict[str, AgentProxyHandler] = {
         strip=strip_kimi_proxy_urls,
         paths=kimi_paths,
     ),
+    "cursor": AgentProxyHandler(
+        install=lambda port: install_cursor_proxy(port),
+        uninstall=uninstall_cursor_proxy,
+        strip=strip_cursor_proxy_urls,
+        paths=cursor_paths,
+    ),
+    "cline": AgentProxyHandler(
+        install=lambda port: install_cline_proxy(port),
+        uninstall=uninstall_cline_proxy,
+        strip=strip_cline_proxy_urls,
+        paths=cline_paths,
+    ),
+    "opencode": AgentProxyHandler(
+        install=install_opencode_proxy,
+        uninstall=uninstall_opencode_proxy,
+        strip=strip_opencode_proxy_urls,
+        paths=opencode_paths,
+    ),
 }
 
 
@@ -346,6 +382,15 @@ def install_agent_proxy(agent: str, port: int, *, upstream_url: str | None = Non
         raise ValueError(f"Unknown agent: {agent}")
     if agent == "goose":
         install_goose_proxy(port, upstream_url=upstream_url)
+        return
+    if agent == "cursor":
+        install_cursor_proxy(port, upstream_url=upstream_url)
+        return
+    if agent == "cline":
+        install_cline_proxy(port, upstream_url=upstream_url)
+        return
+    if agent == "opencode":
+        install_opencode_proxy(port, upstream_url=upstream_url)
         return
     handler.install(port)
 

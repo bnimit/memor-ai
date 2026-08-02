@@ -129,7 +129,9 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
         embedder = _get_embedder()
 
     from memor.config import is_proxy_agent
-    if is_proxy_agent(agent):
+
+    # Cursor keeps hook inject even when proxied (shared memory across agents).
+    if is_proxy_agent(agent) and agent not in ("cursor", "copilot"):
         return format_hook_response(agent, "")
 
     if embedder is None:

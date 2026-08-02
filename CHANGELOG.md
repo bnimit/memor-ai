@@ -6,11 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Goose + Kimi proxy install** — `memor install-proxy --agent goose|kimi` rewrites provider config, stamps `x-agent` headers, and registers per-agent upstream routing. Goose Desktop providers registered only in `config.yaml` (no `custom_providers/*.json`) are materialized automatically for known providers (`custom_deepseek`, etc.) or via `--upstream-url`.
-- **Per-agent proxy savings on dashboard** — ledger entries tagged by agent (`x-agent` header + path fallback).
+- **Cursor + Cline + OpenCode proxy install** — `memor install-proxy --agent cursor|cline|opencode` for BYOK / settings-file agents. Cursor and Cline use path-prefixed proxy URLs (`/cursor/v1`, `/cline/v1`) for ledger attribution; OpenCode rewrites `opencode.json` provider `baseURL`.
+- **Cursor Shell compression hooks** — `memor install-cursor-compress-hooks` adds a global `preToolUse` hook (matcher `Shell`) that wraps terminal output through local compressors before it enters subscription Composer context.
+- **Per-agent proxy savings on dashboard** — ledger entries tagged by agent (`x-agent` header, path prefix, or protocol inference when unambiguous).
 - **Runtime fail-open shim** — proxy forwards directly to upstream when compression or inject fails.
 
 ### Changed
-- **Hook skip when proxied** — proxied agents (claude, codex, goose, kimi) skip hook inject; memory comes from the proxy path. Cursor and Copilot always inject via hooks.
+- **Hook skip when proxied** — proxied agents (claude, codex, goose, kimi, cline, opencode) skip hook inject; memory comes from the proxy path. Cursor and Copilot always inject via hooks (Cursor keeps memory even when its BYOK traffic is proxied).
 
 ## [0.10.1] - 2026-08-01
 

@@ -70,6 +70,9 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         }
     
     @app.post("/v1/messages")
+    @app.post("/cursor/v1/messages")
+    @app.post("/cline/v1/messages")
+    @app.post("/opencode/v1/messages")
     async def messages_endpoint(request: Request):
         """Proxy endpoint for Anthropic Messages API."""
         # Parse request body
@@ -88,7 +91,9 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         
         stream = _wants_stream(body, request.headers)
         
-        agent = resolve_agent(request.headers)
+        agent = resolve_agent(
+            request.headers, path=str(request.url.path), protocol="anthropic",
+        )
         upstream_url = resolve_upstream_url(agent, "anthropic")
         if upstream_url is None:
             return Response(
@@ -193,6 +198,9 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             )
     
     @app.post("/v1/chat/completions")
+    @app.post("/cursor/v1/chat/completions")
+    @app.post("/cline/v1/chat/completions")
+    @app.post("/opencode/v1/chat/completions")
     async def chat_completions_endpoint(request: Request):
         """Proxy endpoint for OpenAI Chat Completions API."""
         # Parse request body
@@ -211,7 +219,9 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         
         stream = _wants_stream(body, request.headers)
         
-        agent = resolve_agent(request.headers)
+        agent = resolve_agent(
+            request.headers, path=str(request.url.path), protocol="openai",
+        )
         upstream_url = resolve_upstream_url(agent, "openai")
         if upstream_url is None:
             return Response(

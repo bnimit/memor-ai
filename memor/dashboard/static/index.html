@@ -1197,7 +1197,10 @@
     }
 
     section.style.display = '';
-    var colors = { claude: '#d97706', codex: '#10b981', goose: '#6366f1', kimi: '#ec4899' };
+    var colors = {
+      claude: '#d97706', codex: '#10b981', goose: '#6366f1', kimi: '#ec4899',
+      cursor: '#c084fc', cline: '#64a0ff', opencode: '#14b8a6',
+    };
     agents.forEach(function(row) {
       var agent = row.agent || 'unknown';
       var color = colors[agent] || 'var(--text-muted)';

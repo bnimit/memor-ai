@@ -50,7 +50,7 @@ memor dashboard
 Memory works out of the box via hooks. To also compress tool payloads and track token savings:
 
 ```bash
-memor install-proxy --agent claude   # or: codex, goose, kimi
+memor install-proxy --agent claude   # or: codex, goose, kimi, cursor, cline, opencode
 ```
 
 This points your agent at a local proxy on `127.0.0.1:8421`, compresses latest-turn tool content before it reaches the provider, and logs savings to the dashboard. For proxied agents, hooks skip inject (memory comes from the proxy path); Cursor and Copilot always use hooks only.
@@ -135,10 +135,12 @@ Memor runs two complementary local paths — combine them or use either alone:
 |-------|----------------|-----------------|
 | **Claude Code** | Yes | Yes — `memor install-proxy --agent claude` |
 | **Codex CLI** | Yes | Experimental — `memor install-proxy --agent codex` (Chat Completions only) |
-| **Cursor** | Yes | No — hooks only |
+| **Cursor** | Yes | Yes — BYOK via `memor install-proxy --agent cursor`; subscription Composer Shell compression via `memor install-cursor-compress-hooks` |
 | **Copilot CLI** | Yes | No — hooks only |
 | **Kimi CLI** | Yes | Yes — `memor install-proxy --agent kimi` |
 | **Goose** | Yes | Yes — `memor install-proxy --agent goose` (auto-detects common Desktop custom providers like `custom_deepseek`; use `--upstream-url` if yours is custom) |
+| **Cline** | No | Yes — `memor install-proxy --agent cline` |
+| **OpenCode** | No | Yes — `memor install-proxy --agent opencode` |
 
 ### Hook install details
 
