@@ -160,13 +160,54 @@ def manual_setup_lines(port: int, protocol: str) -> list[str]:
 
 
 def uninstall_cursor_proxy() -> None:
+    from memor.config import set_cursor_wire
+    from memor.cursor_wire.settings import strip_cursor_wire_settings
+
+    # Drop wire keys first (in case backup predates wire install).
+    strip_cursor_wire_settings()
+    set_cursor_wire(False)
+
     config_path, backup_path, _ = cursor_paths()
     if backup_path.exists():
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(backup_path.read_text())
         backup_path.unlink()
+    else:
+        # Backup missing — still strip BYOK localhost URLs if present.
+        from memor.config import proxy_port as get_proxy_port
+
+        strip_cursor_proxy_urls(get_proxy_port())
     clear_proxy_upstream("cursor")
     set_proxy_agent("cursor", False)
+
+    # Unload wire unit if present (service.install won't manage it once flag is false,
+    # unless the plist still exists — remove it).
+    try:
+        from memor import service
+        import os
+        import subprocess
+
+        if service._is_macos():
+            path = service._plist_path(service.CURSOR_WIRE_LABEL)
+            if path.exists():
+                subprocess.run(
+                    ["launchctl", "bootout", f"gui/{os.getuid()}", str(path)],
+                    capture_output=True,
+                )
+                path.unlink(missing_ok=True)
+        else:
+            path = service._unit_path("memor-cursor-wire")
+            if path.exists():
+                subprocess.run(
+                    ["systemctl", "--user", "disable", "--now", "memor-cursor-wire"],
+                    capture_output=True,
+                )
+                path.unlink(missing_ok=True)
+                subprocess.run(
+                    ["systemctl", "--user", "daemon-reload"], capture_output=True
+                )
+    except Exception:
+        pass
 
 
 def strip_cursor_proxy_urls(port: int) -> str:

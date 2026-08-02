@@ -80,6 +80,13 @@ EVALUATION
   memor bench-embed --project <name>   Compare embedding models
   memor eval-proxy                     Proxy compression benchmark (release gate)
 
+CURSOR (full stack)
+  memor install-proxy --agent cursor   Memory + Shell hooks + BYOK + wire mitmdump
+    --wire / --no-wire / --yes / --skip-ca-trust
+    (wire is opt-in; auto-installs mitmproxy if you accept)
+  memor cursor-wire-mitm --dump        Headless sidecar (usually via service)
+    Dashboard: Cursor Wire health chip + savings
+
 CONFIGURATION
   Everything works locally with zero API keys.
   No configuration needed — just install, hook, and run the daemon.
@@ -855,6 +862,47 @@ def uninstall_cursor_compress_hooks_cmd():
     typer.echo(uninstall_cursor_compress_hooks())
 
 
+@app.command("cursor-wire-mitm")
+def cursor_wire_mitm_cmd(
+    port: int = typer.Option(None, help="mitmproxy listen port (default: config/8080)"),
+    web_port: int = typer.Option(8081, help="mitmweb UI port"),
+    dump: bool = typer.Option(False, "--dump", help="Use mitmdump (no web UI)"),
+    db: str = typer.Option(
+        str(Path.home() / ".memor" / "memor.db"),
+        help="Memor DB for proxy savings ledger",
+    ),
+):
+    """Launch mitmproxy addon that compresses Cursor subscription BidiAppend traffic.
+
+    Prefer `memor install-proxy --agent cursor` for full automation (auto-installs
+    mitmproxy if missing). Savings appear as agent Cursor Wire.
+    """
+    import os
+    import subprocess
+
+    from memor.config import cursor_wire_port as get_wire_port
+    from memor.cursor_wire.launch import build_mitm_argv, build_mitmdump_argv, cursor_settings_hint
+
+    listen = port if port is not None else get_wire_port()
+    os.environ["MEMOR_DB"] = _db_path(db)
+    try:
+        if dump:
+            argv = build_mitmdump_argv(listen_port=listen)
+        else:
+            argv = build_mitm_argv(listen_port=listen, web_port=web_port, use_web=True)
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+
+    # launchd runs with --dump: stay quiet (no TTY prompts).
+    if not dump:
+        typer.echo(f"Starting Cursor wire mitm on :{listen} (ledger: {os.environ['MEMOR_DB']})")
+        for line in cursor_settings_hint(listen):
+            typer.echo(line)
+        typer.echo()
+    raise typer.Exit(subprocess.call(argv))
+
+
 @app.command("compress-exec")
 def compress_exec_cmd(
     cwd: str = typer.Option(None, "--cwd", help="Working directory for the shell command"),
@@ -930,10 +978,35 @@ def install_proxy(
         help="Optional upstream API URL when the agent config has no base_url "
         "(Goose Desktop, Cursor BYOK, Cline, OpenCode).",
     ),
+    no_wire: bool = typer.Option(
+        False,
+        "--no-wire",
+        help="Cursor only: skip subscription wire MITM (BYOK + Shell hooks only).",
+    ),
+    wire: bool = typer.Option(
+        False,
+        "--wire",
+        help="Cursor only: enable subscription Composer wire MITM without prompting.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Cursor only: accept core prompts. Does not enable wire unless --wire "
+        "(CA trust still needs sudo/Touch ID unless --skip-ca-trust).",
+    ),
+    skip_ca_trust: bool = typer.Option(
+        False,
+        "--skip-ca-trust",
+        help="Cursor only: do not run sudo CA trust (wire will not work until trusted).",
+    ),
 ):
-    """Install proxy for an agent and ensure the proxy service is running."""
+    """Install proxy for an agent and ensure the proxy service is running.
+
+    For Cursor: installs hooks + BYOK, then asks whether to enable subscription
+    Composer wire compression (mitmdump). Use --wire / --no-wire to skip the ask.
+    """
     from memor.proxy.cline_install import install_cline_proxy
-    from memor.proxy.cursor_install import install_cursor_proxy
     from memor.proxy.install import (
         install_agent_proxy,
         install_claude_proxy,
@@ -941,7 +1014,7 @@ def install_proxy(
     )
     from memor.config import proxy_port as get_proxy_port
     from memor import service
-    
+
     agent = agent.lower()
     if agent not in _PROXY_AGENTS:
         typer.echo(
@@ -949,10 +1022,52 @@ def install_proxy(
             err=True,
         )
         raise typer.Exit(1)
-    
+
     port = get_proxy_port()
-    
+
     try:
+        if agent == "cursor":
+            from memor.cursor_wire.install import install_cursor_full_stack
+
+            def _confirm(msg: str) -> bool:
+                return typer.confirm(msg, default=True)
+
+            def _confirm_wire(msg: str) -> bool:
+                return typer.confirm(msg, default=False)
+
+            result = install_cursor_full_stack(
+                byok_port=port,
+                upstream_url=upstream_url,
+                no_wire=no_wire,
+                wire=wire,
+                yes=yes,
+                skip_ca_trust=skip_ca_trust,
+                confirm=None if yes else _confirm,
+                confirm_wire=None if (yes or wire or no_wire) else _confirm_wire,
+            )
+            for line in result.lines:
+                typer.echo(line)
+            if result.aborted:
+                raise typer.Exit(1)
+
+            # Wire health already gated inside full stack; verify BYOK proxy.
+            from memor.proxy.health import wait_for_proxy_health
+            from memor.proxy.install import failover_proxy_agents
+
+            typer.echo("\nChecking BYOK proxy health...")
+            ok, detail = wait_for_proxy_health(port)
+            if not ok:
+                typer.echo(f"\nProxy failed health check: {detail}", err=True)
+                for line in failover_proxy_agents(detail):
+                    typer.echo(f"  {line}", err=True)
+                raise typer.Exit(1)
+            typer.echo(f"BYOK proxy ready at http://127.0.0.1:{port}")
+            if result.wire_enabled:
+                typer.echo(
+                    f"Cursor wire ready at http://127.0.0.1:{result.wire_port} — restart Cursor."
+                )
+            return
+
         if agent == "claude":
             install_claude_proxy(port)
             typer.echo(f"\nInstalled Claude Code proxy:")
@@ -980,12 +1095,6 @@ def install_proxy(
             typer.echo(f"  Updated ~/.kimi/config.toml provider")
             typer.echo(f"  Set base_url=http://127.0.0.1:{port}/v1/...")
             typer.echo(f"  Stamped x-agent: kimi header")
-        elif agent == "cursor":
-            manual = install_cursor_proxy(port, upstream_url=upstream_url)
-            typer.echo(f"\nInstalled Cursor proxy (best-effort settings.json + manual steps):")
-            typer.echo(f"  Updated Cursor User settings.json when present")
-            for line in manual:
-                typer.echo(f"  {line}")
         elif agent == "cline":
             notes = install_cline_proxy(port, upstream_url=upstream_url)
             typer.echo(f"\nInstalled Cline proxy:")
@@ -997,11 +1106,10 @@ def install_proxy(
             typer.echo(f"  Updated ~/.config/opencode/opencode.json provider baseURL")
             typer.echo(f"  Stamped x-agent: opencode header")
             typer.echo(f"  Ledger uses path prefix /opencode/v1 when headers absent")
-        
+
         typer.echo(f"  Backup saved to ~/.memor/proxy-backup-{agent}.*")
         typer.echo()
 
-        # Ensure the proxy service is running and healthy
         typer.echo("Ensuring proxy service is running...")
         service.install(with_dashboard=True, with_proxy=True)
         from memor.proxy.health import wait_for_proxy_health
@@ -1028,6 +1136,58 @@ def install_proxy(
         raise typer.Exit(1)
 
 
+@app.command("disable-cursor-wire")
+def disable_cursor_wire_cmd():
+    """Emergency: strip Cursor http.proxy wire keys, stop mitmdump, clear flag.
+
+    Use when subscription Composer breaks after enabling wire MITM. BYOK and
+    memory hooks are left alone.
+    """
+    import os
+    import subprocess
+
+    from memor import service
+    from memor.config import set_cursor_wire
+    from memor.cursor_wire.settings import strip_cursor_wire_settings
+    from memor.service import CURSOR_WIRE_LABEL, _is_macos, _plist_path, _unit_path
+
+    set_cursor_wire(False)
+    typer.echo(strip_cursor_wire_settings())
+
+    # Stop wire unit first so install() does not see it as still desired.
+    try:
+        if _is_macos():
+            path = _plist_path(CURSOR_WIRE_LABEL)
+            if path.exists():
+                subprocess.run(
+                    ["launchctl", "bootout", f"gui/{os.getuid()}", str(path)],
+                    capture_output=True,
+                )
+                path.unlink(missing_ok=True)
+                typer.echo(f"Stopped and removed {path}")
+        else:
+            up = _unit_path("memor-cursor-wire")
+            if up.exists():
+                subprocess.run(
+                    ["systemctl", "--user", "disable", "--now", "memor-cursor-wire"],
+                    capture_output=True,
+                )
+                up.unlink(missing_ok=True)
+                typer.echo(f"Stopped and removed {up}")
+    except Exception as exc:
+        typer.echo(f"Wire unit cleanup: {exc}", err=True)
+
+    try:
+        typer.echo(
+            service.install(with_dashboard=True, with_proxy=True, with_cursor_wire=False)
+        )
+    except Exception as exc:
+        typer.echo(f"Service refresh: {exc}", err=True)
+
+    typer.echo("Restart Cursor if it still has the old proxy cached.")
+    typer.echo("Re-enable later only when ready: memor install-proxy --agent cursor --wire")
+
+
 @app.command("uninstall-proxy")
 def uninstall_proxy(
     agent: str = typer.Option(
@@ -1049,9 +1209,13 @@ def uninstall_proxy(
         typer.echo(f"\nUninstalled {agent} proxy:")
         typer.echo(f"  Restored original config from backup")
         typer.echo(f"  Cleared proxy_agent flag")
+        if agent == "cursor":
+            typer.echo("  Cleared Cursor wire MITM settings / cursor-wire service")
+            typer.echo("  Note: remove mitmproxy CA from Keychain if unused")
+            typer.echo("  Shell hooks: memor uninstall-cursor-compress-hooks")
         typer.echo()
         typer.echo(f"The {agent} agent will now use its default API endpoints.")
-        
+
     except Exception as e:
         typer.echo(f"Failed to uninstall proxy: {e}", err=True)
         raise typer.Exit(1)

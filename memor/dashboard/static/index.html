@@ -5,40 +5,44 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Memor Dashboard</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg:           #111113;
-    --surface:      #1a1a1e;
-    --surface2:     #222226;
-    --surface3:     #2a2a2f;
-    --border:       #2e2e33;
-    --border-light: #252529;
-    --text:         #eae8e4;
-    --text-secondary: #b0aaa0;
-    --text-muted:   #6b6660;
-    --accent:       #e89320;
-    --accent-dim:   rgba(232,147,32,0.15);
-    --accent-glow:  rgba(232,147,32,0.06);
-    --ok:           #3dd68c;
-    --ok-dim:       rgba(61,214,140,0.12);
-    --warn:         #e89320;
-    --warn-dim:     rgba(232,147,32,0.12);
-    --error:        #e85454;
-    --neutral:      #6b6660;
-    --neutral-dim:  rgba(107,102,96,0.15);
-    --hover:        #222226;
-    --card-shadow:  0 1px 2px rgba(0,0,0,0.4);
-    --radius:       12px;
-    --radius-sm:    8px;
-    --font:         'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --bg: #0c0e12;
+    --bg-elev: #12151c;
+    --surface: #161a22;
+    --surface2: #1c212b;
+    --surface3: #242a36;
+    --border: #2a3140;
+    --border-light: #222833;
+    --text: #e8e6e1;
+    --text-secondary: #a8a29a;
+    --text-muted: #6d655c;
+    --accent: #e89320;
+    --accent-dim: rgba(232,147,32,0.14);
+    --ok: #2fd67b;
+    --ok-dim: rgba(47,214,123,0.12);
+    --warn: #e89320;
+    --warn-dim: rgba(232,147,32,0.12);
+    --error: #e85454;
+    --neutral: #6d655c;
+    --neutral-dim: rgba(109,101,92,0.15);
+    --radius: 10px;
+    --radius-sm: 6px;
+    --font: 'DM Sans', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --claude: #e89320; --codex: #2fd67b; --copilot: #64a0ff;
+    --cursor: #c084fc; --cursor-wire: #a78bfa; --kimi: #ff8c5a; --goose: #50c8b4;
   }
 
   body {
     font-family: var(--font);
-    background: var(--bg);
+    background:
+      radial-gradient(1200px 500px at 10% -10%, rgba(232,147,32,0.07), transparent 55%),
+      radial-gradient(900px 400px at 90% 0%, rgba(47,214,123,0.05), transparent 50%),
+      var(--bg);
     color: var(--text);
     min-height: 100vh;
     font-size: 14px;
@@ -46,292 +50,289 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  .mono { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 13px; }
+  .mono { font-family: var(--mono); font-size: 12px; }
   .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .container { max-width: 1320px; margin: 0 auto; padding: 0 28px; }
+  .container { max-width: 1280px; margin: 0 auto; padding: 0 24px 40px; }
 
-  /* ── Top bar ───────────────────────────────────────────── */
+  /* Topbar */
   .topbar {
-    background: var(--surface);
+    background: rgba(18,21,28,0.92);
+    backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--border);
-    padding: 0 28px;
     height: 52px;
-    display: flex; align-items: center;
     position: sticky; top: 0; z-index: 50;
   }
   .topbar-inner {
-    max-width: 1320px; margin: 0 auto; width: 100%;
+    max-width: 1280px; margin: 0 auto; height: 100%; padding: 0 24px;
     display: flex; align-items: center; gap: 16px;
   }
-  .breadcrumb { font-size: 13px; color: var(--text-muted); }
-  .breadcrumb span { color: var(--accent); }
+  .brand {
+    font-weight: 700; font-size: 17px; letter-spacing: -0.4px;
+  }
+  .brand .accent { color: var(--accent); }
   .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
   .topbar-time {
     font-size: 12px; color: var(--text-muted);
     display: flex; align-items: center; gap: 6px;
   }
-  .topbar-time svg { opacity: 0.5; }
   .refresh-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--ok); display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--ok);
     animation: pulse 2s ease infinite;
   }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-  /* ── Page header ───────────────────────────────────────── */
-  .page-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 28px 0 24px;
+  /* Agent desk tabs */
+  .desk-tabs {
+    display: flex; gap: 4px; flex-wrap: wrap;
+    padding: 18px 0 8px; border-bottom: 1px solid var(--border-light);
+    margin-bottom: 20px;
   }
-  .page-title { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
-  .page-title .accent { color: var(--accent); }
+  .desk-tab {
+    appearance: none; border: 1px solid transparent; background: transparent;
+    color: var(--text-muted); font: 500 13px var(--font);
+    padding: 8px 14px; border-radius: 999px; cursor: pointer;
+    transition: color .15s, background .15s, border-color .15s;
+  }
+  .desk-tab:hover { color: var(--text); background: var(--surface); }
+  .desk-tab.active {
+    color: var(--text); background: var(--surface2);
+    border-color: var(--border);
+  }
+  .desk-tab .tab-dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    margin-right: 7px; vertical-align: middle;
+  }
 
-  /* ── Banner ────────────────────────────────────────────── */
+  .pane { display: none; }
+  .pane.active { display: block; }
+
   .banner {
     background: var(--accent-dim); border: 1px solid rgba(232,147,32,0.25);
-    border-radius: var(--radius); padding: 16px 20px; margin-bottom: 24px;
-    display: flex; align-items: flex-start; gap: 12px;
+    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 20px;
+    display: none; align-items: flex-start; gap: 10px;
   }
-  .banner-icon { font-size: 18px; margin-top: 1px; }
-  .banner h3 { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
-  .banner p { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+  .banner h3 { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .banner p { font-size: 12px; color: var(--text-muted); }
   .banner code {
-    font-family: 'SF Mono', monospace; background: var(--surface2);
+    font-family: var(--mono); background: var(--surface2);
     border-radius: 4px; padding: 1px 6px; font-size: 11px; color: var(--accent);
   }
-  #banner { display: none; }
 
-  /* ── Section ───────────────────────────────────────────── */
   .section-label {
     font-size: 11px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 14px;
+    letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 12px;
     display: flex; align-items: center; gap: 8px;
   }
   .section-label .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
-  section { margin-bottom: 28px; }
+  section { margin-bottom: 22px; }
 
-  /* ── Metric cards ──────────────────────────────────────── */
-  .metric-grid {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 14px;
+  /* Status chips */
+  .status-row {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px;
   }
-  @media (max-width: 900px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 999px; padding: 6px 12px; font-size: 12px; color: var(--text-secondary);
+  }
+  .chip strong { color: var(--text); font-weight: 600; }
+  .chip .led {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted);
+  }
+  .chip .led.on { background: var(--ok); box-shadow: 0 0 8px rgba(47,214,123,0.45); }
 
-  .metric-card {
+  /* KPI strip */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+  @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+  .kpi {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 18px 20px;
-    box-shadow: var(--card-shadow);
-    display: flex; justify-content: space-between; align-items: flex-end;
-    transition: border-color 0.15s;
-    position: relative; overflow: hidden;
+    padding: 16px 16px 14px;
+    position: relative;
+    overflow: hidden;
   }
-  .metric-card:hover { border-color: var(--accent); }
-  .metric-card::after {
-    content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 3px;
-    background: var(--accent); opacity: 0;
-    transition: opacity 0.15s;
+  .kpi::after {
+    content: ''; position: absolute; inset: auto 0 0 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--kpi-accent, var(--accent)), transparent);
+    opacity: 0.55;
   }
-  .metric-card:hover::after { opacity: 1; }
+  .kpi-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 8px;
+  }
+  .kpi-value {
+    font-family: var(--mono); font-size: 26px; font-weight: 600;
+    letter-spacing: -0.6px; line-height: 1.1;
+  }
+  .kpi-value.pnl { color: var(--ok); }
+  .kpi-sub { margin-top: 6px; font-size: 12px; color: var(--text-muted); }
 
-  .metric-info { flex: 1; }
-  .metric-label {
-    font-size: 11px; font-weight: 600; color: var(--text-muted);
-    text-transform: uppercase; letter-spacing: 0.08em;
-    margin-bottom: 8px;
+  /* Chart panels */
+  .chart-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px 12px;
   }
-  .metric-value {
-    font-size: 22px; font-weight: 600; letter-spacing: -0.5px;
-    color: var(--text); line-height: 1;
+  .chart-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; margin-bottom: 8px;
   }
-  .metric-sub {
-    font-size: 12px; color: var(--text-muted); margin-top: 6px;
-    display: flex; align-items: center; gap: 5px;
+  .chart-title { font-size: 13px; font-weight: 600; }
+  .chart-meta { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .chart-big {
+    font-family: var(--mono); font-size: 22px; font-weight: 600;
+    color: var(--ok); margin-bottom: 4px;
   }
-  .metric-sub .up { color: var(--ok); }
-  .metric-sub .down { color: var(--error); }
-
-  .mini-bars {
-    display: flex; align-items: flex-end; gap: 3px; height: 40px;
-    flex-shrink: 0; margin-left: 12px;
+  .chart-canvas { width: 100%; height: 160px; position: relative; }
+  .chart-canvas.tall { height: 200px; }
+  .chart-grid-2 {
+    display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px;
   }
-  .mini-bar {
-    width: 6px; border-radius: 2px 2px 0 0;
-    background: var(--accent); opacity: 0.7;
-    transition: opacity 0.15s;
-  }
-  .metric-card:hover .mini-bar { opacity: 1; }
-
-  /* ── Chart section ─────────────────────────────────────── */
-  .chart-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
-  @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
-
-  .chart-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 22px 24px;
-    box-shadow: var(--card-shadow);
-    display: flex; flex-direction: column;
-  }
-  .chart-header {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 18px;
-  }
-  .chart-title {
-    font-size: 12px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.08em; color: var(--text-muted);
-  }
-  .chart-legend {
-    display: flex; align-items: center; gap: 14px; font-size: 11px; color: var(--text-muted);
-  }
-  .legend-dot {
-    display: inline-block; width: 8px; height: 8px;
-    border-radius: 50%; margin-right: 4px;
-  }
-  .chart-big-number {
-    font-size: 26px; font-weight: 700; color: var(--text); margin-bottom: 16px;
-    letter-spacing: -0.5px;
-  }
-  .chart-big-number .label {
-    font-size: 12px; font-weight: 500; color: var(--text-muted);
-    letter-spacing: 0; margin-right: 10px;
-  }
+  @media (max-width: 900px) { .chart-grid-2 { grid-template-columns: 1fr; } }
 
   .bar-chart {
-    display: flex; align-items: flex-end; gap: 4px;
-    flex: 1; min-height: 180px; padding-top: 8px;
-    border-bottom: 1px solid var(--border-light);
+    display: flex; align-items: flex-end; gap: 3px;
+    height: 140px; padding-top: 8px; overflow-x: auto;
+    overflow-y: hidden;
+    position: relative;
   }
   .bar-group {
-    flex: 1; display: flex; flex-direction: column;
-    align-items: center; gap: 0; height: 100%;
-    justify-content: flex-end;
+    flex: 1; min-width: 14px; height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    gap: 4px; cursor: default;
   }
-  .bar-stack { display: flex; flex-direction: column-reverse; gap: 2px; width: 100%; max-width: 28px; flex: 1; align-items: center; justify-content: flex-end; }
-  .bar-cell { width: 16px; height: 10px; border-radius: 2px; transition: opacity 0.3s; }
+  .bar-group:hover .bar-stack { outline: 1px solid rgba(232,147,32,0.45); outline-offset: 1px; }
+  .bar-stack { width: 100%; display: flex; flex-direction: column-reverse; gap: 1px; }
+  .bar-cell { width: 100%; height: 4px; border-radius: 1px; }
   .bar-cell-hit { background: var(--accent); }
   .bar-cell-miss { background: var(--surface3); }
-  .bar-label {
-    font-size: 9px; color: var(--text-muted); margin-top: 6px;
-    text-align: center; white-space: nowrap;
-  }
-
-  .bar-group:hover .bar-cell-hit { background: #f0a030; }
-  .bar-group { cursor: default; position: relative; }
-  .bar-tooltip {
-    display: none; position: absolute; bottom: calc(100% + 8px);
+  .bar-label { font-size: 9px; color: var(--text-muted); font-family: var(--mono); flex-shrink: 0; }
+  .chart-float-tip {
+    display: none; position: fixed; z-index: 100;
     background: var(--surface3); border: 1px solid var(--border);
-    border-radius: 6px; padding: 8px 10px; font-size: 11px;
-    color: var(--text); white-space: nowrap; z-index: 10;
-    pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    border-radius: 6px; padding: 6px 10px; font-size: 11px; color: var(--text);
+    pointer-events: none; white-space: nowrap;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
   }
-  .bar-group:hover .bar-tooltip { display: block; }
 
-  /* ── Side stats ────────────────────────────────────────── */
-  .side-stats { display: flex; flex-direction: column; gap: 14px; }
-  .side-stat {
-    background: var(--surface2); border-radius: var(--radius-sm);
-    padding: 14px 16px;
-  }
-  .side-stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
-  .side-stat-value { font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: -0.5px; }
-  .side-stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .legend { display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); }
+  .legend-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
 
-  /* ── Tables ────────────────────────────────────────────── */
+  /* Tables */
   .table-card {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius); overflow: hidden;
-    box-shadow: var(--card-shadow);
   }
   .table-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 20px; border-bottom: 1px solid var(--border);
+    padding: 12px 16px; border-bottom: 1px solid var(--border-light);
   }
-  .table-title {
-    font-size: 12px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.08em; color: var(--text-muted);
-    display: flex; align-items: center; gap: 8px;
-  }
+  .table-title { font-size: 12px; font-weight: 600; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
   .table-title .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
-
-  .filter-bar { display: flex; align-items: center; gap: 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-muted); padding: 10px 14px;
+    border-bottom: 1px solid var(--border-light); background: var(--bg-elev);
+  }
+  th.sortable { cursor: pointer; }
+  th.sortable:hover { color: var(--text-secondary); }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--border-light); font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  .projects-body tr { cursor: pointer; }
+  .projects-body tr:hover, .projects-body tr.selected { background: var(--surface2); }
+  .filter-bar { display: flex; gap: 6px; }
   .filter-pill {
-    background: var(--accent-dim); border: 1px solid rgba(232,147,32,0.3);
-    border-radius: 99px; padding: 3px 10px; font-size: 11px; font-weight: 500;
-    color: var(--accent); display: flex; align-items: center; gap: 6px;
+    background: var(--accent-dim); color: var(--accent); border-radius: 999px;
+    padding: 3px 10px; font-size: 11px; font-family: var(--mono);
   }
   .filter-pill button {
-    background: none; border: none; color: var(--accent); cursor: pointer;
-    font-size: 13px; line-height: 1; padding: 0;
+    border: none; background: none; color: var(--accent); cursor: pointer; margin-left: 4px;
   }
-
-  table { width: 100%; border-collapse: collapse; }
-  thead { background: var(--surface2); }
-  th {
-    padding: 10px 16px; text-align: left; font-size: 11px;
-    font-weight: 600; color: var(--text-muted);
-    text-transform: uppercase; letter-spacing: 0.06em;
-    user-select: none;
-  }
-  th.sortable { cursor: pointer; transition: color 0.15s; }
-  th.sortable:hover { color: var(--text); }
-  th .sort-icon { display: inline-block; margin-left: 4px; opacity: 0.3; font-size: 10px; }
-  th.sort-asc .sort-icon, th.sort-desc .sort-icon { opacity: 1; color: var(--accent); }
-  td {
-    padding: 10px 16px; border-top: 1px solid var(--border-light);
-    font-size: 13px; color: var(--text-secondary);
-  }
-  tr:hover td { background: var(--hover); }
-  tr.selected td { background: var(--accent-dim); }
-  .projects-body tr { cursor: pointer; }
 
   .badge {
     display: inline-flex; align-items: center; gap: 5px;
-    border-radius: 99px; padding: 3px 10px;
-    font-size: 11px; font-weight: 600;
+    font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px;
   }
-  .badge::before {
-    content: ''; width: 6px; height: 6px; border-radius: 50%;
-  }
+  .badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
   .badge-ok { background: var(--ok-dim); color: var(--ok); }
-  .badge-ok::before { background: var(--ok); }
   .badge-extractive { background: var(--warn-dim); color: var(--warn); }
-  .badge-extractive::before { background: var(--warn); }
   .badge-no_hits { background: var(--neutral-dim); color: var(--neutral); }
-  .badge-no_hits::before { background: var(--neutral); }
   .badge-global { background: rgba(120,100,255,0.12); color: #a090ff; }
-  .badge-global::before { background: #a090ff; }
-  .badge-negative { background: rgba(232,84,84,0.12); color: var(--error); }
-  .badge-negative::before { background: var(--error); }
-  .badge-claude { background: var(--accent-dim); color: var(--accent); }
-  .badge-claude::before { background: var(--accent); }
-  .badge-codex { background: rgba(61,214,140,0.12); color: #3dd68c; }
-  .badge-codex::before { background: #3dd68c; }
-  .badge-copilot { background: rgba(100,160,255,0.12); color: #64a0ff; }
-  .badge-copilot::before { background: #64a0ff; }
-  .badge-cursor { background: rgba(192,132,252,0.12); color: #c084fc; }
-  .badge-cursor::before { background: #c084fc; }
-  .badge-kimi { background: rgba(255,140,90,0.12); color: #ff8c5a; }
-  .badge-kimi::before { background: #ff8c5a; }
-  .badge-goose { background: rgba(80,200,180,0.12); color: #50c8b4; }
-  .badge-goose::before { background: #50c8b4; }
+  .badge-claude { background: var(--accent-dim); color: var(--claude); }
+  .badge-codex { background: rgba(47,214,123,0.12); color: var(--codex); }
+  .badge-copilot { background: rgba(100,160,255,0.12); color: var(--copilot); }
+  .badge-cursor { background: rgba(192,132,252,0.12); color: var(--cursor); }
+  .badge-cursor-wire { background: rgba(167,139,250,0.14); color: var(--cursor-wire); }
+  .badge-kimi { background: rgba(255,140,90,0.12); color: var(--kimi); }
+  .badge-goose { background: rgba(80,200,180,0.12); color: var(--goose); }
 
-  .quality-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--surface3); width: 100%; min-width: 60px; }
-  .quality-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+  .quality-bar { display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: var(--surface3); min-width: 60px; }
+  .quality-fill { height: 100%; border-radius: 3px; }
   .quality-fill-ok { background: var(--ok); }
   .quality-fill-warn { background: var(--warn); }
   .quality-fill-error { background: var(--error); }
 
-  .empty-state {
-    text-align: center; padding: 40px 20px;
-    color: var(--text-muted); font-size: 13px;
+  .empty-state { text-align: center; padding: 28px 16px; color: var(--text-muted); font-size: 13px; }
+  .side-stats { display: grid; gap: 10px; }
+  .side-stat {
+    background: var(--bg-elev); border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm); padding: 10px 12px;
+  }
+  .side-stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); }
+  .side-stat-value { font-family: var(--mono); font-size: 18px; font-weight: 600; margin-top: 4px; }
+  .side-stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  .agent-compare {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px;
+  }
+  .agent-tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px; cursor: pointer; transition: border-color .15s, transform .15s;
+  }
+  .agent-tile:hover { border-color: var(--text-muted); transform: translateY(-1px); }
+  .agent-tile .name { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+  .agent-tile .val { font-family: var(--mono); font-size: 20px; font-weight: 600; }
+  .agent-tile .sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  .desk-health {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin: -4px 0 14px;
+    font-size: 12px;
+  }
+  .desk-health.visible { display: flex; }
+  .desk-health-row {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .desk-health .led {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0;
+  }
+  .desk-health .led.on { background: var(--ok); box-shadow: 0 0 8px rgba(47,214,123,0.45); }
+  .desk-health .led.warn { background: var(--warn); box-shadow: 0 0 8px rgba(232,147,32,0.4); }
+  .desk-health .label { font-weight: 600; color: var(--text); min-width: 110px; }
+  .desk-health .detail { color: var(--text-muted); font-family: var(--mono); font-size: 11px; }
+
+  footer {
+    margin-top: 8px; padding: 16px 0 8px;
+    text-align: center; font-size: 11px; color: var(--text-muted);
   }
 
-  /* ── Footer ────────────────────────────────────────────── */
-  footer {
-    margin-top: 20px; padding: 20px 0 28px;
-    text-align: center; font-size: 11px; color: var(--text-muted);
+  @media (prefers-reduced-motion: reduce) {
+    .refresh-dot { animation: none; }
+    .agent-tile { transition: none; }
   }
 </style>
 </head>
@@ -339,9 +340,9 @@
 
 <div class="topbar">
   <div class="topbar-inner">
-    <div class="breadcrumb">Dashboard &rsaquo; <span>Overview</span></div>
+    <div class="brand">memor<span class="accent">.</span></div>
     <div class="topbar-right">
-      <span id="version-badge" class="mono" style="font-size:11px;color:var(--text-muted);margin-right:12px;"></span>
+      <span id="version-badge" class="mono" style="color:var(--text-muted);"></span>
       <div class="topbar-time">
         <span class="refresh-dot"></span>
         <span id="last-updated">Live</span>
@@ -351,293 +352,304 @@
 </div>
 
 <main class="container">
-
-  <div class="page-header">
-    <div class="page-title">memor<span class="accent">.</span></div>
-  </div>
+  <nav class="desk-tabs" id="desk-tabs" aria-label="Agent desks"></nav>
 
   <div id="banner" class="banner" role="alert">
-    <div class="banner-icon">&#x26A0;</div>
+    <div>⚠</div>
     <div>
       <h3>Getting Started</h3>
       <p id="banner-msg">No data yet. Run <code>memor service install</code> to start the daemon.</p>
     </div>
   </div>
 
-  <!-- ── System Status ───────────────────────────────────── -->
-  <section>
-    <div class="section-label"><span class="dot"></span> System Status</div>
-    <div class="metric-grid" id="status-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
-      <div class="metric-card">
-        <div class="metric-info">
-          <div class="metric-label">Proxy</div>
-          <div class="metric-value" id="status-proxy">&ndash;</div>
-          <div class="metric-sub" id="status-proxy-sub">context compression</div>
-        </div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-info">
-          <div class="metric-label">Hook</div>
-          <div class="metric-value" id="status-hook">&ndash;</div>
-          <div class="metric-sub">recall injection</div>
-        </div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-info">
-          <div class="metric-label">Daemon</div>
-          <div class="metric-value" id="status-daemon">&ndash;</div>
-          <div class="metric-sub">background ingest</div>
-        </div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-info">
-          <div class="metric-label">Proxied Agents</div>
-          <div class="metric-value" id="status-agents" style="font-size:16px;line-height:1.3;">&ndash;</div>
-          <div class="metric-sub" id="status-agents-sub">proxy-enabled agents</div>
-        </div>
-      </div>
-      <div class="metric-card" id="savings-display" style="display:none;">
-        <div class="metric-info">
-          <div class="metric-label">Token Savings</div>
-          <div class="metric-value" id="savings-pct" style="color:var(--ok);">&ndash;</div>
-          <div class="metric-sub"><span id="savings-before">&ndash;</span> → <span id="savings-after" class="up">&ndash;</span> tokens</div>
-        </div>
-      </div>
-      <div class="metric-card" id="content-types-display" style="display:none;">
-        <div class="metric-info">
-          <div class="metric-label">Compressed</div>
-          <div class="metric-value" id="content-types-total">&ndash;</div>
-          <div class="metric-sub" id="content-types-list">by content type</div>
-        </div>
-      </div>
+  <!-- ═══════════════ OVERVIEW PANE ═══════════════ -->
+  <div class="pane active" id="pane-overview" data-pane="overview">
+    <div class="status-row" id="status-row">
+      <div class="chip"><span class="led" id="led-proxy"></span>Proxy <strong id="status-proxy">–</strong></div>
+      <div class="chip"><span class="led" id="led-hook"></span>Hook <strong id="status-hook">–</strong></div>
+      <div class="chip"><span class="led" id="led-daemon"></span>Daemon <strong id="status-daemon">–</strong></div>
+      <div class="chip" id="chip-cursor-wire" style="display:none;"><span class="led" id="led-cursor-wire"></span>Cursor Wire <strong id="status-cursor-wire">–</strong></div>
+      <div class="chip">Agents <strong id="status-agents">–</strong></div>
     </div>
-  </section>
 
-  <!-- ── Proxy savings by agent ──────────────────────────── -->
-  <section id="proxy-savings-section" style="display:none;">
-    <div class="section-label"><span class="dot"></span> Proxy savings by agent</div>
-    <div class="metric-grid" id="proxy-savings-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));"></div>
-  </section>
+    <section>
+      <div class="section-label"><span class="dot"></span> Portfolio</div>
+      <div class="kpi-grid">
+        <div class="kpi" style="--kpi-accent:var(--ok)">
+          <div class="kpi-label">Token Savings</div>
+          <div class="kpi-value pnl" id="savings-pct">–</div>
+          <div class="kpi-sub"><span id="savings-before">–</span> → <span id="savings-after">–</span></div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Memories</div>
+          <div class="kpi-value" id="m-memories">–</div>
+          <div class="kpi-sub"><span id="m-chunks">–</span> chunks · <span id="m-global">–</span> global</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Recalls</div>
+          <div class="kpi-value" id="m-recalls">–</div>
+          <div class="kpi-sub" id="m-recalls-sub">hook events</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Projects</div>
+          <div class="kpi-value" id="m-projects">–</div>
+          <div class="kpi-sub" id="content-types-list">compressed by type</div>
+        </div>
+      </div>
+    </section>
 
-  <!-- ── Hero metrics ───────────────────────────────────── -->
-  <section>
-    <div class="section-label"><span class="dot"></span> Memory Bank</div>
-    <div class="metric-grid">
-      <div class="metric-card">
-        <div class="metric-info">
-          <div class="metric-label">Session Chunks</div>
-          <div class="metric-value" id="m-chunks">&ndash;</div>
-          <div class="metric-sub">ingested from transcripts</div>
+    <section>
+      <div class="chart-panel">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Cumulative tokens saved</div>
+            <div class="chart-big" id="cum-saved-big">–</div>
+          </div>
+          <div class="chart-meta">30d equity curve · proxy + wire</div>
         </div>
-        <div class="mini-bars" id="mb-chunks"></div>
+        <div class="chart-canvas tall" id="savings-equity"></div>
       </div>
-      <div class="metric-card">
-        <div class="metric-info">
-          <div class="metric-label">Memories</div>
-          <div class="metric-value" id="m-memories">&ndash;</div>
-          <div class="metric-sub">distilled insights</div>
-        </div>
-        <div class="mini-bars" id="mb-memories"></div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-info">
-          <div class="metric-label">Projects</div>
-          <div class="metric-value" id="m-projects">&ndash;</div>
-          <div class="metric-sub">tracked projects</div>
-        </div>
-        <div class="mini-bars" id="mb-projects"></div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-info">
-          <div class="metric-label">Global</div>
-          <div class="metric-value" id="m-global">&ndash;</div>
-          <div class="metric-sub">cross-project memories</div>
-        </div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-info">
-          <div class="metric-label">Total Recalls</div>
-          <div class="metric-value" id="m-recalls">&ndash;</div>
-          <div class="metric-sub" id="m-recalls-sub">hook recall events</div>
-        </div>
-        <div class="mini-bars" id="mb-recalls"></div>
-      </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- ── Agent breakdown ─────────────────────────────────── -->
-  <section id="agent-section" style="display:none;">
-    <div class="section-label"><span class="dot"></span> Agent Breakdown</div>
-    <div class="metric-grid" id="agent-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));"></div>
-  </section>
+    <section id="agent-compare-section" style="display:none;">
+      <div class="section-label"><span class="dot"></span> Desks</div>
+      <div class="agent-compare" id="agent-compare"></div>
+    </section>
 
-  <!-- ── Token ROI (demoted) ───────────────────────────────── -->
-  <section>
-    <div class="chart-card" id="roi-card" style="display:none;">
-      <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
-        <div>
-          <div class="chart-title" style="margin-bottom:4px;">Token ROI</div>
-          <div style="font-size:24px;font-weight:600;color:var(--ok);letter-spacing:-0.5px;" id="roi-value">&ndash;</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;" id="roi-desc">fewer tool calls when Memor injects context</div>
+    <section>
+      <div class="chart-grid-2">
+        <div class="chart-panel">
+          <div class="chart-head">
+            <div class="chart-title">Recall activity</div>
+            <div class="legend">
+              <span><span class="legend-dot" style="background:var(--accent)"></span>Hits</span>
+              <span><span class="legend-dot" style="background:var(--surface3)"></span>Miss</span>
+            </div>
+          </div>
+          <div class="chart-meta" style="margin-bottom:6px;">Total <span id="chart-total">0</span></div>
+          <div class="bar-chart" id="trend-chart"></div>
+          <div class="chart-float-tip" id="trend-tip"></div>
         </div>
-        <div style="display:flex;gap:24px;flex:1;justify-content:flex-end;">
-          <div style="text-align:center;">
-            <div style="font-size:18px;font-weight:600;color:var(--text);" id="roi-tools-with">&ndash;</div>
-            <div style="font-size:10px;color:var(--text-muted);">avg tools/turn<br>with recall</div>
+        <div class="chart-panel">
+          <div class="chart-head"><div class="chart-title">Efficiency</div></div>
+          <div id="efficiency-gain-banner" style="display:none;background:var(--ok-dim);border:1px solid rgba(47,214,123,0.25);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;">
+            <div style="font-family:var(--mono);font-size:20px;font-weight:600;color:var(--ok);" id="eg-value">–</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px;" id="eg-desc">fewer input tokens/turn with recall</div>
           </div>
-          <div style="text-align:center;">
-            <div style="font-size:18px;font-weight:600;color:var(--text);" id="roi-tools-without">&ndash;</div>
-            <div style="font-size:10px;color:var(--text-muted);">avg tools/turn<br>without recall</div>
+          <div class="side-stats">
+            <div class="side-stat">
+              <div class="side-stat-label">Avg tokens / turn</div>
+              <div class="side-stat-value" id="e-avg-input">–</div>
+              <div class="side-stat-sub" id="e-avg-input-sub">all sessions</div>
+            </div>
+            <div class="side-stat">
+              <div class="side-stat-label">Coverage · Latency</div>
+              <div class="side-stat-value"><span id="e-coverage">–</span> · <span id="e-latency">–</span></div>
+              <div class="side-stat-sub"><span id="e-sessions">–</span> sessions · <span id="e-sessions-sub"></span></div>
+            </div>
           </div>
-          <div style="text-align:center;">
-            <div style="font-size:18px;font-weight:600;color:var(--text);" id="roi-turns">&ndash;</div>
-            <div style="font-size:10px;color:var(--text-muted);" id="roi-turns-sub">turns measured</div>
-          </div>
-        </div>
-      </div>
-      <div style="margin-top:16px;border-top:1px solid var(--border-light);padding-top:12px;position:relative;">
-        <div id="roi-sparkline" style="width:100%;height:80px;"></div>
-        <div id="roi-spark-tooltip" style="display:none;position:absolute;top:0;background:var(--surface3);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;color:var(--text);white-space:nowrap;pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,0.4);z-index:10;"></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Recall trend chart ─────────────────────────────── -->
-  <section>
-    <div class="chart-grid">
-      <div class="chart-card">
-        <div class="chart-header">
-          <div class="chart-title">Recall Activity</div>
-          <div class="chart-legend">
-            <span><span class="legend-dot" style="background:var(--accent)"></span> Hits</span>
-            <span><span class="legend-dot" style="background:var(--surface3)"></span> No hits</span>
-          </div>
-        </div>
-        <div class="chart-big-number">
-          <span class="label">Total Recalls:</span>
-          <span id="chart-total">0</span>
-        </div>
-        <div class="bar-chart" id="trend-chart"></div>
-      </div>
-      <div class="chart-card">
-        <div class="chart-header">
-          <div class="chart-title">Efficiency</div>
-        </div>
-        <div id="efficiency-gain-banner" style="display:none;background:var(--ok-dim);border:1px solid rgba(61,214,140,0.2);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px;">
-          <div style="font-size:22px;font-weight:700;color:var(--ok);letter-spacing:-0.5px;" id="eg-value">&ndash;</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;" id="eg-desc">fewer input tokens/turn with active recall</div>
-        </div>
-        <div class="side-stats" id="efficiency-side">
-          <div class="side-stat">
-            <div class="side-stat-label">Avg Tokens / Turn</div>
-            <div class="side-stat-value" id="e-avg-input">&ndash;</div>
-            <div class="side-stat-sub" id="e-avg-input-sub">across all sessions</div>
-          </div>
-          <div class="side-stat">
-            <div class="side-stat-label">Recall Coverage</div>
-            <div class="side-stat-value" id="e-coverage">&ndash;</div>
-            <div class="side-stat-sub">% of prompts where context was injected</div>
-          </div>
-          <div class="side-stat">
-            <div class="side-stat-label">Avg Latency</div>
-            <div class="side-stat-value" id="e-latency">&ndash;</div>
-            <div class="side-stat-sub">recall pipeline speed</div>
-          </div>
-          <div class="side-stat">
-            <div class="side-stat-label">Sessions Tracked</div>
-            <div class="side-stat-value" id="e-sessions">&ndash;</div>
-            <div class="side-stat-sub" id="e-sessions-sub">with token data</div>
+          <div id="roi-card" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light);">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Token ROI</div>
+            <div style="font-family:var(--mono);font-size:18px;font-weight:600;color:var(--ok);" id="roi-value">–</div>
+            <div style="font-size:11px;color:var(--text-muted);" id="roi-desc"></div>
+            <div style="display:flex;gap:16px;margin-top:8px;font-size:11px;color:var(--text-muted);">
+              <span>with <strong id="roi-tools-with" style="color:var(--text)">–</strong></span>
+              <span>without <strong id="roi-tools-without" style="color:var(--text)">–</strong></span>
+              <span id="roi-turns-sub"><strong id="roi-turns" style="color:var(--text)">–</strong> turns</span>
+            </div>
+            <div id="roi-sparkline" style="height:72px;margin-top:8px;position:relative;"></div>
+            <div id="roi-spark-tooltip" style="display:none;position:absolute;background:var(--surface3);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:11px;z-index:10;"></div>
           </div>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- ── Projects table ─────────────────────────────────── -->
-  <section>
-    <div class="table-card">
-      <div class="table-header">
-        <div class="table-title"><span class="dot"></span> Project Breakdown</div>
+    <section id="proxy-savings-section" style="display:none;">
+      <div class="section-label"><span class="dot"></span> Proxy savings by agent</div>
+      <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">Includes Cursor Wire when mitm is running</div>
+      <div class="agent-compare" id="proxy-savings-grid"></div>
+    </section>
+
+    <section>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-title"><span class="dot"></span> Projects</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th class="sortable" data-col="project" data-type="str">Project <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="artifacts" data-type="num"><span id="th-col1">Chunks</span> <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="memories" data-type="num"><span id="th-col2">Memories</span> <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="total_tokens" data-type="num"><span id="th-col3">Tokens</span> <span class="sort-icon">↕</span></th>
+              <th id="th-col4">Status</th>
+              <th id="th-col5"></th>
+              <th id="th-col6"></th>
+            </tr>
+          </thead>
+          <tbody id="projects-body" class="projects-body"></tbody>
+        </table>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th class="sortable" data-col="project" data-type="str">Project <span class="sort-icon">&updownarrow;</span></th>
-            <th class="sortable" data-col="artifacts" data-type="num"><span id="th-col1">Chunks</span> <span class="sort-icon">&updownarrow;</span></th>
-            <th class="sortable" data-col="memories" data-type="num"><span id="th-col2">Memories</span> <span class="sort-icon">&updownarrow;</span></th>
-            <th class="sortable" data-col="total_tokens" data-type="num"><span id="th-col3">Tokens</span> <span class="sort-icon">&updownarrow;</span></th>
-            <th id="th-col4">Status</th>
-            <th id="th-col5"></th>
-            <th id="th-col6"></th>
-          </tr>
-        </thead>
-        <tbody id="projects-body" class="projects-body"></tbody>
-      </table>
-    </div>
-  </section>
+    </section>
 
-  <!-- ── Memory Quality ──────────────────────────────────── -->
-  <section>
-    <div class="table-card" id="quality-section" style="display:none;">
-      <div class="table-header">
-        <div class="table-title"><span class="dot"></span> Memory Quality</div>
+    <section>
+      <div class="table-card" id="quality-section" style="display:none;">
+        <div class="table-header">
+          <div class="table-title"><span class="dot"></span> Memory quality</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Memory</th><th>Project</th><th>Type</th><th>Recalls</th>
+              <th>Used</th><th>Rejected</th><th>Score</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="quality-body"></tbody>
+        </table>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Memory</th>
-            <th>Project</th>
-            <th>Type</th>
-            <th>Recalls</th>
-            <th>Used</th>
-            <th>Rejected</th>
-            <th>Score</th>
-            <th style="min-width:80px;"></th>
-          </tr>
-        </thead>
-        <tbody id="quality-body"></tbody>
-      </table>
-    </div>
-  </section>
+    </section>
 
-  <!-- ── Recent recalls ─────────────────────────────────── -->
-  <section>
-    <div class="table-card">
-      <div class="table-header">
-        <div class="table-title"><span class="dot"></span> Recent Recalls</div>
-        <div class="filter-bar" id="filter-bar"></div>
+    <section>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-title"><span class="dot"></span> Recent recalls</div>
+          <div class="filter-bar" id="filter-bar"></div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th><th>Agent</th><th>Project</th><th>Query</th>
+              <th>Hits</th><th>Score</th><th>Tokens</th><th>Latency</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="recalls-body"></tbody>
+        </table>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Agent</th>
-            <th>Project</th>
-            <th>Query</th>
-            <th>Hits</th>
-            <th>Score</th>
-            <th>Tokens</th>
-            <th>Latency</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="recalls-body"></tbody>
-      </table>
-    </div>
-  </section>
+    </section>
+  </div>
 
+  <!-- ═══════════════ AGENT PANE (template host) ═══════════════ -->
+  <div class="pane" id="pane-agent" data-pane="agent">
+    <section>
+      <div class="section-label"><span class="dot"></span> <span id="agent-pane-title">Agent</span></div>
+      <div class="desk-health" id="ap-wire-health" aria-live="polite">
+        <div class="desk-health-row">
+          <span class="led" id="ap-byok-led"></span>
+          <span class="label">BYOK proxy</span>
+          <span class="detail" id="ap-byok-detail">–</span>
+        </div>
+        <div class="desk-health-row">
+          <span class="led" id="ap-wire-led"></span>
+          <span class="label">Wire mitmdump</span>
+          <span class="detail" id="ap-wire-detail">–</span>
+        </div>
+      </div>
+      <div class="kpi-grid" id="ap-kpi-grid">
+        <div class="kpi" style="--kpi-accent:var(--accent)">
+          <div class="kpi-label">Recalls</div>
+          <div class="kpi-value" id="ap-recalls">–</div>
+          <div class="kpi-sub" id="ap-recalls-sub">events</div>
+        </div>
+        <div class="kpi" style="--kpi-accent:var(--ok)">
+          <div class="kpi-label">Hit rate</div>
+          <div class="kpi-value pnl" id="ap-hitrate">–</div>
+          <div class="kpi-sub" id="ap-hits">– hits</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Avg latency</div>
+          <div class="kpi-value" id="ap-latency">–</div>
+          <div class="kpi-sub">recall pipeline</div>
+        </div>
+        <div class="kpi" style="--kpi-accent:var(--ok)">
+          <div class="kpi-label">Proxy saved</div>
+          <div class="kpi-value pnl" id="ap-saved-pct">–</div>
+          <div class="kpi-sub" id="ap-saved-sub">no proxy data</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="chart-grid-2">
+        <div class="chart-panel">
+          <div class="chart-head">
+            <div class="chart-title">Recall volume</div>
+            <div class="chart-meta">30d</div>
+          </div>
+          <div class="chart-canvas" id="ap-recall-chart"></div>
+        </div>
+        <div class="chart-panel">
+          <div class="chart-head">
+            <div class="chart-title">Cumulative savings</div>
+            <div class="chart-meta" id="ap-cum-meta">30d</div>
+          </div>
+          <div class="chart-big" id="ap-cum-saved">–</div>
+          <div class="chart-canvas" id="ap-savings-chart"></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-title"><span class="dot"></span> Recent recalls</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th><th>Project</th><th>Query</th>
+              <th>Hits</th><th>Score</th><th>Tokens</th><th>Latency</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="ap-recalls-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
 </main>
 
-<footer>memor &mdash; refreshes every 30s</footer>
+<footer>memor — agent desks · refreshes every 30s</footer>
 
 <script>
 (function () {
   'use strict';
 
+  var CORE_AGENTS = ['claude', 'cursor', 'codex', 'copilot', 'kimi', 'goose'];
+  var AGENT_COLORS = {
+    claude: 'var(--claude)', codex: 'var(--codex)', copilot: 'var(--copilot)',
+    cursor: 'var(--cursor)', 'cursor-wire': 'var(--cursor-wire)',
+    kimi: 'var(--kimi)', goose: 'var(--goose)', cline: '#64a0ff', opencode: '#14b8a6',
+  };
+
   var projectFilter = null;
   var sortCol = 'artifacts';
   var sortDir = 'desc';
   var projectsData = [];
+  var PANE_STORAGE_KEY = 'memor.dashboard.pane';
+  var activePane = 'overview';
+  var knownAgents = CORE_AGENTS.slice();
+
+  function isValidPane(id) {
+    return id === 'overview' || CORE_AGENTS.indexOf(id) !== -1 || knownAgents.indexOf(id) !== -1;
+  }
+
+  function readStoredPane() {
+    try {
+      var hash = (location.hash || '').replace(/^#/, '');
+      if (hash && isValidPane(hash)) return hash;
+      var stored = localStorage.getItem(PANE_STORAGE_KEY);
+      if (stored && isValidPane(stored)) return stored;
+    } catch (e) {}
+    return 'overview';
+  }
+
+  function persistPane(id) {
+    try {
+      localStorage.setItem(PANE_STORAGE_KEY, id);
+      if (location.hash.replace(/^#/, '') !== id) {
+        history.replaceState(null, '', '#' + id);
+      }
+    } catch (e) {}
+  }
 
   function fmt(n) {
     if (n == null) return '–';
@@ -653,32 +665,44 @@
     if (!ts) return '–';
     var d = new Date(typeof ts === 'number' ? ts * 1000 : ts);
     var diff = (Date.now() - d) / 1000;
-    if (diff < 60)    return Math.round(diff) + 's ago';
-    if (diff < 3600)  return Math.round(diff / 60) + 'm ago';
+    if (diff < 60) return Math.round(diff) + 's ago';
+    if (diff < 3600) return Math.round(diff / 60) + 'm ago';
     if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
     return d.toLocaleDateString();
   }
 
   function badge(status) {
     var map = {
-      ok:              ['badge-ok',        'Success'],
-      extractive_only: ['badge-extractive','No Distill'],
-      no_hits:         ['badge-no_hits',   'No Hits'],
+      ok: ['badge-ok', 'Success'],
+      extractive_only: ['badge-extractive', 'No Distill'],
+      no_hits: ['badge-no_hits', 'No Hits'],
     };
     var m = map[status] || ['badge-no_hits', status];
     return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';
   }
 
+  function agentLabel(agent) {
+    var labels = {
+      claude: 'Claude', codex: 'Codex', copilot: 'Copilot',
+      cursor: 'Cursor', 'cursor-wire': 'Cursor Wire',
+      kimi: 'Kimi', goose: 'Goose', cline: 'Cline', opencode: 'OpenCode',
+    };
+    if (labels[agent]) return labels[agent];
+    if (!agent) return 'Claude';
+    return agent.charAt(0).toUpperCase() + agent.slice(1);
+  }
+
   function agentBadge(agent) {
     var map = {
-      claude:  ['badge-claude',  'Claude'],
-      codex:   ['badge-codex',   'Codex'],
+      claude: ['badge-claude', 'Claude'],
+      codex: ['badge-codex', 'Codex'],
       copilot: ['badge-copilot', 'Copilot'],
-      cursor:  ['badge-cursor',  'Cursor'],
-      kimi:    ['badge-kimi',    'Kimi'],
-      goose:   ['badge-goose',   'Goose'],
+      cursor: ['badge-cursor', 'Cursor'],
+      'cursor-wire': ['badge-cursor-wire', 'Cursor Wire'],
+      kimi: ['badge-kimi', 'Kimi'],
+      goose: ['badge-goose', 'Goose'],
     };
-    var m = map[agent || 'claude'] || ['badge-claude', agent || 'claude'];
+    var m = map[agent || 'claude'] || ['badge-claude', agentLabel(agent)];
     return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';
   }
 
@@ -701,30 +725,143 @@
     return r.json();
   }
 
-  function renderMiniBars(containerId, values) {
-    var c = document.getElementById(containerId);
-    if (!c) return;
-    c.innerHTML = '';
-    if (!values || !values.length) {
-      for (var i = 0; i < 7; i++) {
-        var b = document.createElement('div');
-        b.className = 'mini-bar';
-        b.style.height = (4 + Math.random() * 20) + 'px';
-        b.style.opacity = '0.2';
-        c.appendChild(b);
-      }
+  /* ── Equity / area charts ──────────────────────────────── */
+  function renderEquityChart(containerId, series, valueKey, color) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    if (!series || !series.length) {
+      container.innerHTML = '<div class="empty-state" style="height:100%;display:flex;align-items:center;justify-content:center;">No series yet</div>';
       return;
     }
-    var max = Math.max.apply(null, values) || 1;
-    values.slice(-7).forEach(function(v) {
-      var b = document.createElement('div');
-      b.className = 'mini-bar';
-      b.style.height = Math.max(3, (v / max) * 36) + 'px';
-      c.appendChild(b);
+    color = color || 'var(--ok)';
+    var W = container.clientWidth || 640;
+    var H = container.clientHeight || 160;
+    var padL = 36, padR = 10, padT = 10, padB = 22;
+    var plotW = Math.max(40, W - padL - padR);
+    var plotH = Math.max(40, H - padT - padB);
+    var vals = series.map(function(d) { return d[valueKey] || 0; });
+    var maxV = Math.max.apply(null, vals.concat([1]));
+    var minV = Math.min.apply(null, vals.concat([0]));
+    if (minV > 0) minV = 0;
+    var range = (maxV - minV) || 1;
+
+    function x(i) { return padL + (series.length > 1 ? (i / (series.length - 1)) * plotW : plotW / 2); }
+    function y(v) { return padT + plotH - ((v - minV) / range) * plotH; }
+
+    var pts = series.map(function(d, i) { return x(i) + ',' + y(d[valueKey] || 0); });
+    var linePath = 'M' + pts.join(' L');
+    var areaPath = linePath + ' L' + x(series.length - 1) + ',' + y(minV) + ' L' + x(0) + ',' + y(minV) + ' Z';
+    var gradId = containerId.replace(/[^a-zA-Z0-9]/g, '') + 'Grad';
+
+    var grid = '';
+    [minV, (minV + maxV) / 2, maxV].forEach(function(v) {
+      var yy = y(v);
+      grid += '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="var(--border-light)" stroke-width="1" stroke-dasharray="3,4"/>';
+      grid += '<text x="' + (padL - 6) + '" y="' + (yy + 3) + '" fill="var(--text-muted)" font-size="9" font-family="IBM Plex Mono,monospace" text-anchor="end">' + fmt(Math.round(v)) + '</text>';
+    });
+
+    var xLabels = '';
+    var step = Math.max(1, Math.floor(series.length / 6));
+    series.forEach(function(d, i) {
+      if (i % step !== 0 && i !== series.length - 1) return;
+      xLabels += '<text x="' + x(i) + '" y="' + (H - 4) + '" fill="var(--text-muted)" font-size="9" font-family="IBM Plex Mono,monospace" text-anchor="middle">' + String(d.day).slice(5) + '</text>';
+    });
+
+    container.innerHTML =
+      '<svg width="' + W + '" height="' + H + '" style="display:block">' +
+      '<defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0%" stop-color="' + color + '" stop-opacity="0.35"/>' +
+      '<stop offset="100%" stop-color="' + color + '" stop-opacity="0"/>' +
+      '</linearGradient></defs>' +
+      grid + xLabels +
+      '<path d="' + areaPath + '" fill="url(#' + gradId + ')"/>' +
+      '<path d="' + linePath + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>';
+  }
+
+  function renderLineChart(containerId, series, valueKey, color) {
+    renderEquityChart(containerId, series, valueKey, color || 'var(--accent)');
+  }
+
+  /* ── Tabs ──────────────────────────────────────────────── */
+  function renderTabs() {
+    var nav = document.getElementById('desk-tabs');
+    nav.innerHTML = '';
+    var tabs = [{ id: 'overview', label: 'Overview', color: 'var(--accent)' }].concat(
+      knownAgents.map(function(a) {
+        return { id: a, label: agentLabel(a), color: AGENT_COLORS[a] || 'var(--text-muted)' };
+      })
+    );
+    tabs.forEach(function(t) {
+      var btn = el('button', {
+        class: 'desk-tab' + (activePane === t.id ? ' active' : ''),
+        type: 'button',
+        'data-pane': t.id,
+      });
+      btn.innerHTML = '<span class="tab-dot" style="background:' + t.color + '"></span>' + esc(t.label);
+      btn.addEventListener('click', function() { switchPane(t.id); });
+      nav.appendChild(btn);
     });
   }
 
-  /* ── Summary ───────────────────────────────────────────── */
+  function switchPane(id) {
+    if (!isValidPane(id)) id = 'overview';
+    activePane = id;
+    persistPane(id);
+    document.getElementById('pane-overview').classList.toggle('active', id === 'overview');
+    document.getElementById('pane-agent').classList.toggle('active', id !== 'overview');
+    renderTabs();
+    if (id === 'overview') refreshOverview();
+    else loadAgentPane(id);
+  }
+
+  /* ── Overview renderers ────────────────────────────────── */
+  function setLed(id, on) {
+    var led = document.getElementById(id);
+    if (!led) return;
+    led.classList.toggle('on', !!on);
+  }
+
+  function renderProxyStatus(data) {
+    var proxyOn = !!data.proxy;
+    var hookOn = !!data.hook;
+    var daemonOn = !!data.daemon;
+    setLed('led-proxy', proxyOn);
+    setLed('led-hook', hookOn);
+    setLed('led-daemon', daemonOn);
+    document.getElementById('status-proxy').textContent = proxyOn
+      ? (data.mode === 'compress' ? 'Compress' : 'On')
+      : 'Off';
+    document.getElementById('status-hook').textContent = hookOn ? 'On' : 'Off';
+    document.getElementById('status-daemon').textContent = daemonOn ? 'On' : 'Off';
+
+    var wire = data.cursor_wire || {};
+    var wireChip = document.getElementById('chip-cursor-wire');
+    if (wire.enabled) {
+      wireChip.style.display = '';
+      var healthy = !!wire.healthy;
+      setLed('led-cursor-wire', healthy);
+      var label = document.getElementById('status-cursor-wire');
+      if (healthy) {
+        label.textContent = 'On :' + (wire.port || '');
+        label.style.color = 'var(--ok)';
+      } else {
+        label.textContent = 'Down';
+        label.style.color = 'var(--warn)';
+        label.title = (wire.detail || 'mitmdump not listening') +
+          ' — run memor service restart';
+      }
+    } else {
+      wireChip.style.display = 'none';
+    }
+
+    var agents = data.proxy_agents || {};
+    var active = Object.keys(agents).filter(function(a) { return agents[a]; });
+    document.getElementById('status-agents').textContent = active.length
+      ? active.map(agentLabel).join(', ')
+      : 'None';
+  }
+
   function renderSummary(d) {
     var ing = d.ingestion || {};
     var chunks = (ing.session_chunk || {}).count || 0;
@@ -736,96 +873,175 @@
     document.getElementById('m-recalls').textContent = fmt(d.total_recalls);
     if (d.total_recalls > 0) {
       document.getElementById('m-recalls-sub').textContent =
-        fmtPct(d.hit_rate * 100) + ' hit rate · ' + fmtMs(d.avg_latency_ms) + ' avg';
+        fmtPct(d.hit_rate * 100) + ' hit · ' + fmtMs(d.avg_latency_ms);
     }
-
     document.getElementById('e-latency').textContent = d.total_recalls > 0 ? fmtMs(d.avg_latency_ms) : '–';
   }
 
-  /* ── Efficiency ────────────────────────────────────────── */
+  function renderSavingsHero(data) {
+    if (!data || !data.summary || data.summary.tokens_before === 0) {
+      document.getElementById('savings-pct').textContent = '–';
+      document.getElementById('savings-before').textContent = '–';
+      document.getElementById('savings-after').textContent = '–';
+      document.getElementById('cum-saved-big').textContent = '–';
+      renderEquityChart('savings-equity', [], 'cumulative_saved');
+      return;
+    }
+    var summary = data.summary;
+    document.getElementById('savings-pct').textContent = summary.pct_saved + '%';
+    document.getElementById('savings-before').textContent = fmt(summary.tokens_before);
+    document.getElementById('savings-after').textContent = fmt(summary.tokens_after);
+
+    var series = data.per_day || [];
+    var cum = series.length ? series[series.length - 1].cumulative_saved : 0;
+    if (cum == null) {
+      cum = 0;
+      series = series.map(function(d) {
+        var saved = Math.max(0, (d.tokens_before || 0) - (d.tokens_after || 0));
+        cum += saved;
+        return Object.assign({}, d, { tokens_saved: saved, cumulative_saved: cum });
+      });
+    }
+    document.getElementById('cum-saved-big').textContent = fmt(cum) + ' saved';
+    renderEquityChart('savings-equity', series, 'cumulative_saved', '#2fd67b');
+
+    var parts = [];
+    if (data.content_types && data.content_types.length) {
+      data.content_types.slice(0, 3).forEach(function(ct) {
+        parts.push(esc(ct.content_type) + ' ' + fmt(ct.count));
+      });
+    }
+    document.getElementById('content-types-list').textContent =
+      parts.length ? parts.join(' · ') : 'compressed by type';
+  }
+
   function renderEfficiency(data) {
     document.getElementById('e-coverage').textContent = fmtPct(data.coverage * 100);
   }
 
   function renderSessionEfficiency(data) {
     if (!data || data.total_sessions === 0) return;
-
     document.getElementById('e-avg-input').textContent = fmt(data.avg_input_per_turn);
     document.getElementById('e-sessions').textContent = fmt(data.total_sessions);
-
     if (data.sessions_with_recall > 0 && data.sessions_without_recall > 0) {
       document.getElementById('e-avg-input-sub').textContent =
-        fmt(data.avg_input_per_turn_with_recall) + ' with recall · ' +
+        fmt(data.avg_input_per_turn_with_recall) + ' with · ' +
         fmt(data.avg_input_per_turn_without_recall) + ' without';
       document.getElementById('e-sessions-sub').textContent =
-        data.sessions_with_recall + ' with recall · ' + data.sessions_without_recall + ' without';
+        data.sessions_with_recall + ' with · ' + data.sessions_without_recall + ' without';
     }
-
     var banner = document.getElementById('efficiency-gain-banner');
     if (data.efficiency_gain_pct > 0 && data.sessions_with_recall >= 3 && data.sessions_without_recall >= 3) {
       document.getElementById('eg-value').textContent = data.efficiency_gain_pct + '% fewer';
       document.getElementById('eg-desc').textContent = 'input tokens/turn with active recall vs. without';
       banner.style.display = 'block';
-    } else if (data.efficiency_gain_pct < 0 && data.sessions_with_recall >= 3) {
-      document.getElementById('eg-value').textContent = Math.abs(data.efficiency_gain_pct) + '% more';
-      document.getElementById('eg-value').style.color = 'var(--warn)';
-      document.getElementById('eg-desc').textContent = 'input tokens/turn with recall — investigating...';
-      banner.style.display = 'block';
-      banner.style.background = 'var(--warn-dim)';
-      banner.style.borderColor = 'rgba(232,147,32,0.2)';
-    }
-
-    if (data.avg_tool_calls_with_recall > 0 || data.avg_tool_calls_without_recall > 0) {
-      var toolDiff = data.avg_tool_calls_without_recall - data.avg_tool_calls_with_recall;
-      if (toolDiff > 0 && data.sessions_with_recall >= 3) {
-        var toolPct = Math.round((toolDiff / data.avg_tool_calls_without_recall) * 100);
-        if (toolPct > 5) {
-          document.getElementById('eg-desc').textContent += ' · ' + toolPct + '% fewer tool calls';
-        }
-      }
     }
   }
 
-  /* ── Trend chart ───────────────────────────────────────── */
   function renderTrend(data) {
     var container = document.getElementById('trend-chart');
+    var tip = document.getElementById('trend-tip');
     container.innerHTML = '';
+    if (tip) tip.style.display = 'none';
     if (!data || !data.length) {
-      container.innerHTML = '<div class="empty-state" style="height:180px;display:flex;align-items:center;justify-content:center;">No recall data yet</div>';
+      container.innerHTML = '<div class="empty-state" style="height:140px;display:flex;align-items:center;justify-content:center;">No recall data yet</div>';
       document.getElementById('chart-total').textContent = '0';
       return;
     }
-    var total = 0;
-    var maxRecalls = 1;
+    var total = 0, maxRecalls = 1;
     data.forEach(function(d) {
       total += d.recalls;
       if (d.recalls > maxRecalls) maxRecalls = d.recalls;
     });
     document.getElementById('chart-total').textContent = fmt(total);
 
-    var recallsByDay = data.map(function(d) { return d.recalls; });
-    renderMiniBars('mb-recalls', recallsByDay);
+    function placeTip(group, html) {
+      if (!tip) return;
+      tip.innerHTML = html;
+      tip.style.display = 'block';
+      var rect = group.getBoundingClientRect();
+      var tw = tip.offsetWidth || 120;
+      var th = tip.offsetHeight || 36;
+      var left = rect.left + rect.width / 2 - tw / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+      var top = rect.top - th - 8;
+      if (top < 8) top = rect.bottom + 8;
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    }
 
-    var maxCells = 30;
     data.forEach(function(d) {
-      var totalCells = Math.max(1, Math.round((d.recalls / maxRecalls) * maxCells));
-      var hitCells = Math.round((d.hits / d.recalls) * totalCells);
-      var missCells = totalCells - hitCells;
-
-      var dayStr = d.day.slice(5);
-      var group = el('div', {class: 'bar-group'});
+      var totalCells = Math.max(1, Math.round((d.recalls / maxRecalls) * 28));
+      var hitCells = d.recalls > 0 ? Math.round(((d.hits || 0) / d.recalls) * totalCells) : 0;
+      var missCells = Math.max(0, totalCells - hitCells);
+      var group = el('div', { class: 'bar-group' });
       var cells = '';
       for (var i = 0; i < hitCells; i++) cells += '<div class="bar-cell bar-cell-hit"></div>';
-      for (var i = 0; i < missCells; i++) cells += '<div class="bar-cell bar-cell-miss"></div>';
+      for (var j = 0; j < missCells; j++) cells += '<div class="bar-cell bar-cell-miss"></div>';
       group.innerHTML =
-        '<div class="bar-tooltip">' + esc(d.day) + '<br>' + d.recalls + ' recalls · ' + (d.hits||0) + ' hits</div>' +
         '<div class="bar-stack">' + cells + '</div>' +
-        '<div class="bar-label">' + dayStr + '</div>';
+        '<div class="bar-label">' + d.day.slice(5) + '</div>';
+      var tipHtml = '<strong>' + esc(d.day) + '</strong><br>' +
+        d.recalls + ' recalls · ' + (d.hits || 0) + ' hits';
+      group.addEventListener('mouseenter', function() { placeTip(group, tipHtml); });
+      group.addEventListener('mousemove', function() { placeTip(group, tipHtml); });
+      group.addEventListener('mouseleave', function() {
+        if (tip) tip.style.display = 'none';
+      });
       container.appendChild(group);
     });
   }
 
-  /* ── Quality ───────────────────────────────────────────── */
+  function renderAgentBreakdown(data) {
+    var section = document.getElementById('agent-compare-section');
+    var grid = document.getElementById('agent-compare');
+    grid.innerHTML = '';
+    if (!data || !data.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    var fromData = data.map(function(r) { return r.agent || 'claude'; });
+    knownAgents = CORE_AGENTS.slice();
+    fromData.forEach(function(a) {
+      if (knownAgents.indexOf(a) === -1 && a !== 'cursor-wire') knownAgents.push(a);
+    });
+    renderTabs();
+    data.forEach(function(row) {
+      var agent = row.agent || 'claude';
+      if (agent === 'cursor-wire') return;
+      var color = AGENT_COLORS[agent] || 'var(--text-muted)';
+      var hitRate = row.recalls > 0 ? ((row.hits / row.recalls) * 100) : 0;
+      var tile = el('div', { class: 'agent-tile' });
+      tile.innerHTML =
+        '<div class="name" style="color:' + color + '">' + esc(agentLabel(agent)) + '</div>' +
+        '<div class="val">' + fmt(row.recalls) + '</div>' +
+        '<div class="sub">' + fmtPct(hitRate) + ' hit · ' + fmtMs(row.avg_latency) + '</div>';
+      tile.addEventListener('click', function() { switchPane(agent); });
+      grid.appendChild(tile);
+    });
+  }
+
+  function renderProxySavingsByAgent(data) {
+    var section = document.getElementById('proxy-savings-section');
+    var grid = document.getElementById('proxy-savings-grid');
+    grid.innerHTML = '';
+    var agents = (data && data.agents) ? data.agents : [];
+    if (!agents.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    agents.forEach(function(row) {
+      var agent = row.agent || 'unknown';
+      var color = AGENT_COLORS[agent] || 'var(--text-muted)';
+      var tile = el('div', { class: 'agent-tile' });
+      var pane = agent === 'cursor-wire' ? 'cursor' : agent;
+      tile.innerHTML =
+        '<div class="name" style="color:' + color + '">' + esc(agentLabel(agent)) + '</div>' +
+        '<div class="val" style="color:var(--ok)">' + row.pct_saved + '%</div>' +
+        '<div class="sub">' + fmt(row.tokens_before) + ' → ' + fmt(row.tokens_after) + ' · ' + fmt(row.requests) + ' req</div>';
+      tile.addEventListener('click', function() {
+        if (CORE_AGENTS.indexOf(pane) !== -1 || knownAgents.indexOf(pane) !== -1) switchPane(pane);
+      });
+      grid.appendChild(tile);
+    });
+  }
+
   function renderQuality(data) {
     var section = document.getElementById('quality-section');
     var tbody = document.getElementById('quality-body');
@@ -840,17 +1056,16 @@
       var projLabel = row.project === '_global'
         ? '<span class="badge badge-global">Global</span>'
         : esc(row.project);
-      var typeLabel = esc(row.mem_type || row.kind);
       var negHtml = neg > 0
         ? '<span style="color:var(--error);font-weight:600;">' + neg + '</span>'
         : '<span style="color:var(--text-muted);">0</span>';
       var tr = el('tr', {});
       tr.innerHTML =
-        '<td class="truncate" style="max-width:260px" title="' + esc(row.preview) + '">' + esc(row.preview) + '</td>' +
+        '<td class="truncate" style="max-width:240px" title="' + esc(row.preview) + '">' + esc(row.preview) + '</td>' +
         '<td>' + projLabel + '</td>' +
-        '<td><span class="mono" style="font-size:11px;color:var(--text-muted);">' + typeLabel + '</span></td>' +
+        '<td class="mono" style="color:var(--text-muted)">' + esc(row.mem_type || row.kind) + '</td>' +
         '<td>' + (row.recall_count || 0) + '</td>' +
-        '<td style="color:var(--ok);">' + (row.use_count || 0) + '</td>' +
+        '<td style="color:var(--ok)">' + (row.use_count || 0) + '</td>' +
         '<td>' + negHtml + '</td>' +
         '<td class="mono">' + fmtScore(score) + '</td>' +
         '<td><div class="quality-bar"><div class="quality-fill ' + barClass + '" style="width:' + barWidth + '%;"></div></div></td>';
@@ -858,29 +1073,22 @@
     });
   }
 
-  /* ── Projects ──────────────────────────────────────────── */
   function renderProjects(data) {
     projectsData = data;
     var sorted = data.slice().sort(function(a, b) {
       var va = a[sortCol], vb = b[sortCol];
-      if (typeof va === 'string') { va = va.toLowerCase(); vb = (vb||'').toLowerCase(); }
+      if (typeof va === 'string') { va = (va || '').toLowerCase(); vb = (vb || '').toLowerCase(); }
       if (va < vb) return sortDir === 'asc' ? -1 : 1;
       if (va > vb) return sortDir === 'asc' ? 1 : -1;
       return 0;
     });
-
     document.querySelectorAll('th.sortable').forEach(function(th) {
       var icon = th.querySelector('.sort-icon');
+      if (!icon) return;
       if (th.dataset.col === sortCol) {
-        th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
-        th.classList.remove(sortDir === 'asc' ? 'sort-desc' : 'sort-asc');
         icon.textContent = sortDir === 'asc' ? '↑' : '↓';
-      } else {
-        th.classList.remove('sort-asc', 'sort-desc');
-        icon.textContent = '↕';
-      }
+      } else icon.textContent = '↕';
     });
-
     var tbody = document.getElementById('projects-body');
     tbody.innerHTML = '';
     if (!sorted.length) {
@@ -896,7 +1104,6 @@
       document.getElementById('th-col5').textContent = 'No Hits';
       document.getElementById('th-col6').textContent = 'No Distill';
     }
-
     sorted.forEach(function(row) {
       var tr = el('tr', {});
       if (projectFilter === row.project) tr.classList.add('selected');
@@ -905,23 +1112,20 @@
         ? '<td><span class="badge badge-global">Global</span></td>'
         : '<td class="truncate mono" title="' + esc(row.project) + '">' + esc(row.project) + '</td>';
       if (isRecallMode) {
-        tr.innerHTML =
-          projCell +
+        tr.innerHTML = projCell +
           '<td>' + fmt(row.recalls) + '</td><td>' + fmt(row.tokens) + '</td>' +
           '<td>' + fmtScore(row.avg_score) + '</td>' +
-          '<td style="color:var(--ok)">' + (row.ok_count||0) + '</td>' +
-          '<td style="color:var(--neutral)">' + (row.no_hits_count||0) + '</td>' +
-          '<td style="color:var(--warn)">' + (row.extractive_count||0) + '</td>';
+          '<td style="color:var(--ok)">' + (row.ok_count || 0) + '</td>' +
+          '<td>' + (row.no_hits_count || 0) + '</td>' +
+          '<td style="color:var(--warn)">' + (row.extractive_count || 0) + '</td>';
       } else {
-        var hasMemories = (row.memories||0) > 0;
+        var hasMemories = (row.memories || 0) > 0;
         var badgeCls = isGlobal ? 'badge-global' : (hasMemories ? 'badge-ok' : 'badge-extractive');
         var status = isGlobal ? 'Global' : (hasMemories ? 'Active' : 'Ingested');
-        tr.innerHTML =
-          projCell +
-          '<td>' + fmt(row.chunks||0) + '</td><td>' + fmt(row.memories||0) + '</td>' +
-          '<td>' + fmt(row.total_tokens||0) + '</td>' +
-          '<td><span class="badge ' + badgeCls + '">' + status + '</span></td>' +
-          '<td></td><td></td>';
+        tr.innerHTML = projCell +
+          '<td>' + fmt(row.chunks || 0) + '</td><td>' + fmt(row.memories || 0) + '</td>' +
+          '<td>' + fmt(row.total_tokens || 0) + '</td>' +
+          '<td><span class="badge ' + badgeCls + '">' + status + '</span></td><td></td><td></td>';
       }
       tr.addEventListener('click', function() {
         projectFilter = projectFilter === row.project ? null : row.project;
@@ -931,19 +1135,17 @@
     });
   }
 
-  /* ── Recalls ───────────────────────────────────────────── */
   function renderRecalls(data) {
     var bar = document.getElementById('filter-bar');
     bar.innerHTML = '';
     if (projectFilter) {
-      var pill = el('div', {class:'filter-pill'},
+      var pill = el('div', { class: 'filter-pill' },
         esc(projectFilter) + ' <button title="Clear">×</button>');
       pill.querySelector('button').addEventListener('click', function() {
         projectFilter = null; loadRecalls(); renderProjects(projectsData);
       });
       bar.appendChild(pill);
     }
-
     var tbody = document.getElementById('recalls-body');
     tbody.innerHTML = '';
     if (!data.length) {
@@ -953,11 +1155,11 @@
     data.forEach(function(row) {
       var tr = el('tr', {});
       tr.innerHTML =
-        '<td class="mono" style="white-space:nowrap;color:var(--text-muted)">' + relativeTime(row.timestamp) + '</td>' +
+        '<td class="mono" style="color:var(--text-muted);white-space:nowrap">' + relativeTime(row.timestamp) + '</td>' +
         '<td>' + agentBadge(row.agent) + '</td>' +
-        '<td class="truncate mono" style="max-width:120px" title="' + esc(row.project) + '">' + esc(row.project) + '</td>' +
+        '<td class="truncate mono" style="max-width:120px">' + esc(row.project) + '</td>' +
         '<td class="truncate" style="max-width:220px" title="' + esc(row.query_preview) + '">' + esc(row.query_preview) + '</td>' +
-        '<td>' + (row.hits_count||0) + '</td>' +
+        '<td>' + (row.hits_count || 0) + '</td>' +
         '<td>' + fmtScore(row.top_score) + '</td>' +
         '<td>' + fmt(row.tokens_injected) + '</td>' +
         '<td class="mono">' + fmtMs(row.latency_ms) + '</td>' +
@@ -966,7 +1168,6 @@
     });
   }
 
-  /* ── Health / banner ───────────────────────────────────── */
   function renderHealth(h) {
     var banner = document.getElementById('banner');
     var msg = document.getElementById('banner-msg');
@@ -981,274 +1182,188 @@
       msg.innerHTML = 'Status: <strong>' + esc(status) + '</strong>. Run <code>memor help</code> for guidance.';
   }
 
-  /* ── ROI renderer ─────────────────────────────────────── */
   function renderROI(data) {
     var card = document.getElementById('roi-card');
-    var roiValue = document.getElementById('roi-value');
-    var roiDesc = document.getElementById('roi-desc');
-
     document.getElementById('roi-tools-with').textContent = data.avg_tools_with_recall;
     document.getElementById('roi-tools-without').textContent = data.avg_tools_without_recall;
     var totalTurns = data.turns_with_recall + data.turns_without_recall;
     document.getElementById('roi-turns').textContent = totalTurns.toLocaleString();
-    document.getElementById('roi-turns-sub').textContent =
-      data.turns_with_recall + ' with · ' + data.turns_without_recall + ' without';
-
     if (data.tool_call_reduction_pct > 0 && data.turns_with_recall >= 5 && data.turns_without_recall >= 5) {
-      roiValue.textContent = data.tool_call_reduction_pct + '% fewer';
-      roiValue.style.color = 'var(--ok)';
-      roiDesc.textContent = 'fewer tool calls when Memor injects context';
-      card.style.display = 'block';
-    } else if (data.tool_call_reduction_pct < 0 && data.turns_with_recall >= 5) {
-      roiValue.textContent = Math.abs(data.tool_call_reduction_pct) + '% more';
-      roiValue.style.color = 'var(--warn)';
-      roiDesc.textContent = 'tool calls with recall — investigating...';
+      document.getElementById('roi-value').textContent = data.tool_call_reduction_pct + '% fewer';
+      document.getElementById('roi-desc').textContent = 'fewer tool calls when Memor injects context';
       card.style.display = 'block';
     }
   }
 
   function renderROITrend(data) {
     var container = document.getElementById('roi-sparkline');
-    var tooltip = document.getElementById('roi-spark-tooltip');
     if (!container || !data || !data.length) return;
-
-    var W = container.clientWidth || 400;
-    var H = 80;
-    var padL = 32, padR = 8, padT = 8, padB = 20;
-    var plotW = W - padL - padR;
-    var plotH = H - padT - padB;
-
-    var vals = data.map(function(d) { return d.reduction_pct; });
-    var minV = Math.min.apply(null, vals);
-    var maxV = Math.max.apply(null, vals);
-    var range = (maxV - minV) || 1;
-    var yFloor = Math.min(0, minV);
-    var yCeil = Math.max(maxV, 10);
-    range = (yCeil - yFloor) || 1;
-
-    function x(i) { return padL + (data.length > 1 ? (i / (data.length - 1)) * plotW : plotW / 2); }
-    function y(v) { return padT + plotH - ((v - yFloor) / range) * plotH; }
-
-    var lineColor = vals[vals.length - 1] >= 0 ? '#3dd68c' : '#e89320';
-    var gradId = 'roiGrad';
-
-    var pts = data.map(function(d, i) { return x(i) + ',' + y(d.reduction_pct); });
-    var linePath = 'M' + pts.join(' L');
-    var areaPath = linePath + ' L' + x(data.length - 1) + ',' + y(yFloor) + ' L' + x(0) + ',' + y(yFloor) + ' Z';
-
-    var gridLines = '';
-    var steps = [yFloor, Math.round((yFloor + yCeil) / 2), yCeil];
-    steps.forEach(function(v) {
-      var yy = y(v);
-      gridLines += '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="var(--border-light)" stroke-width="0.5" stroke-dasharray="3,3"/>';
-      gridLines += '<text x="' + (padL - 4) + '" y="' + (yy + 3) + '" fill="var(--text-muted)" font-size="8" text-anchor="end">' + v + '%</text>';
+    var mapped = data.map(function(d) {
+      return { day: d.day, cumulative_saved: d.reduction_pct };
     });
-
-    var xLabels = '';
-    data.forEach(function(d, i) {
-      xLabels += '<text x="' + x(i) + '" y="' + (H - 2) + '" fill="var(--text-muted)" font-size="8" text-anchor="middle">' + d.day.slice(5) + '</text>';
-    });
-
-    var dots = data.map(function(d, i) {
-      return '<circle cx="' + x(i) + '" cy="' + y(d.reduction_pct) + '" r="4" fill="' + lineColor + '" stroke="var(--surface)" stroke-width="2" style="opacity:0;" class="roi-dot" data-idx="' + i + '"/>';
-    }).join('');
-
-    var hitAreas = data.map(function(d, i) {
-      return '<rect x="' + (x(i) - plotW / data.length / 2) + '" y="' + padT + '" width="' + (plotW / data.length) + '" height="' + plotH + '" fill="transparent" class="roi-hit" data-idx="' + i + '"/>';
-    }).join('');
-
-    container.innerHTML = '<svg width="' + W + '" height="' + H + '" style="display:block;">' +
-      '<defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0%" stop-color="' + lineColor + '" stop-opacity="0.3"/>' +
-      '<stop offset="100%" stop-color="' + lineColor + '" stop-opacity="0.0"/>' +
-      '</linearGradient></defs>' +
-      gridLines + xLabels +
-      '<path d="' + areaPath + '" fill="url(#' + gradId + ')"/>' +
-      '<path d="' + linePath + '" fill="none" stroke="' + lineColor + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
-      dots + hitAreas +
-      '</svg>';
-
-    container.querySelectorAll('.roi-hit').forEach(function(rect) {
-      rect.addEventListener('mouseenter', function() {
-        var i = parseInt(rect.getAttribute('data-idx'));
-        var d = data[i];
-        var dot = container.querySelectorAll('.roi-dot')[i];
-        if (dot) dot.style.opacity = '1';
-        tooltip.innerHTML = '<strong>' + d.day + '</strong><br>' +
-          d.reduction_pct + '% fewer tools<br>' +
-          d.turns_with + ' recall / ' + d.turns_without + ' no-recall turns';
-        tooltip.style.display = 'block';
-        var tx = Math.min(x(i), W - 160);
-        tooltip.style.left = tx + 'px';
-      });
-      rect.addEventListener('mouseleave', function() {
-        var i = parseInt(rect.getAttribute('data-idx'));
-        var dot = container.querySelectorAll('.roi-dot')[i];
-        if (dot) dot.style.opacity = '0';
-        tooltip.style.display = 'none';
-      });
-    });
+    renderEquityChart('roi-sparkline', mapped, 'cumulative_saved',
+      (data[data.length - 1].reduction_pct >= 0) ? '#2fd67b' : '#e89320');
   }
 
-  /* ── Agent breakdown ────────────────────────────────────── */
-  function renderAgentBreakdown(data) {
-    var section = document.getElementById('agent-section');
-    var grid = document.getElementById('agent-grid');
-    if (!data || data.length <= 1) { section.style.display = 'none'; return; }
-    section.style.display = '';
-    grid.innerHTML = '';
-    var colors = {
-      claude: 'var(--accent)', codex: '#3dd68c', copilot: '#64a0ff',
-      cursor: '#c084fc', kimi: '#ff8c5a', goose: '#50c8b4',
-    };
-    data.forEach(function(row) {
-      var agent = row.agent || 'claude';
-      var color = colors[agent] || 'var(--text-muted)';
-      var hitRate = row.recalls > 0 ? ((row.hits / row.recalls) * 100) : 0;
-      var card = el('div', {class: 'metric-card'});
-      card.innerHTML =
-        '<div class="metric-info">' +
-          '<div class="metric-label" style="color:' + color + ';">' + esc(agent.charAt(0).toUpperCase() + agent.slice(1)) + '</div>' +
-          '<div class="metric-value">' + fmt(row.recalls) + '</div>' +
-          '<div class="metric-sub">' + fmtPct(hitRate) + ' hit rate · ' + fmtMs(row.avg_latency) + '</div>' +
-        '</div>';
-      grid.appendChild(card);
-    });
-  }
+  /* ── Agent pane ────────────────────────────────────────── */
+  function renderCursorWireDeskHealth(st) {
+    var box = document.getElementById('ap-wire-health');
+    var byokLed = document.getElementById('ap-byok-led');
+    var byokDetail = document.getElementById('ap-byok-detail');
+    var led = document.getElementById('ap-wire-led');
+    var detail = document.getElementById('ap-wire-detail');
+    if (!box) return;
+    box.classList.add('visible');
+    var w = (st && st.cursor_wire) ? st.cursor_wire : {};
+    var agents = (st && st.proxy_agents) ? st.proxy_agents : {};
+    var cursorProxied = !!agents.cursor;
+    var proxyUp = !!st.proxy;
 
-  /* ── Savings hero renderer ────────────────────────────── */
-  function renderSavingsHero(data) {
-    var savingsDisplay = document.getElementById('savings-display');
-    var contentTypesDisplay = document.getElementById('content-types-display');
-
-    if (!data || !data.summary || data.summary.tokens_before === 0) {
-      savingsDisplay.style.display = 'none';
-      contentTypesDisplay.style.display = 'none';
-      return;
-    }
-
-    savingsDisplay.style.display = '';
-    contentTypesDisplay.style.display = '';
-
-    var summary = data.summary;
-    document.getElementById('savings-pct').textContent = summary.pct_saved + '%';
-    document.getElementById('savings-before').textContent = fmt(summary.tokens_before);
-    document.getElementById('savings-after').textContent = fmt(summary.tokens_after);
-
-    var total = 0;
-    var parts = [];
-    if (data.content_types && data.content_types.length > 0) {
-      data.content_types.forEach(function(ct, i) {
-        total += ct.count || 0;
-        if (i < 3) parts.push(esc(ct.content_type) + ' ' + fmt(ct.count));
-      });
-    }
-    document.getElementById('content-types-total').textContent = total > 0 ? fmt(total) : '—';
-    document.getElementById('content-types-list').textContent =
-      parts.length ? parts.join(' · ') : 'by content type';
-  }
-
-  function setStatusCard(id, on) {
-    var node = document.getElementById(id);
-    node.textContent = on ? 'On' : 'Off';
-    node.style.color = on ? 'var(--ok)' : 'var(--text-muted)';
-  }
-
-  function renderProxyStatus(data) {
-    setStatusCard('status-proxy', !!data.proxy);
-    setStatusCard('status-hook', !!data.hook);
-    setStatusCard('status-daemon', !!data.daemon);
-
-    var proxySub = document.getElementById('status-proxy-sub');
-    if (data.proxy && data.mode) {
-      var modeLabel = data.mode === 'compress' ? 'compressing' : data.mode;
-      if (data.compressor_ready === false) modeLabel += ' (degraded)';
-      proxySub.textContent = modeLabel;
+    // BYOK (:8421) — what older `install-proxy --agent cursor` installed
+    byokLed.className = 'led';
+    if (cursorProxied && proxyUp) {
+      byokLed.classList.add('on');
+      byokDetail.textContent = ':8421 · installed · compress';
+      byokDetail.style.color = 'var(--ok)';
+    } else if (cursorProxied && !proxyUp) {
+      byokLed.classList.add('warn');
+      byokDetail.textContent = 'configured but proxy down — memor service restart';
+      byokDetail.style.color = 'var(--warn)';
     } else {
-      proxySub.textContent = 'context compression';
+      byokDetail.textContent = 'not installed';
+      byokDetail.style.color = 'var(--text-muted)';
     }
 
-    var agentsEl = document.getElementById('status-agents');
-    var agentsSub = document.getElementById('status-agents-sub');
-    var agents = data.proxy_agents || {};
-    var activeAgents = Object.keys(agents).filter(function(a) { return agents[a]; });
-    if (activeAgents.length > 0) {
-      agentsEl.textContent = activeAgents.map(function(a) {
-        return a.charAt(0).toUpperCase() + a.slice(1);
-      }).join(', ');
-      agentsEl.style.color = 'var(--text)';
-      agentsSub.textContent = activeAgents.length + ' proxy-enabled';
+    // Subscription wire (mitmdump) — separate stack; flag cursor_wire in config
+    led.className = 'led';
+    if (w.enabled && w.healthy) {
+      led.classList.add('on');
+      detail.textContent = ':' + (w.port || '?') + ' · healthy';
+      detail.style.color = 'var(--ok)';
+    } else if (w.enabled && !w.healthy) {
+      led.classList.add('warn');
+      detail.textContent = ':' + (w.port || '?') + ' · down — run memor service restart';
+      detail.style.color = 'var(--warn)';
+    } else if (w.listening) {
+      led.classList.add('on');
+      detail.textContent = ':' + (w.port || '?') + ' · listening (not managed by memor)';
+      detail.style.color = 'var(--ok)';
     } else {
-      agentsEl.textContent = 'None';
-      agentsEl.style.color = 'var(--text-muted)';
-      agentsSub.textContent = 'proxy-enabled agents';
+      detail.textContent = cursorProxied
+        ? 'not installed — memor install-proxy --agent cursor --wire'
+        : 'not enabled';
+      detail.style.color = 'var(--text-muted)';
     }
   }
 
-  function renderProxySavingsByAgent(data) {
-    var section = document.getElementById('proxy-savings-section');
-    var grid = document.getElementById('proxy-savings-grid');
-    grid.innerHTML = '';
-
-    var agents = (data && data.agents) ? data.agents : [];
-    if (!agents.length) {
-      section.style.display = 'none';
-      return;
+  async function loadAgentPane(agent) {
+    document.getElementById('agent-pane-title').textContent = agentLabel(agent) + ' desk';
+    var wireHealth = document.getElementById('ap-wire-health');
+    if (agent === 'cursor') {
+      try {
+        renderCursorWireDeskHealth(await api('/api/proxy-status'));
+      } catch (e) {
+        wireHealth.classList.add('visible');
+        document.getElementById('ap-wire-detail').textContent = 'status unavailable';
+      }
+    } else {
+      wireHealth.classList.remove('visible');
     }
+    try {
+      var data = await api('/api/agent-desk?agent=' + encodeURIComponent(agent));
+      var s = data.stats || {};
+      document.getElementById('ap-recalls').textContent = fmt(s.recalls || 0);
+      document.getElementById('ap-recalls-sub').textContent = fmt(s.tokens_injected || 0) + ' tokens injected';
+      document.getElementById('ap-hitrate').textContent = fmtPct((s.hit_rate || 0) * 100);
+      document.getElementById('ap-hits').textContent = fmt(s.hits || 0) + ' hits';
+      document.getElementById('ap-latency').textContent = fmtMs(s.avg_latency_ms);
+      var proxy = s.proxy;
+      if (proxy && proxy.tokens_before > 0) {
+        document.getElementById('ap-saved-pct').textContent = proxy.pct_saved + '%';
+        document.getElementById('ap-saved-sub').textContent =
+          fmt(proxy.tokens_before) + ' → ' + fmt(proxy.tokens_after) + ' · ' + fmt(proxy.requests) + ' req';
+      } else {
+        document.getElementById('ap-saved-pct').textContent = '–';
+        document.getElementById('ap-saved-sub').textContent =
+          agent === 'cursor' ? 'enable BYOK proxy or cursor-wire-mitm' : 'no proxy data';
+      }
 
-    section.style.display = '';
-    var colors = {
-      claude: '#d97706', codex: '#10b981', goose: '#6366f1', kimi: '#ec4899',
-      cursor: '#c084fc', cline: '#64a0ff', opencode: '#14b8a6',
-    };
-    agents.forEach(function(row) {
-      var agent = row.agent || 'unknown';
-      var color = colors[agent] || 'var(--text-muted)';
-      var card = el('div', {class: 'metric-card'});
-      var passthroughNote = row.passthrough_requests > 0
-        ? ' · ' + fmt(row.passthrough_requests) + ' passthrough'
-        : '';
-      card.innerHTML =
-        '<div class="metric-info">' +
-          '<div class="metric-label" style="color:' + color + ';">' + esc(agent.charAt(0).toUpperCase() + agent.slice(1)) + '</div>' +
-          '<div class="metric-value" style="color:var(--ok);">' + row.pct_saved + '%</div>' +
-          '<div class="metric-sub">' + fmt(row.tokens_before) + ' → ' + fmt(row.tokens_after) + ' · ' + fmt(row.requests) + ' req' + passthroughNote + '</div>' +
-        '</div>';
-      grid.appendChild(card);
-    });
+      var trend = (data.recall_trend || []).map(function(d) {
+        return { day: d.day, cumulative_saved: d.recalls };
+      });
+      renderLineChart('ap-recall-chart', trend, 'cumulative_saved', AGENT_COLORS[agent] || 'var(--accent)');
+
+      var series = data.savings_series || [];
+      var cum = series.length ? series[series.length - 1].cumulative_saved : 0;
+      document.getElementById('ap-cum-saved').textContent = cum ? fmt(cum) + ' saved' : '–';
+      document.getElementById('ap-cum-meta').textContent =
+        agent === 'cursor' ? '30d · includes Cursor Wire' : '30d';
+      renderEquityChart('ap-savings-chart', series, 'cumulative_saved', '#2fd67b');
+
+      var tbody = document.getElementById('ap-recalls-body');
+      tbody.innerHTML = '';
+      var recalls = data.recalls || [];
+      if (!recalls.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No recalls for this agent yet.</td></tr>';
+      } else {
+        recalls.forEach(function(row) {
+          var tr = el('tr', {});
+          tr.innerHTML =
+            '<td class="mono" style="color:var(--text-muted);white-space:nowrap">' + relativeTime(row.timestamp) + '</td>' +
+            '<td class="truncate mono" style="max-width:120px">' + esc(row.project) + '</td>' +
+            '<td class="truncate" style="max-width:240px">' + esc(row.query_preview) + '</td>' +
+            '<td>' + (row.hits_count || 0) + '</td>' +
+            '<td>' + fmtScore(row.top_score) + '</td>' +
+            '<td>' + fmt(row.tokens_injected) + '</td>' +
+            '<td class="mono">' + fmtMs(row.latency_ms) + '</td>' +
+            '<td>' + badge(row.status) + '</td>';
+          tbody.appendChild(tr);
+        });
+      }
+    } catch (e) {
+      console.warn('agent-desk', e);
+    }
   }
 
-  /* ── Data loaders ──────────────────────────────────────── */
-  async function loadSummary()    { try { renderSummary(await api('/api/summary')); } catch(e) { console.warn('summary',e); } }
-  async function loadProjects()   { try { renderProjects(await api('/api/projects')); } catch(e) { console.warn('projects',e); } }
-  async function loadEfficiency() { try { renderEfficiency(await api('/api/efficiency')); } catch(e) { console.warn('efficiency',e); } }
-  async function loadSessionEfficiency() { try { renderSessionEfficiency(await api('/api/session-efficiency')); } catch(e) { console.warn('session-efficiency',e); } }
-  async function loadHealth()     { try { renderHealth(await api('/api/health')); } catch(e) { console.warn('health',e); } }
-  async function loadTrend()      { try { renderTrend(await api('/api/recall-trend?days=30')); } catch(e) { console.warn('trend',e); } }
-  async function loadROI()        { try { renderROI(await api('/api/roi')); } catch(e) { console.warn('roi',e); } }
-  async function loadROITrend()   { try { renderROITrend(await api('/api/roi-trend')); } catch(e) { console.warn('roi-trend',e); } }
-  async function loadQuality()    { try { renderQuality(await api('/api/quality')); } catch(e) { console.warn('quality',e); } }
-  async function loadAgentBreakdown() { try { renderAgentBreakdown(await api('/api/agent-breakdown')); } catch(e) { console.warn('agent-breakdown',e); } }
-  async function loadSavingsHero() { try { renderSavingsHero(await api('/api/savings-ledger?days=30')); } catch(e) { console.warn('savings-hero',e); } }
-  async function loadProxyStatus() { try { renderProxyStatus(await api('/api/proxy-status')); } catch(e) { console.warn('proxy-status',e); } }
-  async function loadProxySavingsByAgent() { try { renderProxySavingsByAgent(await api('/api/proxy-savings-by-agent?days=30')); } catch(e) { console.warn('proxy-savings-by-agent',e); } }
+  /* ── Loaders ───────────────────────────────────────────── */
+  async function loadSummary() { try { renderSummary(await api('/api/summary')); } catch (e) { console.warn(e); } }
+  async function loadProjects() { try { renderProjects(await api('/api/projects')); } catch (e) { console.warn(e); } }
+  async function loadEfficiency() { try { renderEfficiency(await api('/api/efficiency')); } catch (e) { console.warn(e); } }
+  async function loadSessionEfficiency() { try { renderSessionEfficiency(await api('/api/session-efficiency')); } catch (e) { console.warn(e); } }
+  async function loadHealth() { try { renderHealth(await api('/api/health')); } catch (e) { console.warn(e); } }
+  async function loadTrend() { try { renderTrend(await api('/api/recall-trend?days=30')); } catch (e) { console.warn(e); } }
+  async function loadROI() { try { renderROI(await api('/api/roi')); } catch (e) { console.warn(e); } }
+  async function loadROITrend() { try { renderROITrend(await api('/api/roi-trend')); } catch (e) { console.warn(e); } }
+  async function loadQuality() { try { renderQuality(await api('/api/quality')); } catch (e) { console.warn(e); } }
+  async function loadAgentBreakdown() { try { renderAgentBreakdown(await api('/api/agent-breakdown')); } catch (e) { console.warn(e); } }
+  async function loadSavingsHero() { try { renderSavingsHero(await api('/api/savings-ledger?days=30')); } catch (e) { console.warn(e); } }
+  async function loadProxyStatus() { try { renderProxyStatus(await api('/api/proxy-status')); } catch (e) { console.warn(e); } }
+  async function loadProxySavingsByAgent() { try { renderProxySavingsByAgent(await api('/api/proxy-savings-by-agent?days=30')); } catch (e) { console.warn(e); } }
   async function loadRecalls() {
     try {
       var url = '/api/recalls?limit=50' + (projectFilter ? '&project=' + encodeURIComponent(projectFilter) : '');
       renderRecalls(await api(url));
-    } catch(e) { console.warn('recalls',e); }
+    } catch (e) { console.warn(e); }
+  }
+
+  async function refreshOverview() {
+    await Promise.allSettled([
+      loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(),
+      loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(),
+      loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(),
+      loadProxySavingsByAgent(),
+    ]);
+    document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
   }
 
   async function refresh() {
-    await Promise.allSettled([loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(), loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(), loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(), loadProxySavingsByAgent()]);
-    document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
-
-    renderMiniBars('mb-chunks', null);
-    renderMiniBars('mb-memories', null);
-    renderMiniBars('mb-projects', null);
+    if (activePane === 'overview') await refreshOverview();
+    else {
+      await loadAgentPane(activePane);
+      document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+    }
   }
 
-  /* ── Sort headers ──────────────────────────────────────── */
   document.querySelectorAll('th.sortable').forEach(function(th) {
     th.addEventListener('click', function() {
       if (sortCol === th.dataset.col) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
@@ -1257,14 +1372,25 @@
     });
   });
 
+  window.addEventListener('resize', function() {
+    if (activePane === 'overview') loadSavingsHero();
+    else loadAgentPane(activePane);
+  });
+
+  activePane = readStoredPane();
+  renderTabs();
+  window.addEventListener('hashchange', function() {
+    var id = (location.hash || '').replace(/^#/, '') || 'overview';
+    if (id !== activePane && isValidPane(id)) switchPane(id);
+  });
   (async function() {
     try {
       var v = await api('/api/version');
       document.getElementById('version-badge').textContent = 'v' + v.version;
-    } catch(e) {}
+    } catch (e) {}
+    switchPane(activePane);
+    setInterval(refresh, 30000);
   })();
-  refresh();
-  setInterval(refresh, 30000);
 })();
 </script>
 </body>

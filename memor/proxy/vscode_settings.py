@@ -20,19 +20,59 @@ def vscode_user_settings_path(app_name: str) -> Path:
     return home / ".config" / app_name / "User" / "settings.json"
 
 
+def _strip_jsonc(text: str) -> str:
+    """Remove // and /* */ comments (VS Code / Cursor settings.jsonc)."""
+    # Block comments first
+    out = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    # Line comments — skip // inside strings (best-effort)
+    lines = []
+    for line in out.splitlines():
+        in_str = False
+        esc = False
+        cut = None
+        i = 0
+        while i < len(line) - 1:
+            ch = line[i]
+            if esc:
+                esc = False
+            elif ch == "\\" and in_str:
+                esc = True
+            elif ch == '"':
+                in_str = not in_str
+            elif not in_str and ch == "/" and line[i + 1] == "/":
+                cut = i
+                break
+            i += 1
+        lines.append(line if cut is None else line[:cut])
+    return "\n".join(lines)
+
+
 def load_settings_json(path: Path) -> dict:
-    """Load settings.json, tolerating trailing commas."""
+    """Load settings.json, tolerating JSONC comments and trailing commas."""
     if not path.exists():
         return {}
     text = path.read_text()
     if not text.strip():
         return {}
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        cleaned = re.sub(r",(\s*[}\]])", r"\1", text)
-        parsed = json.loads(cleaned)
-    return parsed if isinstance(parsed, dict) else {}
+    candidates = [text, _strip_jsonc(text)]
+    last_err: Exception | None = None
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError as exc:
+            last_err = exc
+            try:
+                cleaned = re.sub(r",(\s*[}\]])", r"\1", candidate)
+                parsed = json.loads(cleaned)
+                return parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError as exc2:
+                last_err = exc2
+    raise json.JSONDecodeError(
+        getattr(last_err, "msg", "Invalid settings.json"),
+        text,
+        getattr(last_err, "pos", 0),
+    )
 
 
 def write_settings_json(path: Path, data: dict) -> None:
@@ -49,7 +89,7 @@ def first_url_value(settings: dict, keys: tuple[str, ...]) -> str | None:
     return None
 
 
-def set_settings_keys(settings: dict, updates: dict[str, str]) -> dict:
+def set_settings_keys(settings: dict, updates: dict) -> dict:
     """Return settings with scalar keys updated."""
     merged = dict(settings)
     merged.update(updates)

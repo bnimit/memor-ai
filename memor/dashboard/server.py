@@ -86,9 +86,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.get("/api/recalls")
     def recalls(limit: int = Query(50, ge=1, le=500),
-                project: str | None = Query(None)):
+                project: str | None = Query(None),
+                agent: str | None = Query(None)):
         store = _store()
-        return store.get_recent_recalls(limit=limit, project=project)
+        return store.get_recent_recalls(limit=limit, project=project, agent=agent)
 
     @app.get("/api/quality")
     def quality():
@@ -145,19 +146,25 @@ def create_app(db_path: str | None = None) -> FastAPI:
         return store.get_session_efficiency()
 
     @app.get("/api/recall-trend")
-    def recall_trend(days: int = Query(30, ge=7, le=90)):
+    def recall_trend(
+        days: int = Query(30, ge=7, le=90),
+        agent: str | None = Query(None),
+    ):
         store = _store()
-        rows = store.db.execute("""
-            SELECT date(timestamp, 'unixepoch', 'localtime') as day,
-                   COUNT(*) as recalls,
-                   SUM(CASE WHEN hits_count > 0 THEN 1 ELSE 0 END) as hits,
-                   SUM(tokens_injected) as tokens,
-                   AVG(CASE WHEN hits_count > 0 THEN top_score END) as avg_score
-            FROM recall_log
-            WHERE timestamp >= unixepoch('now', ? || ' days')
-            GROUP BY day ORDER BY day
-        """, (f"-{days}",)).fetchall()
-        return [dict(r) for r in rows]
+        return store.get_recall_trend(days=days, agent=agent)
+
+    @app.get("/api/agent-desk")
+    def agent_desk(agent: str = Query(..., min_length=1)):
+        """Per-agent pane payload: stats + trends + recent recalls."""
+        store = _store()
+        stats = store.get_agent_stats(agent)
+        return {
+            "stats": stats,
+            "recall_trend": store.get_recall_trend(days=30, agent=agent),
+            "savings_series": store.get_proxy_savings_series(days=30, agent=agent),
+            "savings_summary": store.get_proxy_savings_summary(days=30, agent=agent),
+            "recalls": store.get_recent_recalls(limit=25, agent=agent),
+        }
 
     @app.get("/api/roi")
     def roi(project: str | None = Query(None)):
@@ -209,33 +216,33 @@ def create_app(db_path: str | None = None) -> FastAPI:
         }
 
     @app.get("/api/savings-ledger")
-    def savings_ledger(days: int = Query(30, ge=1, le=90)):
+    def savings_ledger(
+        days: int = Query(30, ge=1, le=90),
+        agent: str | None = Query(None),
+    ):
         import json
         import time as _time
         store = _store()
         cutoff = _time.time() - (days * 86400)
-        
-        # Summary
-        summary = store.get_proxy_savings_summary(days)
-        
-        # Per-day series
-        per_day = store.db.execute("""
-            SELECT date(timestamp, 'unixepoch', 'localtime') as day,
-                   SUM(tokens_before) as tokens_before,
-                   SUM(tokens_after) as tokens_after
-            FROM proxy_savings
-            WHERE timestamp >= ?
-            GROUP BY day
-            ORDER BY day
-        """, (cutoff,)).fetchall()
-        
-        # Content types breakdown
-        content_type_rows = store.db.execute("""
-            SELECT content_types
-            FROM proxy_savings
-            WHERE timestamp >= ?
-        """, (cutoff,)).fetchall()
-        
+
+        summary = store.get_proxy_savings_summary(days, agent=agent)
+        series = store.get_proxy_savings_series(days, agent=agent)
+
+        ct_clauses = ["timestamp >= ?"]
+        ct_params: list = [cutoff]
+        if agent:
+            if agent == "cursor":
+                ct_clauses.append("agent IN (?, ?)")
+                ct_params.extend(["cursor", "cursor-wire"])
+            else:
+                ct_clauses.append("agent=?")
+                ct_params.append(agent)
+        ct_where = " AND ".join(ct_clauses)
+        content_type_rows = store.db.execute(
+            f"SELECT content_types FROM proxy_savings WHERE {ct_where}",
+            ct_params,
+        ).fetchall()
+
         # The proxy pipeline writes {content_type: payloads_compressed}; the
         # ledger has no per-type token split, so we report compressed counts.
         ct_totals: dict[str, int] = {}
@@ -251,15 +258,24 @@ def create_app(db_path: str | None = None) -> FastAPI:
             for ct, count in cts.items():
                 if isinstance(count, (int, float)):
                     ct_totals[ct] = ct_totals.get(ct, 0) + int(count)
-        
+
         content_types = [
             {"content_type": ct, "count": count}
             for ct, count in sorted(ct_totals.items(), key=lambda kv: -kv[1])
         ]
-        
+
         return {
             "summary": summary,
-            "per_day": [dict(r) for r in per_day],
+            "per_day": [
+                {
+                    "day": r["day"],
+                    "tokens_before": r["tokens_before"],
+                    "tokens_after": r["tokens_after"],
+                    "tokens_saved": r["tokens_saved"],
+                    "cumulative_saved": r["cumulative_saved"],
+                }
+                for r in series
+            ],
             "content_types": content_types,
         }
 
@@ -335,11 +351,28 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 mtime = log_path.stat().st_mtime
                 daemon_healthy = (_time.time() - mtime < 300)  # touched in last 5 min
         
+        from memor.config import cursor_wire_port as get_wire_port, is_cursor_wire_enabled
+        from memor.cursor_wire.ports import check_wire_health
+
+        wire_enabled = bool(cfg.get("cursor_wire")) or is_cursor_wire_enabled()
+        wire_port = get_wire_port()
+        # Always probe so Cursor desk can show live status even before flag is set
+        # (e.g. manual mitmdump). enabled=false still returns the probe result.
+        wire_ok, wire_detail = check_wire_health(wire_port)
+
         result = {
             "proxy": proxy_healthy,
             "hook": hook_healthy,
             "daemon": daemon_healthy,
             "proxy_agents": cfg.get("proxy_agents", {}),
+            "cursor_wire": {
+                "enabled": wire_enabled,
+                "running": wire_ok,
+                "port": wire_port,
+                "healthy": wire_ok if wire_enabled else False,
+                "listening": wire_ok,
+                "detail": wire_detail if wire_enabled or wire_ok else "not enabled",
+            },
         }
         if proxy_mode is not None:
             result["mode"] = proxy_mode

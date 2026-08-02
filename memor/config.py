@@ -10,6 +10,8 @@ _DEFAULTS = {
     "proxy_agents": {},  # {"claude": true, "codex": true}
     "proxy_upstreams": {},
     "proxy_port": 8421,
+    "cursor_wire": False,
+    "cursor_wire_port": 8080,
     "ccr_ttl_seconds": 7 * 86400,
     "ccr_max_bytes": 2 * 1024**3,
 }
@@ -75,4 +77,30 @@ def clear_proxy_upstream(agent: str) -> None:
     upstreams = dict(cfg.get("proxy_upstreams", {}))
     upstreams.pop(agent, None)
     cfg["proxy_upstreams"] = upstreams
+    save_config(cfg)
+
+
+def is_cursor_wire_enabled() -> bool:
+    return bool(load_config().get("cursor_wire", False))
+
+
+def set_cursor_wire(enabled: bool) -> None:
+    cfg = load_config()
+    cfg["cursor_wire"] = bool(enabled)
+    save_config(cfg)
+
+
+def cursor_wire_port() -> int:
+    try:
+        env = os.environ.get("MEMOR_CURSOR_WIRE_PORT")
+        if env is not None and str(env).strip():
+            return int(env)
+        return int(load_config().get("cursor_wire_port", 8080))
+    except (TypeError, ValueError):
+        return 8080
+
+
+def set_cursor_wire_port(port: int) -> None:
+    cfg = load_config()
+    cfg["cursor_wire_port"] = int(port)
     save_config(cfg)

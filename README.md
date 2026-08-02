@@ -61,6 +61,32 @@ To revert: `memor uninstall-proxy --agent claude`
 
 > **Codex support is experimental.** The proxy implements the OpenAI Chat Completions API (`/v1/chat/completions`). Codex CLI may instead use the Responses API (`/v1/responses`) depending on version and model, in which case requests will not route through the proxy and you will see no savings. Memory via hooks is unaffected. Track it in [#26](https://github.com/bnimit/memor-ai/issues/26).
 
+### Optional: Full Cursor install (recommended)
+
+**Memory alone** still only needs `memor install-hook` (Claude covers Cursor). For token savings on Cursor, one command enables the full stack:
+
+```bash
+memor install-proxy --agent cursor
+```
+
+That flow:
+
+1. Explains the **core** stack (hooks + BYOK), then asks you to confirm  
+2. Installs memory hooks (if missing) + Shell compress hooks + BYOK on `:8421`  
+3. Asks whether to enable **subscription Composer token compression** (default: No)  
+4. If you opt in: auto-installs `mitmproxy` if missing, trusts the CA in your **login** keychain (user scope, no sudo), starts **mitmdump** as `ai.memor.cursor-wire`, writes Cursor `http.proxy` after health-check  
+
+Flags: `--wire` (opt in without asking), `--no-wire` (skip wire), `--yes` (accept core prompts; still skips wire unless `--wire`), `--skip-ca-trust`.
+
+```bash
+memor uninstall-proxy --agent cursor   # restore settings, stop wire unit
+memor service restart                  # upgrades recycle mitmdump too
+```
+
+Dashboard shows a **Cursor Wire** health chip when enabled. Restart Cursor once after install.
+
+> Wire MITM decrypts Cursor→`*.cursor.sh` traffic on your machine only. Use `--no-wire` if you do not want that.
+
 ---
 
 ## Dual-Path Architecture
@@ -135,7 +161,7 @@ Memor runs two complementary local paths — combine them or use either alone:
 |-------|----------------|-----------------|
 | **Claude Code** | Yes | Yes — `memor install-proxy --agent claude` |
 | **Codex CLI** | Yes | Experimental — `memor install-proxy --agent codex` (Chat Completions only) |
-| **Cursor** | Yes | Yes — BYOK via `memor install-proxy --agent cursor`; subscription Composer Shell compression via `memor install-cursor-compress-hooks` |
+| **Cursor** | Yes | BYOK proxy, Shell hooks, or advanced wire MITM — see [Cursor subscription savings](#optional-cursor-subscription-savings) |
 | **Copilot CLI** | Yes | No — hooks only |
 | **Kimi CLI** | Yes | Yes — `memor install-proxy --agent kimi` |
 | **Goose** | Yes | Yes — `memor install-proxy --agent goose` (auto-detects common Desktop custom providers like `custom_deepseek`; use `--upstream-url` if yours is custom) |
@@ -235,14 +261,11 @@ This means your coding habits and preferences follow you into new projects from 
 memor dashboard
 ```
 
-Dark fintech-inspired UI showing:
-- **System Status** — metric cards for proxy / hook / daemon / proxied agents, plus token savings and compressed content types when the ledger has data
-- **Memory Bank** — session chunks, memories, projects, globals, total recalls — with sparkline bars
-- **Agent breakdown** — per-agent recall stats (Claude, Cursor, Codex, Copilot, Kimi, Goose) with hit rates
-- **Daily recall activity** — stacked bar chart of hits vs misses over time
-- **Session efficiency** — real token savings measured from API usage data (avg tokens/turn with vs without recall)
-- **Per-project breakdown** — artifact counts, token totals, last activity
-- **Recent recalls** — every hook event with agent badge, scores, latency, and status
+Trading-desk style UI with an **Overview** plus per-agent panes (Claude, Cursor, Codex, Copilot, Kimi, Goose):
+
+- **Overview** — status chips (proxy / hook / daemon), portfolio KPIs, cumulative tokens-saved equity curve, recall activity, efficiency, projects, quality, recent recalls
+- **Agent desks** — click a tab (or a desk tile) for that environment’s hit rate, latency, proxy/wire savings %, recall volume chart, savings curve, and filtered recalls (Cursor desk includes **Cursor Wire**)
+- **Proxy savings by agent** — including Cursor Wire when `memor cursor-wire-mitm` is running
 
 ---
 
@@ -277,10 +300,13 @@ memor help                           Print the full manual
 memor install-hook                   Install hook + download model (interactive agent picker)
   --agent claude|codex|copilot|kimi|goose   Choose agent directly
 memor install-proxy                  Install local proxy for token savings
-  --agent claude|codex               Claude Code, or Codex CLI (experimental)
+  --agent claude|codex|goose|kimi|cursor|cline|opencode
 memor uninstall-proxy                Restore original agent config
-  --agent claude|codex               Point the agent back at its provider
 memor proxy                          Run proxy server in foreground (localhost:8421)
+memor install-cursor-compress-hooks  Cursor Shell output compression (subscription)
+memor uninstall-cursor-compress-hooks
+memor cursor-wire-mitm               Advanced: MITM compress Cursor BidiAppend traffic
+                                     (requires memor-cli[cursor-wire] + trusted CA)
 memor daemon                         Auto-ingest + distill (Claude, Kimi, Goose)
 memor backfill                       One-shot ingest of past local agent sessions
 memor dashboard                      Web dashboard on localhost:8420
@@ -368,6 +394,8 @@ skill/recall.py                Standalone recall script
 - **The proxy binds localhost only** (`127.0.0.1:8421`) and accepts no remote connections.
 - **It makes the outbound call your agent would have made anyway**, to the same provider endpoint, carrying your existing provider API key. Keys are forwarded, never stored or logged.
 - **It rewrites request bodies** — compressing latest-turn tool payloads — so what the provider receives is not byte-identical to what your agent sent. Originals stay local in the CCR store.
+
+**Cursor wire MITM (`memor cursor-wire-mitm`) is a stronger intercept.** It uses mitmproxy on `127.0.0.1:8080` and requires trusting the **mitmproxy CA** so TLS to `*.cursor.sh` can be decrypted locally, rewritten, and re-encrypted. Only enable this if you accept that tradeoff; Shell hooks and memory do not need it.
 
 The only other optional network paths are the LLM-based abstractive distiller (requires explicitly setting `ANTHROPIC_API_KEY`) and the API embedding backend — both off by default.
 
