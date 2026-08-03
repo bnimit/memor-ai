@@ -23,7 +23,7 @@ def compress_text(text: str, *, content_type: str | None = None) -> CompressResu
             compressed = compress_json(text)
         elif content_type == "search":
             compressed = compress_search(text)
-        else:  # text or unknown
+        else:  # source, text, or unknown — never crushed
             compressed = text
         
         tokens_after = count_tokens(compressed)
