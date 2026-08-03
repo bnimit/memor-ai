@@ -1,7 +1,11 @@
 # Cursor Full-Install Automation (Phase 3)
 
 **Date:** 2026-08-02  
-**Status:** Implemented (2026-08-02) — see `memor/cursor_wire/install.py`, `memor/service.py`  
+**Status:** SUPERSEDED (2026-08-03). The wire/mitmdump half of this design was removed —
+Cursor's Composer traffic was measured never to reach a local proxy, and the billed
+exchange (Cursor's servers → model) never touches the user's machine. Only the hooks +
+BYOK stack survives, now in `memor/proxy/cursor_install.py:install_cursor_stack`.
+Retained as a record of what was tried. See CHANGELOG [Unreleased] → Removed.  
 **Depends on:** Phase 2 wire compress (`memor/cursor_wire/`, dashboard Cursor Wire)
 **Self-reviewed:** 2026-08-02
 

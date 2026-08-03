@@ -231,12 +231,8 @@ def create_app(db_path: str | None = None) -> FastAPI:
         ct_clauses = ["timestamp >= ?"]
         ct_params: list = [cutoff]
         if agent:
-            if agent == "cursor":
-                ct_clauses.append("agent IN (?, ?)")
-                ct_params.extend(["cursor", "cursor-wire"])
-            else:
-                ct_clauses.append("agent=?")
-                ct_params.append(agent)
+            ct_clauses.append("agent=?")
+            ct_params.append(agent)
         ct_where = " AND ".join(ct_clauses)
         content_type_rows = store.db.execute(
             f"SELECT content_types FROM proxy_savings WHERE {ct_where}",
@@ -351,28 +347,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 mtime = log_path.stat().st_mtime
                 daemon_healthy = (_time.time() - mtime < 300)  # touched in last 5 min
         
-        from memor.config import cursor_wire_port as get_wire_port, is_cursor_wire_enabled
-        from memor.cursor_wire.ports import check_wire_health
-
-        wire_enabled = bool(cfg.get("cursor_wire")) or is_cursor_wire_enabled()
-        wire_port = get_wire_port()
-        # Always probe so Cursor desk can show live status even before flag is set
-        # (e.g. manual mitmdump). enabled=false still returns the probe result.
-        wire_ok, wire_detail = check_wire_health(wire_port)
-
         result = {
             "proxy": proxy_healthy,
             "hook": hook_healthy,
             "daemon": daemon_healthy,
             "proxy_agents": cfg.get("proxy_agents", {}),
-            "cursor_wire": {
-                "enabled": wire_enabled,
-                "running": wire_ok,
-                "port": wire_port,
-                "healthy": wire_ok if wire_enabled else False,
-                "listening": wire_ok,
-                "detail": wire_detail if wire_enabled or wire_ok else "not enabled",
-            },
         }
         if proxy_mode is not None:
             result["mode"] = proxy_mode

@@ -71,21 +71,19 @@ memor install-proxy --agent cursor
 
 That flow:
 
-1. Explains the **core** stack (hooks + BYOK), then asks you to confirm  
+1. Explains what will be installed, then asks you to confirm  
 2. Installs memory hooks (if missing) + Shell compress hooks + BYOK on `:8421`  
-3. Asks whether to enable **subscription Composer token compression** (default: No)  
-4. If you opt in: auto-installs `mitmproxy` if missing, trusts the CA in your **login** keychain (user scope, no sudo), starts **mitmdump** as `ai.memor.cursor-wire`, writes Cursor `http.proxy` after health-check  
 
-Flags: `--wire` (opt in without asking), `--no-wire` (skip wire), `--yes` (accept core prompts; still skips wire unless `--wire`), `--skip-ca-trust`.
+Flags: `--yes` to accept without prompting.
 
 ```bash
-memor uninstall-proxy --agent cursor   # restore settings, stop wire unit
-memor service restart                  # upgrades recycle mitmdump too
+memor uninstall-proxy --agent cursor   # restore original settings
+memor service restart                  # recycle services after an upgrade
 ```
 
-Dashboard shows a **Cursor Wire** health chip when enabled. Restart Cursor once after install.
-
-> Wire MITM decrypts Cursor→`*.cursor.sh` traffic on your machine only. Use `--no-wire` if you do not want that.
+Compression reaches Cursor through the **Shell compress hooks**, which crush terminal
+and tool output before Cursor ingests it. Subscription Composer traffic is not
+intercepted — see [Why no Composer interception](#why-no-composer-interception).
 
 ---
 
@@ -161,7 +159,7 @@ Memor runs two complementary local paths — combine them or use either alone:
 |-------|----------------|-----------------|
 | **Claude Code** | Yes | Yes — `memor install-proxy --agent claude` |
 | **Codex CLI** | Yes | Experimental — `memor install-proxy --agent codex` (Chat Completions only) |
-| **Cursor** | Yes | BYOK proxy, Shell hooks, or advanced wire MITM — see [Cursor subscription savings](#optional-cursor-subscription-savings) |
+| **Cursor** | Yes | BYOK proxy + Shell compress hooks |
 | **Copilot CLI** | Yes | No — hooks only |
 | **Kimi CLI** | Yes | Yes — `memor install-proxy --agent kimi` |
 | **Goose** | Yes | Yes — `memor install-proxy --agent goose` (auto-detects common Desktop custom providers like `custom_deepseek`; use `--upstream-url` if yours is custom) |
@@ -264,8 +262,8 @@ memor dashboard
 Trading-desk style UI with an **Overview** plus per-agent panes (Claude, Cursor, Codex, Copilot, Kimi, Goose):
 
 - **Overview** — status chips (proxy / hook / daemon), portfolio KPIs, cumulative tokens-saved equity curve, recall activity, efficiency, projects, quality, recent recalls
-- **Agent desks** — click a tab (or a desk tile) for that environment’s hit rate, latency, proxy/wire savings %, recall volume chart, savings curve, and filtered recalls (Cursor desk includes **Cursor Wire**)
-- **Proxy savings by agent** — including Cursor Wire when `memor cursor-wire-mitm` is running
+- **Agent desks** — click a tab (or a desk tile) for that environment’s hit rate, latency, proxy savings %, recall volume chart, savings curve, and filtered recalls
+- **Proxy savings by agent** — every agent routed through the proxy
 
 ---
 
@@ -305,8 +303,6 @@ memor uninstall-proxy                Restore original agent config
 memor proxy                          Run proxy server in foreground (localhost:8421)
 memor install-cursor-compress-hooks  Cursor Shell output compression (subscription)
 memor uninstall-cursor-compress-hooks
-memor cursor-wire-mitm               Advanced: MITM compress Cursor BidiAppend traffic
-                                     (requires memor-cli[cursor-wire] + trusted CA)
 memor daemon                         Auto-ingest + distill (Claude, Kimi, Goose)
 memor backfill                       One-shot ingest of past local agent sessions
 memor dashboard                      Web dashboard on localhost:8420
@@ -395,7 +391,17 @@ skill/recall.py                Standalone recall script
 - **It makes the outbound call your agent would have made anyway**, to the same provider endpoint, carrying your existing provider API key. Keys are forwarded, never stored or logged.
 - **It rewrites request bodies** — compressing latest-turn tool payloads — so what the provider receives is not byte-identical to what your agent sent. Originals stay local in the CCR store.
 
-**Cursor wire MITM (`memor cursor-wire-mitm`) is a stronger intercept.** It uses mitmproxy on `127.0.0.1:8080` and requires trusting the **mitmproxy CA** so TLS to `*.cursor.sh` can be decrypted locally, rewritten, and re-encrypted. Only enable this if you accept that tradeoff; Shell hooks and memory do not need it.
+### Why no Composer interception
+
+Memor does **not** MITM Cursor's subscription traffic. An earlier attempt was measured and
+abandoned: with a local proxy in Cursor's path covering both its Node and Chromium network
+stacks, only control-plane traffic (telemetry, dashboard, model lists) appeared — no
+conversation RPC. And the exchange that actually gets billed, Cursor's servers to the model,
+never touches your machine at all, so any local savings figure would be unverifiable.
+
+Compression for Cursor therefore happens where it can be measured honestly: the Shell
+compress hooks crush tool output *before* Cursor ingests it. No CA trust, no TLS
+interception, nothing to break when Cursor updates.
 
 The only other optional network paths are the LLM-based abstractive distiller (requires explicitly setting `ANTHROPIC_API_KEY`) and the API embedding backend — both off by default.
 

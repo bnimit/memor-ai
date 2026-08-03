@@ -10,8 +10,6 @@ _DEFAULTS = {
     "proxy_agents": {},  # {"claude": true, "codex": true}
     "proxy_upstreams": {},
     "proxy_port": 8421,
-    "cursor_wire": False,
-    "cursor_wire_port": 8080,
     "ccr_ttl_seconds": 7 * 86400,
     "ccr_max_bytes": 2 * 1024**3,
 }
@@ -80,27 +78,17 @@ def clear_proxy_upstream(agent: str) -> None:
     save_config(cfg)
 
 
-def is_cursor_wire_enabled() -> bool:
-    return bool(load_config().get("cursor_wire", False))
+def clear_cursor_wire_keys() -> bool:
+    """Drop legacy ``cursor_wire`` keys left by the removed MITM feature.
 
-
-def set_cursor_wire(enabled: bool) -> None:
+    Returns True if anything was removed. Kept so upgrading users do not carry
+    dead config forward; safe to delete once no installs predate the removal.
+    """
     cfg = load_config()
-    cfg["cursor_wire"] = bool(enabled)
+    removed = [k for k in ("cursor_wire", "cursor_wire_port") if k in cfg]
+    if not removed:
+        return False
+    for key in removed:
+        cfg.pop(key, None)
     save_config(cfg)
-
-
-def cursor_wire_port() -> int:
-    try:
-        env = os.environ.get("MEMOR_CURSOR_WIRE_PORT")
-        if env is not None and str(env).strip():
-            return int(env)
-        return int(load_config().get("cursor_wire_port", 8080))
-    except (TypeError, ValueError):
-        return 8080
-
-
-def set_cursor_wire_port(port: int) -> None:
-    cfg = load_config()
-    cfg["cursor_wire_port"] = int(port)
-    save_config(cfg)
+    return True

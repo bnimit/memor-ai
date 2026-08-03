@@ -4,17 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+- **Cursor subscription wire MITM** — the mitmproxy addon, `cursor-wire-*` commands, `ai.memor.cursor-wire` service unit, `cursor_wire` config keys, and the dashboard Cursor Wire chip are gone. Measurement showed Cursor's Composer traffic never reaches a local proxy (both the Node and Chromium network stacks were covered; only control-plane RPCs appeared), and the exchange that is actually billed — Cursor's servers to the model — never touches the user's machine, so no local savings figure could be verified. Compression for Cursor now runs entirely through the Shell compress hooks, which crush tool output before Cursor ingests it.
+- `memor uninstall-proxy --agent cursor` and `memor service uninstall` clean up any leftover wire settings, service unit, and config keys from 0.12.0.
+
 ## [0.12.0] - 2026-08-02
 
 ### Added
-- **Cursor wire compression (subscription Composer)** — `memor cursor-wire-mitm` runs a mitmproxy addon that compresses long strings inside `BidiAppend` `exec_client_message` / `run_request` frames, records savings as agent `cursor-wire`, and surfaces them on the dashboard as **Cursor Wire**. Optional dep: `pip install 'memor-cli[cursor-wire]'` / `pipx inject memor-cli mitmproxy`.
-- **Cursor full-install automation** — `memor install-proxy --agent cursor` enables memory hooks, Shell compress hooks, BYOK `:8421`, subscription mitmdump sidecar, CA trust prompt, Cursor `settings.json` (incl. `http.noProxy`), port auto-pick, and launchd/systemd lifecycle via `ai.memor.cursor-wire`. Flags: `--no-wire`, `--yes`, `--skip-ca-trust`.
-- **Cursor Wire health on dashboard** — `/api/proxy-status.cursor_wire` + status chip; Cursor desk shows mitmdump up/down.
+- **Cursor install automation** — `memor install-proxy --agent cursor` enables memory hooks, Shell compress hooks, and the BYOK proxy on `:8421`. Flag: `--yes`.
 - **Agent desk dashboard** — Overview plus per-agent panes (Claude, Cursor, Codex, …) with fintech-style cumulative savings equity curves, recall volume charts, and `/api/agent-desk`.
 
 ### Changed
 - Dashboard layout de-densified: status chips + portfolio KPIs on Overview; deep tables stay on Overview; each agent desk shows focused KPIs and filtered recalls.
-- `memor service restart/stop/uninstall` manage the cursor-wire unit with daemon/dashboard/proxy when opted in.
 
 ## [0.11.0] - 2026-08-01
 

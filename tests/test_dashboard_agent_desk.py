@@ -31,8 +31,8 @@ def _seed(tmp_path):
     now = time.time()
     s.record_proxy_savings({
         "timestamp": now - 86400,
-        "agent": "cursor-wire",
-        "provider": "cursor-bidi",
+        "agent": "cursor",
+        "provider": "openai",
         "session_id": "w1",
         "tokens_before": 1000,
         "tokens_after": 600,
@@ -41,8 +41,8 @@ def _seed(tmp_path):
     })
     s.record_proxy_savings({
         "timestamp": now,
-        "agent": "cursor-wire",
-        "provider": "cursor-bidi",
+        "agent": "cursor",
+        "provider": "openai",
         "session_id": "w2",
         "tokens_before": 500,
         "tokens_after": 400,
@@ -95,4 +95,7 @@ def test_dashboard_html_has_desk_tabs(tmp_path):
     assert "pane-overview" in html
     assert "pane-agent" in html
     assert "Cumulative tokens saved" in html
-    assert "badge-cursor-wire" in html
+    assert "badge-cursor" in html
+    # The Cursor wire MITM was removed — no chip, colour, or label may survive.
+    assert "cursor-wire" not in html
+    assert "cursor_wire" not in html

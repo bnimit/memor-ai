@@ -1,6 +1,8 @@
 """Cursor IDE proxy install helpers (BYOK base URL override)."""
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from memor.config import clear_proxy_upstream, set_proxy_agent, set_proxy_upstream
@@ -159,13 +161,133 @@ def manual_setup_lines(port: int, protocol: str) -> list[str]:
     return lines
 
 
-def uninstall_cursor_proxy() -> None:
-    from memor.config import set_cursor_wire
-    from memor.cursor_wire.settings import strip_cursor_wire_settings
+@dataclass
+class CursorStackResult:
+    lines: list[str] = field(default_factory=list)
+    byok_ok: bool = False
+    aborted: bool = False
 
-    # Drop wire keys first (in case backup predates wire install).
-    strip_cursor_wire_settings()
-    set_cursor_wire(False)
+
+def explain_cursor_install() -> list[str]:
+    return [
+        "This enables Cursor support:",
+        "  • Memory recall (hooks, if missing)",
+        "  • Shell output compression hooks",
+        "  • BYOK proxy on 127.0.0.1:8421 (custom models)",
+    ]
+
+
+def _ensure_memory_hooks() -> list[str]:
+    lines: list[str] = []
+    try:
+        import shutil
+
+        from memor.cli import _install_hook_logic
+
+        hook_bin = shutil.which("memor-hook")
+        if not hook_bin:
+            lines.append("Memory hooks: memor-hook not on PATH — run: memor install-hook")
+            return lines
+        settings = Path.home() / ".claude" / "settings.json"
+        if settings.exists() and "memor-hook" in settings.read_text():
+            lines.append("Memory hooks: already installed (~/.claude/settings.json)")
+            return lines
+        _install_hook_logic(settings, hook_bin)
+        lines.append(f"Memory hooks: installed memor-hook → {settings}")
+    except Exception as exc:
+        lines.append(f"Memory hooks: skipped ({exc})")
+    return lines
+
+
+def _ensure_shell_hooks() -> list[str]:
+    try:
+        from memor.cursor_compress_install import install_cursor_compress_hooks
+
+        return install_cursor_compress_hooks()
+    except Exception as exc:
+        return [f"Shell compress hooks: failed ({exc})"]
+
+
+def install_cursor_stack(
+    *,
+    byok_port: int,
+    upstream_url: str | None = None,
+    yes: bool = False,
+    confirm: Callable[[str], bool] | None = None,
+) -> CursorStackResult:
+    """Install the Cursor stack: memory hooks + Shell compress hooks + BYOK proxy.
+
+    Compression reaches Cursor through the shell hooks, which crush tool output
+    before Cursor ever ingests it. Subscription Composer traffic is deliberately
+    not touched — see docs; intercepting it locally was measured unreachable.
+    """
+    from memor import service
+
+    result = CursorStackResult()
+    ask = confirm or (lambda _m: yes)
+
+    result.lines.extend(explain_cursor_install())
+    if not yes and not ask("Continue with Cursor install (hooks + BYOK)?"):
+        result.aborted = True
+        result.lines.append("Aborted.")
+        return result
+
+    manual = install_cursor_proxy(byok_port, upstream_url=upstream_url)
+    result.byok_ok = True
+    result.lines.append("BYOK proxy: Cursor base URL keys updated")
+    result.lines.extend(manual)
+
+    result.lines.extend(_ensure_memory_hooks())
+    result.lines.extend(_ensure_shell_hooks())
+    result.lines.append(service.install(with_dashboard=True, with_proxy=True))
+    return result
+
+
+#: Keys written by the removed Cursor wire MITM. Stripped on uninstall so an
+#: upgrading user is never left pointing Cursor at a proxy that no longer runs.
+LEGACY_WIRE_KEYS = (
+    "http.proxy",
+    "http.proxySupport",
+    "http.proxyStrictSSL",
+    "http.noProxy",
+    "http.proxyBypassList",
+    "cursor.general.disableHttp2",
+)
+
+
+def strip_legacy_wire_settings() -> bool:
+    """Remove leftover wire proxy keys from Cursor settings.json.
+
+    Only strips when ``http.proxy`` points at localhost — a user's own corporate
+    proxy must survive untouched.
+    """
+    from memor.proxy.vscode_settings import (
+        load_settings_json,
+        remove_settings_keys,
+        write_settings_json,
+    )
+
+    config_path, _, _ = cursor_paths()
+    if not config_path.exists():
+        return False
+    settings = load_settings_json(config_path)
+    proxy = str(settings.get("http.proxy") or "").strip().lower()
+    if proxy and not (
+        proxy.startswith("http://127.0.0.1:") or proxy.startswith("http://localhost:")
+    ):
+        return False
+    settings, changed = remove_settings_keys(settings, LEGACY_WIRE_KEYS)
+    if changed:
+        write_settings_json(config_path, settings)
+    return changed
+
+
+def uninstall_cursor_proxy() -> None:
+    from memor.config import clear_cursor_wire_keys
+
+    # Drop legacy wire keys first (in case the backup predates the wire install).
+    strip_legacy_wire_settings()
+    clear_cursor_wire_keys()
 
     config_path, backup_path, _ = cursor_paths()
     if backup_path.exists():
@@ -180,8 +302,7 @@ def uninstall_cursor_proxy() -> None:
     clear_proxy_upstream("cursor")
     set_proxy_agent("cursor", False)
 
-    # Unload wire unit if present (service.install won't manage it once flag is false,
-    # unless the plist still exists — remove it).
+    # Remove any launchd/systemd unit stranded by the removed wire feature.
     try:
         from memor import service
         import os

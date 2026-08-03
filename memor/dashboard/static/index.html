@@ -34,7 +34,7 @@
     --font: 'DM Sans', system-ui, sans-serif;
     --mono: 'IBM Plex Mono', ui-monospace, monospace;
     --claude: #e89320; --codex: #2fd67b; --copilot: #64a0ff;
-    --cursor: #c084fc; --cursor-wire: #a78bfa; --kimi: #ff8c5a; --goose: #50c8b4;
+    --cursor: #c084fc; --kimi: #ff8c5a; --goose: #50c8b4;
   }
 
   body {
@@ -270,7 +270,6 @@
   .badge-codex { background: rgba(47,214,123,0.12); color: var(--codex); }
   .badge-copilot { background: rgba(100,160,255,0.12); color: var(--copilot); }
   .badge-cursor { background: rgba(192,132,252,0.12); color: var(--cursor); }
-  .badge-cursor-wire { background: rgba(167,139,250,0.14); color: var(--cursor-wire); }
   .badge-kimi { background: rgba(255,140,90,0.12); color: var(--kimi); }
   .badge-goose { background: rgba(80,200,180,0.12); color: var(--goose); }
 
@@ -368,7 +367,6 @@
       <div class="chip"><span class="led" id="led-proxy"></span>Proxy <strong id="status-proxy">–</strong></div>
       <div class="chip"><span class="led" id="led-hook"></span>Hook <strong id="status-hook">–</strong></div>
       <div class="chip"><span class="led" id="led-daemon"></span>Daemon <strong id="status-daemon">–</strong></div>
-      <div class="chip" id="chip-cursor-wire" style="display:none;"><span class="led" id="led-cursor-wire"></span>Cursor Wire <strong id="status-cursor-wire">–</strong></div>
       <div class="chip">Agents <strong id="status-agents">–</strong></div>
     </div>
 
@@ -405,7 +403,7 @@
             <div class="chart-title">Cumulative tokens saved</div>
             <div class="chart-big" id="cum-saved-big">–</div>
           </div>
-          <div class="chart-meta">30d equity curve · proxy + wire</div>
+          <div class="chart-meta">30d equity curve · all proxied agents</div>
         </div>
         <div class="chart-canvas tall" id="savings-equity"></div>
       </div>
@@ -466,7 +464,7 @@
 
     <section id="proxy-savings-section" style="display:none;">
       <div class="section-label"><span class="dot"></span> Proxy savings by agent</div>
-      <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">Includes Cursor Wire when mitm is running</div>
+      <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">Across every proxied agent</div>
       <div class="agent-compare" id="proxy-savings-grid"></div>
     </section>
 
@@ -532,16 +530,11 @@
   <div class="pane" id="pane-agent" data-pane="agent">
     <section>
       <div class="section-label"><span class="dot"></span> <span id="agent-pane-title">Agent</span></div>
-      <div class="desk-health" id="ap-wire-health" aria-live="polite">
+      <div class="desk-health" id="ap-desk-health" aria-live="polite">
         <div class="desk-health-row">
           <span class="led" id="ap-byok-led"></span>
           <span class="label">BYOK proxy</span>
           <span class="detail" id="ap-byok-detail">–</span>
-        </div>
-        <div class="desk-health-row">
-          <span class="led" id="ap-wire-led"></span>
-          <span class="label">Wire mitmdump</span>
-          <span class="detail" id="ap-wire-detail">–</span>
         </div>
       </div>
       <div class="kpi-grid" id="ap-kpi-grid">
@@ -616,7 +609,7 @@
   var CORE_AGENTS = ['claude', 'cursor', 'codex', 'copilot', 'kimi', 'goose'];
   var AGENT_COLORS = {
     claude: 'var(--claude)', codex: 'var(--codex)', copilot: 'var(--copilot)',
-    cursor: 'var(--cursor)', 'cursor-wire': 'var(--cursor-wire)',
+    cursor: 'var(--cursor)',
     kimi: 'var(--kimi)', goose: 'var(--goose)', cline: '#64a0ff', opencode: '#14b8a6',
   };
 
@@ -684,7 +677,7 @@
   function agentLabel(agent) {
     var labels = {
       claude: 'Claude', codex: 'Codex', copilot: 'Copilot',
-      cursor: 'Cursor', 'cursor-wire': 'Cursor Wire',
+      cursor: 'Cursor',
       kimi: 'Kimi', goose: 'Goose', cline: 'Cline', opencode: 'OpenCode',
     };
     if (labels[agent]) return labels[agent];
@@ -698,7 +691,6 @@
       codex: ['badge-codex', 'Codex'],
       copilot: ['badge-copilot', 'Copilot'],
       cursor: ['badge-cursor', 'Cursor'],
-      'cursor-wire': ['badge-cursor-wire', 'Cursor Wire'],
       kimi: ['badge-kimi', 'Kimi'],
       goose: ['badge-goose', 'Goose'],
     };
@@ -834,26 +826,6 @@
       : 'Off';
     document.getElementById('status-hook').textContent = hookOn ? 'On' : 'Off';
     document.getElementById('status-daemon').textContent = daemonOn ? 'On' : 'Off';
-
-    var wire = data.cursor_wire || {};
-    var wireChip = document.getElementById('chip-cursor-wire');
-    if (wire.enabled) {
-      wireChip.style.display = '';
-      var healthy = !!wire.healthy;
-      setLed('led-cursor-wire', healthy);
-      var label = document.getElementById('status-cursor-wire');
-      if (healthy) {
-        label.textContent = 'On :' + (wire.port || '');
-        label.style.color = 'var(--ok)';
-      } else {
-        label.textContent = 'Down';
-        label.style.color = 'var(--warn)';
-        label.title = (wire.detail || 'mitmdump not listening') +
-          ' — run memor service restart';
-      }
-    } else {
-      wireChip.style.display = 'none';
-    }
 
     var agents = data.proxy_agents || {};
     var active = Object.keys(agents).filter(function(a) { return agents[a]; });
@@ -1001,12 +973,11 @@
     var fromData = data.map(function(r) { return r.agent || 'claude'; });
     knownAgents = CORE_AGENTS.slice();
     fromData.forEach(function(a) {
-      if (knownAgents.indexOf(a) === -1 && a !== 'cursor-wire') knownAgents.push(a);
+      if (knownAgents.indexOf(a) === -1) knownAgents.push(a);
     });
     renderTabs();
     data.forEach(function(row) {
       var agent = row.agent || 'claude';
-      if (agent === 'cursor-wire') return;
       var color = AGENT_COLORS[agent] || 'var(--text-muted)';
       var hitRate = row.recalls > 0 ? ((row.hits / row.recalls) * 100) : 0;
       var tile = el('div', { class: 'agent-tile' });
@@ -1030,7 +1001,7 @@
       var agent = row.agent || 'unknown';
       var color = AGENT_COLORS[agent] || 'var(--text-muted)';
       var tile = el('div', { class: 'agent-tile' });
-      var pane = agent === 'cursor-wire' ? 'cursor' : agent;
+      var pane = agent;
       tile.innerHTML =
         '<div class="name" style="color:' + color + '">' + esc(agentLabel(agent)) + '</div>' +
         '<div class="val" style="color:var(--ok)">' + row.pct_saved + '%</div>' +
@@ -1206,20 +1177,17 @@
   }
 
   /* ── Agent pane ────────────────────────────────────────── */
-  function renderCursorWireDeskHealth(st) {
-    var box = document.getElementById('ap-wire-health');
+  function renderCursorDeskHealth(st) {
+    var box = document.getElementById('ap-desk-health');
     var byokLed = document.getElementById('ap-byok-led');
     var byokDetail = document.getElementById('ap-byok-detail');
-    var led = document.getElementById('ap-wire-led');
-    var detail = document.getElementById('ap-wire-detail');
     if (!box) return;
     box.classList.add('visible');
-    var w = (st && st.cursor_wire) ? st.cursor_wire : {};
     var agents = (st && st.proxy_agents) ? st.proxy_agents : {};
     var cursorProxied = !!agents.cursor;
     var proxyUp = !!st.proxy;
 
-    // BYOK (:8421) — what older `install-proxy --agent cursor` installed
+    // BYOK proxy (:8421) — installed by `install-proxy --agent cursor`
     byokLed.className = 'led';
     if (cursorProxied && proxyUp) {
       byokLed.classList.add('on');
@@ -1233,41 +1201,20 @@
       byokDetail.textContent = 'not installed';
       byokDetail.style.color = 'var(--text-muted)';
     }
-
-    // Subscription wire (mitmdump) — separate stack; flag cursor_wire in config
-    led.className = 'led';
-    if (w.enabled && w.healthy) {
-      led.classList.add('on');
-      detail.textContent = ':' + (w.port || '?') + ' · healthy';
-      detail.style.color = 'var(--ok)';
-    } else if (w.enabled && !w.healthy) {
-      led.classList.add('warn');
-      detail.textContent = ':' + (w.port || '?') + ' · down — run memor service restart';
-      detail.style.color = 'var(--warn)';
-    } else if (w.listening) {
-      led.classList.add('on');
-      detail.textContent = ':' + (w.port || '?') + ' · listening (not managed by memor)';
-      detail.style.color = 'var(--ok)';
-    } else {
-      detail.textContent = cursorProxied
-        ? 'not installed — memor install-proxy --agent cursor --wire'
-        : 'not enabled';
-      detail.style.color = 'var(--text-muted)';
-    }
   }
 
   async function loadAgentPane(agent) {
     document.getElementById('agent-pane-title').textContent = agentLabel(agent) + ' desk';
-    var wireHealth = document.getElementById('ap-wire-health');
+    var deskHealth = document.getElementById('ap-desk-health');
     if (agent === 'cursor') {
       try {
-        renderCursorWireDeskHealth(await api('/api/proxy-status'));
+        renderCursorDeskHealth(await api('/api/proxy-status'));
       } catch (e) {
-        wireHealth.classList.add('visible');
-        document.getElementById('ap-wire-detail').textContent = 'status unavailable';
+        deskHealth.classList.add('visible');
+        document.getElementById('ap-byok-detail').textContent = 'status unavailable';
       }
     } else {
-      wireHealth.classList.remove('visible');
+      deskHealth.classList.remove('visible');
     }
     try {
       var data = await api('/api/agent-desk?agent=' + encodeURIComponent(agent));
@@ -1285,7 +1232,7 @@
       } else {
         document.getElementById('ap-saved-pct').textContent = '–';
         document.getElementById('ap-saved-sub').textContent =
-          agent === 'cursor' ? 'enable BYOK proxy or cursor-wire-mitm' : 'no proxy data';
+          'no proxy data';
       }
 
       var trend = (data.recall_trend || []).map(function(d) {
@@ -1297,7 +1244,7 @@
       var cum = series.length ? series[series.length - 1].cumulative_saved : 0;
       document.getElementById('ap-cum-saved').textContent = cum ? fmt(cum) + ' saved' : '–';
       document.getElementById('ap-cum-meta').textContent =
-        agent === 'cursor' ? '30d · includes Cursor Wire' : '30d';
+        '30d';
       renderEquityChart('ap-savings-chart', series, 'cumulative_saved', '#2fd67b');
 
       var tbody = document.getElementById('ap-recalls-body');

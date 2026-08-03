@@ -21,6 +21,9 @@ from pathlib import Path
 DAEMON_LABEL = "ai.memor.daemon"
 DASHBOARD_LABEL = "ai.memor.dashboard"
 PROXY_LABEL = "ai.memor.proxy"
+# Legacy: the Cursor wire MITM was removed after measurement showed Composer
+# traffic never reaches a local proxy. The label and log path are retained so
+# uninstall/stop/status still clean up units stranded by an older install.
 CURSOR_WIRE_LABEL = "ai.memor.cursor-wire"
 # Back-compat alias.
 LABEL = DAEMON_LABEL
@@ -93,33 +96,11 @@ def _should_run_proxy() -> bool:
     return _proxy_unit_file_exists()
 
 
-def _cursor_wire_unit_file_exists() -> bool:
-    if _is_macos():
-        return _plist_path(CURSOR_WIRE_LABEL).exists()
-    return _unit_path("memor-cursor-wire").exists()
-
-
-def _should_run_cursor_wire() -> bool:
-    """Whether install/restart should manage the Cursor wire mitmdump unit."""
-    from memor.config import is_cursor_wire_enabled
-
-    if is_cursor_wire_enabled():
-        return True
-    return _cursor_wire_unit_file_exists()
-
-
-def _cursor_wire_port() -> int:
-    from memor.config import cursor_wire_port
-
-    return cursor_wire_port()
-
-
 def _units(
     memor_bin: str,
     *,
     with_dashboard: bool = True,
     with_proxy: bool = False,
-    with_cursor_wire: bool = False,
     port: int | None = None,
 ) -> list[dict]:
     """Describe the services to manage. Each entry has the launchd label,
@@ -152,18 +133,6 @@ def _units(
             "description": "Memor proxy — context compression for AI agents",
             "args": [memor_bin, "proxy", "--port", str(proxy_p)],
             "log": PROXY_LOG,
-        })
-    if with_cursor_wire:
-        wport = _cursor_wire_port()
-        units.append({
-            "key": "cursor-wire",
-            "label": CURSOR_WIRE_LABEL,
-            "systemd_name": "memor-cursor-wire",
-            "description": "Memor Cursor wire — mitmdump subscription compression",
-            "args": [
-                memor_bin, "cursor-wire-mitm", "--dump", "--port", str(wport),
-            ],
-            "log": CURSOR_WIRE_LOG,
         })
     return units
 
@@ -276,55 +245,14 @@ def _port_held_by_memor(port: int) -> bool:
     return False
 
 
-def install(with_dashboard: bool = True, with_proxy: bool = False,
-            with_cursor_wire: bool | None = None) -> str:
+def install(with_dashboard: bool = True, with_proxy: bool = False) -> str:
     """Install background services. The proxy is opt-in via `memor install-proxy`.
 
     When `with_proxy` is False (default), it is still enabled if `_should_run_proxy()`
     — so `memor service restart` after upgrade keeps a previously installed proxy.
-    Cursor wire mitmdump follows `cursor_wire` config the same way.
     """
     if not with_proxy and _should_run_proxy():
         with_proxy = True
-    # None = follow config/existing unit. Explicit False must win (disable-cursor-wire).
-    if with_cursor_wire is None:
-        with_cursor_wire = _should_run_cursor_wire()
-
-    # Stop any existing wire unit before port pick so we don't treat ourselves as busy.
-    notes: list[str] = []
-    if with_cursor_wire:
-        try:
-            if _is_macos():
-                wpath = _plist_path(CURSOR_WIRE_LABEL)
-                if wpath.exists():
-                    subprocess.run(
-                        ["launchctl", "bootout", f"gui/{os.getuid()}", str(wpath)],
-                        capture_output=True,
-                    )
-            else:
-                if _unit_path("memor-cursor-wire").exists():
-                    subprocess.run(
-                        ["systemctl", "--user", "stop", "memor-cursor-wire"],
-                        capture_output=True,
-                    )
-            import time as _time
-            _time.sleep(0.3)
-
-            from memor.config import is_cursor_wire_enabled, set_cursor_wire_port
-            from memor.cursor_wire.ports import resolve_wire_port
-            from memor.cursor_wire.settings import write_cursor_wire_settings
-
-            preferred = _cursor_wire_port()
-            port_pick, notes = resolve_wire_port(preferred=preferred)
-            if port_pick != preferred:
-                set_cursor_wire_port(port_pick)
-                if is_cursor_wire_enabled():
-                    try:
-                        write_cursor_wire_settings(port_pick)
-                    except Exception:
-                        pass
-        except Exception:
-            notes = []
 
     memor_bin = _find_memor_bin()
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -333,11 +261,10 @@ def install(with_dashboard: bool = True, with_proxy: bool = False,
         memor_bin,
         with_dashboard=with_dashboard,
         with_proxy=with_proxy,
-        with_cursor_wire=with_cursor_wire,
         port=port,
     )
 
-    warnings = list(notes) if notes else []
+    warnings: list[str] = []
     # Only warn when a *foreign* process holds the port. Our own running
     # dashboard/proxy (common on reinstall) is fine — launchctl will recycle it.
     if with_dashboard and _port_in_use(port) and not _port_held_by_memor(port):
@@ -379,15 +306,13 @@ def install(with_dashboard: bool = True, with_proxy: bool = False,
     out = [header, *lines]
     if with_dashboard:
         out.append(f"  dashboard: http://localhost:{port}")
-    if with_cursor_wire:
-        out.append(f"  cursor-wire: http://127.0.0.1:{_cursor_wire_port()}")
     if warnings:
         out.extend(warnings)
     return "\n".join(out)
 
 
 def uninstall() -> str:
-    from memor.config import is_cursor_wire_enabled, load_config
+    from memor.config import clear_cursor_wire_keys, load_config
     from memor.proxy.install import failover_proxy_agents
 
     failover_lines: list[str] = []
@@ -396,13 +321,10 @@ def uninstall() -> str:
         failover_lines = failover_proxy_agents(
             "service uninstall — restoring direct API endpoints")
 
+    # Legacy cleanup: drop config left by the removed Cursor wire MITM.
     wire_lines: list[str] = []
-    if is_cursor_wire_enabled() or _cursor_wire_unit_file_exists():
-        from memor.cursor_wire.settings import failover_cursor_wire
-
-        wire_lines = failover_cursor_wire(
-            "service uninstall — removed Cursor http.proxy wire keys"
-        )
+    if clear_cursor_wire_keys():
+        wire_lines = ["removed legacy cursor_wire config keys"]
 
     removed = []
     if _is_macos():
@@ -438,14 +360,11 @@ def uninstall() -> str:
         parts.append("Proxy agent configs:\n" + "\n".join(f"  {ln}" for ln in failover_lines))
     if wire_lines:
         parts.append("Cursor wire:\n" + "\n".join(f"  {ln}" for ln in wire_lines))
-        parts.append(
-            "  Note: remove mitmproxy CA from Keychain if you no longer need wire MITM."
-        )
     return "\n".join(parts)
 
 
 def stop() -> str:
-    from memor.config import is_cursor_wire_enabled, load_config
+    from memor.config import load_config
 
     stopped = []
     if _is_macos():
@@ -473,60 +392,13 @@ def stop() -> str:
             f"\n    Start again: memor service restart"
             f"\n    Or restore direct API: memor uninstall-proxy --agent <claude|codex>"
         )
-    # Strip wire proxy keys so Composer is not left on a dead mitmdump port.
-    # Keep cursor_wire=true so `memor service restart` brings the unit back.
-    if is_cursor_wire_enabled() or _cursor_wire_unit_file_exists():
-        from memor.cursor_wire.settings import strip_cursor_wire_settings
-
-        out += "\n  " + strip_cursor_wire_settings()
-        out += (
-            "\n  warning: Cursor wire http.proxy removed while services are stopped."
-            "\n    Run: memor service restart  (re-applies wire settings when healthy)"
-        )
     return out
 
 
 def restart() -> str:
     """Stop and reinstall units — use after `pipx upgrade` to recycle them
     onto the new binary (the running processes keep old code until restarted)."""
-    from memor.config import is_cursor_wire_enabled
-
-    stop_msg = stop()
-    install_msg = install()
-    parts = [stop_msg, install_msg]
-    if is_cursor_wire_enabled() or _should_run_cursor_wire():
-        from memor.cursor_wire.ports import wait_for_wire_health
-        from memor.cursor_wire.settings import failover_cursor_wire, is_memor_wire_proxy
-        from memor.proxy.cursor_install import cursor_paths
-        from memor.proxy.vscode_settings import load_settings_json
-
-        wport = _cursor_wire_port()
-        ok, detail = wait_for_wire_health(wport)
-        if not ok:
-            parts.extend(failover_cursor_wire(detail))
-        else:
-            # Do NOT force-write Cursor http.proxy on restart. If the user
-            # removed/commented proxy keys (Composer broken), leave them alone.
-            # Only install-proxy --wire writes settings.
-            try:
-                settings_path, _, _ = cursor_paths()
-                settings = load_settings_json(settings_path)
-                proxy = settings.get("http.proxy")
-                if is_memor_wire_proxy(str(proxy) if proxy is not None else None):
-                    parts.append(
-                        f"Cursor wire: healthy on :{wport}; existing http.proxy left as-is"
-                    )
-                else:
-                    parts.append(
-                        f"Cursor wire: mitmdump healthy on :{wport}, but Cursor "
-                        f"http.proxy is not set — not re-applying (run "
-                        f"`memor install-proxy --agent cursor --wire` to enable)"
-                    )
-            except Exception as exc:
-                parts.append(
-                    f"Cursor wire: healthy on :{wport}; settings check skipped ({exc})"
-                )
-    return "\n".join(parts)
+    return "\n".join([stop(), install()])
 
 
 def _macos_unit_status(label: str) -> str:
@@ -575,8 +447,11 @@ def status() -> str:
             st += f" → http://localhost:{_dashboard_port()}"
         elif key == "proxy" and st.startswith("running"):
             st += f" → http://localhost:{_proxy_port()}"
-        elif key == "cursor-wire" and st.startswith("running"):
-            st += f" → http://127.0.0.1:{_cursor_wire_port()}"
+        elif key == "cursor-wire":
+            # Removed feature — only surface it when an old unit is still on disk.
+            if st == "not installed":
+                continue
+            st += "  (legacy unit — removed feature; `memor service uninstall` clears it)"
         rows.append(f"  {key}: {st}")
     if all("not installed" in r for r in rows):
         return "Not installed. Run: memor service install"

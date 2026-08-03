@@ -619,25 +619,6 @@ class SqliteStore:
         hits = row["hits"] or 0
         proxy_rows = self.get_proxy_savings_by_agent(days=30)
         proxy = next((p for p in proxy_rows if p.get("agent") == agent), None)
-        # cursor-wire savings roll under Cursor desk
-        if agent == "cursor" and proxy is None:
-            wire = next((p for p in proxy_rows if p.get("agent") == "cursor-wire"), None)
-            proxy = wire
-        elif agent == "cursor":
-            wire = next((p for p in proxy_rows if p.get("agent") == "cursor-wire"), None)
-            if wire and proxy:
-                tb = (proxy["tokens_before"] or 0) + (wire["tokens_before"] or 0)
-                ta = (proxy["tokens_after"] or 0) + (wire["tokens_after"] or 0)
-                req = (proxy["requests"] or 0) + (wire["requests"] or 0)
-                proxy = {
-                    "agent": "cursor",
-                    "tokens_before": tb,
-                    "tokens_after": ta,
-                    "requests": req,
-                    "passthrough_requests": (proxy.get("passthrough_requests") or 0)
-                    + (wire.get("passthrough_requests") or 0),
-                    "pct_saved": round((1 - ta / tb) * 100, 1) if tb > 0 else 0.0,
-                }
         return {
             "agent": agent,
             "recalls": recalls,
@@ -1036,12 +1017,8 @@ class SqliteStore:
         clauses = ["timestamp >= ?"]
         params: list = [cutoff]
         if agent:
-            if agent == "cursor":
-                clauses.append("agent IN (?, ?)")
-                params.extend(["cursor", "cursor-wire"])
-            else:
-                clauses.append("agent=?")
-                params.append(agent)
+            clauses.append("agent=?")
+            params.append(agent)
         where = " AND ".join(clauses)
         row = self.db.execute(
             f"""
@@ -1071,12 +1048,8 @@ class SqliteStore:
         clauses = ["timestamp >= ?", "passthrough = 0"]
         params: list = [cutoff]
         if agent:
-            if agent == "cursor":
-                clauses.append("agent IN (?, ?)")
-                params.extend(["cursor", "cursor-wire"])
-            else:
-                clauses.append("agent=?")
-                params.append(agent)
+            clauses.append("agent=?")
+            params.append(agent)
         where = " AND ".join(clauses)
         rows = self.db.execute(
             f"""
