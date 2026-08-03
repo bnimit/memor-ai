@@ -25,6 +25,70 @@ class TestResolveAgent:
     def test_unknown_when_missing(self):
         assert upstream.resolve_agent({}) == "unknown"
 
+    def test_infer_claude_from_anthropic_protocol(self, tmp_path, monkeypatch):
+        _patch_config(
+            tmp_path,
+            monkeypatch,
+            {
+                "claude": {
+                    "protocol": "anthropic",
+                    "base_url": "https://api.anthropic.com/v1/messages",
+                    "provider_name": "anthropic",
+                },
+                "goose": {
+                    "protocol": "openai",
+                    "base_url": "https://api.deepseek.com/v1/chat/completions",
+                    "provider_name": "custom_deepseek",
+                },
+            },
+        )
+        cfg.set_proxy_agent("claude", True)
+        cfg.set_proxy_agent("goose", True)
+        assert upstream.resolve_agent({}, protocol="anthropic") == "claude"
+        assert upstream.resolve_agent({}, protocol="openai") == "goose"
+
+    def test_infer_ambiguous_openai_stays_unknown(self, tmp_path, monkeypatch):
+        _patch_config(
+            tmp_path,
+            monkeypatch,
+            {
+                "goose": {
+                    "protocol": "openai",
+                    "base_url": "https://api.deepseek.com/v1/chat/completions",
+                    "provider_name": "custom_deepseek",
+                },
+                "kimi": {
+                    "protocol": "openai",
+                    "base_url": "https://api.kimi.com/coding/v1/chat/completions",
+                    "provider_name": "kimi",
+                },
+            },
+        )
+        cfg.set_proxy_agent("goose", True)
+        cfg.set_proxy_agent("kimi", True)
+        assert upstream.resolve_agent({}, protocol="openai") == "unknown"
+
+    def test_infer_ambiguous_anthropic_stays_unknown(self, tmp_path, monkeypatch):
+        _patch_config(
+            tmp_path,
+            monkeypatch,
+            {
+                "claude": {
+                    "protocol": "anthropic",
+                    "base_url": "https://api.anthropic.com/v1/messages",
+                    "provider_name": "anthropic",
+                },
+                "kimi": {
+                    "protocol": "anthropic",
+                    "base_url": "https://api.kimi.com/coding/v1/messages",
+                    "provider_name": "kimi",
+                },
+            },
+        )
+        cfg.set_proxy_agent("claude", True)
+        cfg.set_proxy_agent("kimi", True)
+        assert upstream.resolve_agent({}, protocol="anthropic") == "unknown"
+
     def test_case_insensitive(self):
         assert upstream.resolve_agent({"X-Agent": "goose"}) == "goose"
         assert upstream.resolve_agent({"Agent": "kimi"}) == "kimi"
@@ -114,6 +178,49 @@ class TestResolveUpstreamUrl:
 
 
 class TestServerUpstreamRouting:
+    def test_messages_infers_claude_without_header(self, tmp_path, monkeypatch):
+        from fastapi.testclient import TestClient
+        from memor.embed.fake import FakeEmbedder
+        from memor.proxy import server
+        from memor.proxy.forward import ForwardResponse
+        from memor.store.sqlite_store import SqliteStore
+
+        _patch_config(
+            tmp_path,
+            monkeypatch,
+            {
+                "claude": {
+                    "protocol": "anthropic",
+                    "base_url": "https://api.anthropic.com/v1/messages",
+                    "provider_name": "anthropic",
+                },
+            },
+        )
+        cfg.set_proxy_agent("claude", True)
+
+        async def fake_forward(*, method, url, headers, content, stream):
+            return ForwardResponse(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                content=b'{"content":[],"usage":{"input_tokens":1,"output_tokens":1}}',
+            )
+
+        db_path = str(tmp_path / "m.db")
+        monkeypatch.setattr(server, "forward_request", fake_forward)
+        app = server.create_proxy_app(db_path, embedder=FakeEmbedder(dim=16))
+        client = TestClient(app)
+        body = {
+            "model": "claude-sonnet-4-0",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 16,
+        }
+        r = client.post("/v1/messages", json=body, headers={"x-api-key": "test-key"})
+        assert r.status_code == 200
+        row = SqliteStore(db_path, dim=16).db.execute(
+            "SELECT agent FROM proxy_savings ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        assert row["agent"] == "claude"
+
     def test_messages_routes_by_x_agent(self, tmp_path, monkeypatch):
         from fastapi.testclient import TestClient
         from memor.embed.fake import FakeEmbedder

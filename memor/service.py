@@ -21,6 +21,10 @@ from pathlib import Path
 DAEMON_LABEL = "ai.memor.daemon"
 DASHBOARD_LABEL = "ai.memor.dashboard"
 PROXY_LABEL = "ai.memor.proxy"
+# Legacy: the Cursor wire MITM was removed after measurement showed Composer
+# traffic never reaches a local proxy. The label and log path are retained so
+# uninstall/stop/status still clean up units stranded by an older install.
+CURSOR_WIRE_LABEL = "ai.memor.cursor-wire"
 # Back-compat alias.
 LABEL = DAEMON_LABEL
 
@@ -28,6 +32,7 @@ STATE_DIR = Path.home() / ".memor"
 DAEMON_LOG = STATE_DIR / "daemon.log"
 DASHBOARD_LOG = STATE_DIR / "dashboard.log"
 PROXY_LOG = STATE_DIR / "proxy.log"
+CURSOR_WIRE_LOG = STATE_DIR / "cursor-wire.log"
 LOG_FILE = DAEMON_LOG  # back-compat alias
 
 # macOS
@@ -91,7 +96,13 @@ def _should_run_proxy() -> bool:
     return _proxy_unit_file_exists()
 
 
-def _units(memor_bin: str, *, with_dashboard: bool = True, with_proxy: bool = False, port: int | None = None) -> list[dict]:
+def _units(
+    memor_bin: str,
+    *,
+    with_dashboard: bool = True,
+    with_proxy: bool = False,
+    port: int | None = None,
+) -> list[dict]:
     """Describe the services to manage. Each entry has the launchd label,
     systemd unit name, program args (after the memor binary), and log file."""
     if port is None:
@@ -133,6 +144,7 @@ def _all_unit_labels() -> list[tuple[str, str]]:
         (DAEMON_LABEL, "memor-daemon"),
         (DASHBOARD_LABEL, "memor-dashboard"),
         (PROXY_LABEL, "memor-proxy"),
+        (CURSOR_WIRE_LABEL, "memor-cursor-wire"),
     ]
 
 
@@ -205,6 +217,34 @@ def _port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _port_held_by_memor(port: int) -> bool:
+    """True if something already listening looks like our memor service."""
+    try:
+        r = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return False
+    pids = [p for p in (r.stdout or "").split() if p.isdigit()]
+    for pid in pids:
+        try:
+            ps = subprocess.run(
+                ["ps", "-p", pid, "-o", "args="],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except Exception:
+            continue
+        args = (ps.stdout or "").lower()
+        if "memor" in args or "mitmdump" in args or "cursor-wire" in args:
+            return True
+    return False
+
+
 def install(with_dashboard: bool = True, with_proxy: bool = False) -> str:
     """Install background services. The proxy is opt-in via `memor install-proxy`.
 
@@ -213,19 +253,27 @@ def install(with_dashboard: bool = True, with_proxy: bool = False) -> str:
     """
     if not with_proxy and _should_run_proxy():
         with_proxy = True
+
     memor_bin = _find_memor_bin()
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     port = _dashboard_port()
-    units = _units(memor_bin, with_dashboard=with_dashboard, with_proxy=with_proxy, port=port)
+    units = _units(
+        memor_bin,
+        with_dashboard=with_dashboard,
+        with_proxy=with_proxy,
+        port=port,
+    )
 
-    warnings = []
-    if with_dashboard and _port_in_use(port):
+    warnings: list[str] = []
+    # Only warn when a *foreign* process holds the port. Our own running
+    # dashboard/proxy (common on reinstall) is fine — launchctl will recycle it.
+    if with_dashboard and _port_in_use(port) and not _port_held_by_memor(port):
         warnings.append(
             f"  warning: port {port} is already in use — the dashboard service may "
             f"crash-loop. Stop the other process or set MEMOR_DASHBOARD_PORT.")
     if with_proxy:
         pport = _proxy_port()
-        if _port_in_use(pport):
+        if _port_in_use(pport) and not _port_held_by_memor(pport):
             warnings.append(
                 f"  warning: port {pport} is already in use — the proxy service may "
                 f"crash-loop. Stop the other process or change proxy.port in "
@@ -264,7 +312,7 @@ def install(with_dashboard: bool = True, with_proxy: bool = False) -> str:
 
 
 def uninstall() -> str:
-    from memor.config import load_config
+    from memor.config import clear_cursor_wire_keys, load_config
     from memor.proxy.install import failover_proxy_agents
 
     failover_lines: list[str] = []
@@ -272,6 +320,11 @@ def uninstall() -> str:
     if any(agents.values()):
         failover_lines = failover_proxy_agents(
             "service uninstall — restoring direct API endpoints")
+
+    # Legacy cleanup: drop config left by the removed Cursor wire MITM.
+    wire_lines: list[str] = []
+    if clear_cursor_wire_keys():
+        wire_lines = ["removed legacy cursor_wire config keys"]
 
     removed = []
     if _is_macos():
@@ -294,7 +347,7 @@ def uninstall() -> str:
                 changed = True
         if changed:
             subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
-    if not removed and not failover_lines:
+    if not removed and not failover_lines and not wire_lines:
         return "No services installed."
     parts = []
     if removed:
@@ -305,6 +358,8 @@ def uninstall() -> str:
         parts.append("No service unit files to remove.")
     if failover_lines:
         parts.append("Proxy agent configs:\n" + "\n".join(f"  {ln}" for ln in failover_lines))
+    if wire_lines:
+        parts.append("Cursor wire:\n" + "\n".join(f"  {ln}" for ln in wire_lines))
     return "\n".join(parts)
 
 
@@ -341,10 +396,9 @@ def stop() -> str:
 
 
 def restart() -> str:
-    """Stop and reinstall both units — use after `pipx upgrade` to recycle them
+    """Stop and reinstall units — use after `pipx upgrade` to recycle them
     onto the new binary (the running processes keep old code until restarted)."""
-    stop()
-    return install()
+    return "\n".join([stop(), install()])
 
 
 def _macos_unit_status(label: str) -> str:
@@ -384,6 +438,8 @@ def status() -> str:
             key = "dashboard"
         elif label == PROXY_LABEL:
             key = "proxy"
+        elif label == CURSOR_WIRE_LABEL:
+            key = "cursor-wire"
         else:
             key = "unknown"
         st = _macos_unit_status(label) if _is_macos() else _linux_unit_status(name)
@@ -391,6 +447,11 @@ def status() -> str:
             st += f" → http://localhost:{_dashboard_port()}"
         elif key == "proxy" and st.startswith("running"):
             st += f" → http://localhost:{_proxy_port()}"
+        elif key == "cursor-wire":
+            # Removed feature — only surface it when an old unit is still on disk.
+            if st == "not installed":
+                continue
+            st += "  (legacy unit — removed feature; `memor service uninstall` clears it)"
         rows.append(f"  {key}: {st}")
     if all("not installed" in r for r in rows):
         return "Not installed. Run: memor service install"

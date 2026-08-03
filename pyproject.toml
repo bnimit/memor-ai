@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memor-cli"
-version = "0.11.0"
+version = "0.12.0"
 description = "Local shared memory for coding agents (Claude Code, Cursor, Codex, Copilot, Kimi, Goose) plus opt-in token-savings proxy. Fire and forget — no Memor API key."
 readme = "README.md"
 license = "MIT"
@@ -64,6 +64,8 @@ Issues = "https://github.com/bnimit/memor-ai/issues"
 memor = "memor.cli:app"
 memor-hook = "memor.hook_cli:main"
 memor-retrieve-mcp = "memor.proxy.mcp_retrieve:main"
+memor-cursor-compress-hook = "memor.cursor_compress_hook:hook_main"
+memor-compress-exec = "memor.cursor_compress_hook:compress_exec_entry"
 
 [tool.setuptools.packages.find]
 include = ["memor*"]

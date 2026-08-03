@@ -436,8 +436,10 @@ def test_install_codex_proxy_registers_mcp(mock_home, monkeypatch):
 
 
 def test_agent_proxy_handlers_registry():
-    """Registry includes all four agents with install/uninstall/strip callables."""
-    assert set(AGENT_PROXY_HANDLERS) == {"claude", "codex", "goose", "kimi"}
+    """Registry includes all proxy agents with install/uninstall/strip callables."""
+    assert set(AGENT_PROXY_HANDLERS) == {
+        "claude", "codex", "goose", "kimi", "cursor", "cline", "opencode",
+    }
     for agent, handler in AGENT_PROXY_HANDLERS.items():
         assert callable(handler.install)
         assert callable(handler.uninstall)

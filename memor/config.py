@@ -76,3 +76,19 @@ def clear_proxy_upstream(agent: str) -> None:
     upstreams.pop(agent, None)
     cfg["proxy_upstreams"] = upstreams
     save_config(cfg)
+
+
+def clear_cursor_wire_keys() -> bool:
+    """Drop legacy ``cursor_wire`` keys left by the removed MITM feature.
+
+    Returns True if anything was removed. Kept so upgrading users do not carry
+    dead config forward; safe to delete once no installs predate the removal.
+    """
+    cfg = load_config()
+    removed = [k for k in ("cursor_wire", "cursor_wire_port") if k in cfg]
+    if not removed:
+        return False
+    for key in removed:
+        cfg.pop(key, None)
+    save_config(cfg)
+    return True

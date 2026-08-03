@@ -558,16 +558,76 @@ class SqliteStore:
         """).fetchall()
         return [dict(r) for r in rows]
 
-    def get_recent_recalls(self, limit: int = 50, project: str | None = None) -> list[dict]:
+    def get_recent_recalls(
+        self,
+        limit: int = 50,
+        project: str | None = None,
+        agent: str | None = None,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        params: list = []
         if project:
-            rows = self.db.execute(
-                "SELECT * FROM recall_log WHERE project=? ORDER BY timestamp DESC LIMIT ?",
-                (project, limit)).fetchall()
-        else:
-            rows = self.db.execute(
-                "SELECT * FROM recall_log ORDER BY timestamp DESC LIMIT ?",
-                (limit,)).fetchall()
+            clauses.append("project=?")
+            params.append(project)
+        if agent:
+            clauses.append("COALESCE(agent, 'claude')=?")
+            params.append(agent)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        rows = self.db.execute(
+            f"SELECT * FROM recall_log{where} ORDER BY timestamp DESC LIMIT ?",
+            params,
+        ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_recall_trend(self, days: int = 30, agent: str | None = None) -> list[dict]:
+        clauses = ["timestamp >= unixepoch('now', ? || ' days')"]
+        params: list = [f"-{days}"]
+        if agent:
+            clauses.append("COALESCE(agent, 'claude')=?")
+            params.append(agent)
+        where = " AND ".join(clauses)
+        rows = self.db.execute(
+            f"""
+            SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+                   COUNT(*) as recalls,
+                   SUM(CASE WHEN hits_count > 0 THEN 1 ELSE 0 END) as hits,
+                   SUM(tokens_injected) as tokens,
+                   AVG(CASE WHEN hits_count > 0 THEN top_score END) as avg_score
+            FROM recall_log
+            WHERE {where}
+            GROUP BY day ORDER BY day
+            """,
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_agent_stats(self, agent: str) -> dict:
+        """Recall + proxy stats for a single agent desk pane."""
+        row = self.db.execute(
+            """
+            SELECT COUNT(*) as recalls,
+                   SUM(CASE WHEN hits_count > 0 THEN 1 ELSE 0 END) as hits,
+                   AVG(latency_ms) as avg_latency,
+                   SUM(tokens_injected) as tokens_injected
+            FROM recall_log
+            WHERE COALESCE(agent, 'claude')=?
+            """,
+            (agent,),
+        ).fetchone()
+        recalls = row["recalls"] or 0
+        hits = row["hits"] or 0
+        proxy_rows = self.get_proxy_savings_by_agent(days=30)
+        proxy = next((p for p in proxy_rows if p.get("agent") == agent), None)
+        return {
+            "agent": agent,
+            "recalls": recalls,
+            "hits": hits,
+            "hit_rate": round(hits / recalls, 3) if recalls else 0.0,
+            "avg_latency_ms": round(row["avg_latency"] or 0, 1),
+            "tokens_injected": row["tokens_injected"] or 0,
+            "proxy": proxy,
+        }
 
     def record_recall(self, artifact_ids: list[str]) -> None:
         import time as _time
@@ -951,15 +1011,24 @@ class SqliteStore:
         self.db.commit()
         return cur.lastrowid
 
-    def get_proxy_savings_summary(self, days: int = 30) -> dict:
+    def get_proxy_savings_summary(self, days: int = 30, agent: str | None = None) -> dict:
         import time as _time
         cutoff = _time.time() - (days * 86400)
-        row = self.db.execute("""
+        clauses = ["timestamp >= ?"]
+        params: list = [cutoff]
+        if agent:
+            clauses.append("agent=?")
+            params.append(agent)
+        where = " AND ".join(clauses)
+        row = self.db.execute(
+            f"""
             SELECT SUM(tokens_before) as tokens_before,
                    SUM(tokens_after) as tokens_after
             FROM proxy_savings
-            WHERE timestamp >= ?
-        """, (cutoff,)).fetchone()
+            WHERE {where}
+            """,
+            params,
+        ).fetchone()
         tokens_before = row["tokens_before"] or 0
         tokens_after = row["tokens_after"] or 0
         if tokens_before > 0:
@@ -971,6 +1040,44 @@ class SqliteStore:
             "tokens_after": tokens_after,
             "pct_saved": round(pct_saved, 1),
         }
+
+    def get_proxy_savings_series(self, days: int = 30, agent: str | None = None) -> list[dict]:
+        """Daily proxy savings with cumulative tokens saved (equity-curve style)."""
+        import time as _time
+        cutoff = _time.time() - (days * 86400)
+        clauses = ["timestamp >= ?", "passthrough = 0"]
+        params: list = [cutoff]
+        if agent:
+            clauses.append("agent=?")
+            params.append(agent)
+        where = " AND ".join(clauses)
+        rows = self.db.execute(
+            f"""
+            SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+                   SUM(tokens_before) as tokens_before,
+                   SUM(tokens_after) as tokens_after
+            FROM proxy_savings
+            WHERE {where}
+            GROUP BY day
+            ORDER BY day
+            """,
+            params,
+        ).fetchall()
+        series: list[dict] = []
+        cum = 0
+        for row in rows:
+            before = row["tokens_before"] or 0
+            after = row["tokens_after"] or 0
+            saved = max(0, before - after)
+            cum += saved
+            series.append({
+                "day": row["day"],
+                "tokens_before": before,
+                "tokens_after": after,
+                "tokens_saved": saved,
+                "cumulative_saved": cum,
+            })
+        return series
 
     def get_proxy_savings_by_agent(self, days: int = 30) -> list[dict]:
         import time as _time

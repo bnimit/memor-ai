@@ -80,6 +80,12 @@ EVALUATION
   memor bench-embed --project <name>   Compare embedding models
   memor eval-proxy                     Proxy compression benchmark (release gate)
 
+CURSOR
+  memor install-proxy --agent cursor   Memory + Shell hooks + BYOK proxy
+    --yes                              Accept prompts without asking
+    Compression reaches Cursor through the Shell hooks, which crush tool
+    output before Cursor ingests it. Dashboard: per-agent savings desks.
+
 CONFIGURATION
   Everything works locally with zero API keys.
   No configuration needed — just install, hook, and run the daemon.
@@ -832,6 +838,45 @@ def install_hook(agent: str | None = typer.Option(
     typer.echo("  Everything works locally — no API keys needed.")
 
 
+@app.command("install-cursor-compress-hooks")
+def install_cursor_compress_hooks_cmd():
+    """Install Cursor preToolUse hook to compress Shell tool output (subscription Composer)."""
+    from memor.cursor_compress_install import install_cursor_compress_hooks
+
+    try:
+        lines = install_cursor_compress_hooks()
+    except RuntimeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1)
+
+    for line in lines:
+        typer.echo(line)
+
+
+@app.command("uninstall-cursor-compress-hooks")
+def uninstall_cursor_compress_hooks_cmd():
+    """Remove Memor Cursor Shell compression hooks and restore backups."""
+    from memor.cursor_compress_install import uninstall_cursor_compress_hooks
+
+    typer.echo(uninstall_cursor_compress_hooks())
+
+
+@app.command("compress-exec")
+def compress_exec_cmd(
+    cwd: str = typer.Option(None, "--cwd", help="Working directory for the shell command"),
+    command: list[str] = typer.Argument(..., help="Shell command after --"),
+):
+    """Run a shell command and print compressed stdout/stderr (used by Cursor hook)."""
+    from memor.cursor_compress_hook import run_compress_exec
+
+    if not command:
+        typer.echo("Error: provide a command after --", err=True)
+        raise typer.Exit(2)
+    shell_command = " ".join(command)
+    workdir = cwd or str(Path.cwd())
+    raise typer.Exit(run_compress_exec(cwd=workdir, command=shell_command))
+
+
 @app.command("dashboard")
 def dashboard(port: int = typer.Option(8420, help="Port to serve on"),
               no_open: bool = typer.Option(False, help="Don't open browser"),
@@ -876,18 +921,33 @@ def proxy(port: int = typer.Option(None, help="Port to serve on"),
     uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
 
 
+_PROXY_AGENTS = frozenset({
+    "claude", "codex", "goose", "kimi", "cursor", "cline", "opencode",
+})
+
+
 @app.command("install-proxy")
 def install_proxy(
     agent: str = typer.Option(
-        ..., help="Agent: claude, codex, goose, or kimi"),
+        ..., help="Agent: claude, codex, goose, kimi, cursor, cline, or opencode"),
     upstream_url: str = typer.Option(
         None,
         "--upstream-url",
-        help="Goose/Kimi only: upstream API URL to capture when the agent config "
-        "has no base_url (e.g. Goose Desktop custom providers without JSON).",
+        help="Optional upstream API URL when the agent config has no base_url "
+        "(Goose Desktop, Cursor BYOK, Cline, OpenCode).",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Cursor only: accept prompts without asking.",
     ),
 ):
-    """Install proxy for an agent and ensure the proxy service is running."""
+    """Install proxy for an agent and ensure the proxy service is running.
+
+    For Cursor: installs memory hooks + Shell compress hooks + the BYOK proxy.
+    """
+    from memor.proxy.cline_install import install_cline_proxy
     from memor.proxy.install import (
         install_agent_proxy,
         install_claude_proxy,
@@ -895,18 +955,48 @@ def install_proxy(
     )
     from memor.config import proxy_port as get_proxy_port
     from memor import service
-    
+
     agent = agent.lower()
-    if agent not in ["claude", "codex", "goose", "kimi"]:
+    if agent not in _PROXY_AGENTS:
         typer.echo(
-            f"Unknown agent '{agent}'. Choose: claude, codex, goose, or kimi",
+            f"Unknown agent '{agent}'. Choose: {', '.join(sorted(_PROXY_AGENTS))}",
             err=True,
         )
         raise typer.Exit(1)
-    
+
     port = get_proxy_port()
-    
+
     try:
+        if agent == "cursor":
+            from memor.proxy.cursor_install import install_cursor_stack
+
+            def _confirm(msg: str) -> bool:
+                return typer.confirm(msg, default=True)
+
+            result = install_cursor_stack(
+                byok_port=port,
+                upstream_url=upstream_url,
+                yes=yes,
+                confirm=None if yes else _confirm,
+            )
+            for line in result.lines:
+                typer.echo(line)
+            if result.aborted:
+                raise typer.Exit(1)
+
+            from memor.proxy.health import wait_for_proxy_health
+            from memor.proxy.install import failover_proxy_agents
+
+            typer.echo("\nChecking BYOK proxy health...")
+            ok, detail = wait_for_proxy_health(port)
+            if not ok:
+                typer.echo(f"\nProxy failed health check: {detail}", err=True)
+                for line in failover_proxy_agents(detail):
+                    typer.echo(f"  {line}", err=True)
+                raise typer.Exit(1)
+            typer.echo(f"BYOK proxy ready at http://127.0.0.1:{port}")
+            return
+
         if agent == "claude":
             install_claude_proxy(port)
             typer.echo(f"\nInstalled Claude Code proxy:")
@@ -934,11 +1024,21 @@ def install_proxy(
             typer.echo(f"  Updated ~/.kimi/config.toml provider")
             typer.echo(f"  Set base_url=http://127.0.0.1:{port}/v1/...")
             typer.echo(f"  Stamped x-agent: kimi header")
-        
+        elif agent == "cline":
+            notes = install_cline_proxy(port, upstream_url=upstream_url)
+            typer.echo(f"\nInstalled Cline proxy:")
+            for line in notes:
+                typer.echo(f"  {line}")
+        elif agent == "opencode":
+            install_agent_proxy("opencode", port, upstream_url=upstream_url)
+            typer.echo(f"\nInstalled OpenCode proxy:")
+            typer.echo(f"  Updated ~/.config/opencode/opencode.json provider baseURL")
+            typer.echo(f"  Stamped x-agent: opencode header")
+            typer.echo(f"  Ledger uses path prefix /opencode/v1 when headers absent")
+
         typer.echo(f"  Backup saved to ~/.memor/proxy-backup-{agent}.*")
         typer.echo()
 
-        # Ensure the proxy service is running and healthy
         typer.echo("Ensuring proxy service is running...")
         service.install(with_dashboard=True, with_proxy=True)
         from memor.proxy.health import wait_for_proxy_health
@@ -966,14 +1066,17 @@ def install_proxy(
 
 
 @app.command("uninstall-proxy")
-def uninstall_proxy(agent: str = typer.Option(..., help="Agent: claude, codex, goose, or kimi")):
+def uninstall_proxy(
+    agent: str = typer.Option(
+        ..., help="Agent: claude, codex, goose, kimi, cursor, cline, or opencode"),
+):
     """Uninstall proxy for an agent (restores original config)."""
     from memor.proxy.install import uninstall_agent_proxy
     
     agent = agent.lower()
-    if agent not in ["claude", "codex", "goose", "kimi"]:
+    if agent not in _PROXY_AGENTS:
         typer.echo(
-            f"Unknown agent '{agent}'. Choose: claude, codex, goose, or kimi",
+            f"Unknown agent '{agent}'. Choose: {', '.join(sorted(_PROXY_AGENTS))}",
             err=True,
         )
         raise typer.Exit(1)
@@ -983,9 +1086,12 @@ def uninstall_proxy(agent: str = typer.Option(..., help="Agent: claude, codex, g
         typer.echo(f"\nUninstalled {agent} proxy:")
         typer.echo(f"  Restored original config from backup")
         typer.echo(f"  Cleared proxy_agent flag")
+        if agent == "cursor":
+            typer.echo("  Cleared any legacy Cursor wire settings / service unit")
+            typer.echo("  Shell hooks: memor uninstall-cursor-compress-hooks")
         typer.echo()
         typer.echo(f"The {agent} agent will now use its default API endpoints.")
-        
+
     except Exception as e:
         typer.echo(f"Failed to uninstall proxy: {e}", err=True)
         raise typer.Exit(1)

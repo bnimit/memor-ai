@@ -114,6 +114,40 @@ def test_hook_cursor_still_recalls_when_claude_proxied(tmp_path, monkeypatch):
     assert "Recalled Memories" in ctx or "no relevant" in ctx.lower()
 
 
+def test_hook_cursor_still_recalls_when_cursor_proxied(tmp_path, monkeypatch):
+    """Cursor keeps hook inject even when Cursor proxy is enabled."""
+    import memor.config as cfg
+    monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cfg, "STATE_DIR", tmp_path)
+
+    cfg.set_proxy_agent("cursor", True)
+    assert cfg.is_proxy_agent("cursor") is True
+
+    db_path = str(tmp_path / "m.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    art = Artifact(
+        id="a1", kind="memory", project="testproj", source="distill",
+        text="we decided to use argon2 for password hashing",
+        token_count=12, created_at=100.0,
+        meta={"mem_type": "decision", "session_id": "s1"},
+    )
+    s.add_artifacts([art], e.embed([art.text]))
+
+    from memor.hook_server import handle_request
+    req = {
+        "prompt": "how does password hashing work?",
+        "cwd": str(tmp_path / "testproj"),
+        "session_id": "test-cursor-proxied",
+        "cursor_version": "0.43.6",
+    }
+
+    result = handle_request(req, db_path=db_path, embedder=e)
+    ctx = result["hookSpecificOutput"]["additionalContext"]
+    assert ctx != ""
+    assert s.db.execute("SELECT COUNT(*) AS n FROM recall_log").fetchone()["n"] >= 1
+
+
 def test_hook_copilot_never_skips_for_proxy(tmp_path, monkeypatch):
     """Copilot should never skip due to proxy flag."""
     import memor.config as cfg

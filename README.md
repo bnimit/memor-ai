@@ -50,7 +50,7 @@ memor dashboard
 Memory works out of the box via hooks. To also compress tool payloads and track token savings:
 
 ```bash
-memor install-proxy --agent claude   # or: codex, goose, kimi
+memor install-proxy --agent claude   # or: codex, goose, kimi, cursor, cline, opencode
 ```
 
 This points your agent at a local proxy on `127.0.0.1:8421`, compresses latest-turn tool content before it reaches the provider, and logs savings to the dashboard. For proxied agents, hooks skip inject (memory comes from the proxy path); Cursor and Copilot always use hooks only.
@@ -60,6 +60,30 @@ This points your agent at a local proxy on `127.0.0.1:8421`, compresses latest-t
 To revert: `memor uninstall-proxy --agent claude`
 
 > **Codex support is experimental.** The proxy implements the OpenAI Chat Completions API (`/v1/chat/completions`). Codex CLI may instead use the Responses API (`/v1/responses`) depending on version and model, in which case requests will not route through the proxy and you will see no savings. Memory via hooks is unaffected. Track it in [#26](https://github.com/bnimit/memor-ai/issues/26).
+
+### Optional: Full Cursor install (recommended)
+
+**Memory alone** still only needs `memor install-hook` (Claude covers Cursor). For token savings on Cursor, one command enables the full stack:
+
+```bash
+memor install-proxy --agent cursor
+```
+
+That flow:
+
+1. Explains what will be installed, then asks you to confirm  
+2. Installs memory hooks (if missing) + Shell compress hooks + BYOK on `:8421`  
+
+Flags: `--yes` to accept without prompting.
+
+```bash
+memor uninstall-proxy --agent cursor   # restore original settings
+memor service restart                  # recycle services after an upgrade
+```
+
+Compression reaches Cursor through the **Shell compress hooks**, which crush terminal
+and tool output before Cursor ingests it. Subscription Composer traffic is not
+intercepted — see [Why no Composer interception](#why-no-composer-interception).
 
 ---
 
@@ -135,10 +159,12 @@ Memor runs two complementary local paths — combine them or use either alone:
 |-------|----------------|-----------------|
 | **Claude Code** | Yes | Yes — `memor install-proxy --agent claude` |
 | **Codex CLI** | Yes | Experimental — `memor install-proxy --agent codex` (Chat Completions only) |
-| **Cursor** | Yes | No — hooks only |
+| **Cursor** | Yes | BYOK proxy + Shell compress hooks |
 | **Copilot CLI** | Yes | No — hooks only |
 | **Kimi CLI** | Yes | Yes — `memor install-proxy --agent kimi` |
 | **Goose** | Yes | Yes — `memor install-proxy --agent goose` (auto-detects common Desktop custom providers like `custom_deepseek`; use `--upstream-url` if yours is custom) |
+| **Cline** | No | Yes — `memor install-proxy --agent cline` |
+| **OpenCode** | No | Yes — `memor install-proxy --agent opencode` |
 
 ### Hook install details
 
@@ -233,14 +259,11 @@ This means your coding habits and preferences follow you into new projects from 
 memor dashboard
 ```
 
-Dark fintech-inspired UI showing:
-- **System Status** — metric cards for proxy / hook / daemon / proxied agents, plus token savings and compressed content types when the ledger has data
-- **Memory Bank** — session chunks, memories, projects, globals, total recalls — with sparkline bars
-- **Agent breakdown** — per-agent recall stats (Claude, Cursor, Codex, Copilot, Kimi, Goose) with hit rates
-- **Daily recall activity** — stacked bar chart of hits vs misses over time
-- **Session efficiency** — real token savings measured from API usage data (avg tokens/turn with vs without recall)
-- **Per-project breakdown** — artifact counts, token totals, last activity
-- **Recent recalls** — every hook event with agent badge, scores, latency, and status
+Trading-desk style UI with an **Overview** plus per-agent panes (Claude, Cursor, Codex, Copilot, Kimi, Goose):
+
+- **Overview** — status chips (proxy / hook / daemon), portfolio KPIs, cumulative tokens-saved equity curve, recall activity, efficiency, projects, quality, recent recalls
+- **Agent desks** — click a tab (or a desk tile) for that environment’s hit rate, latency, proxy savings %, recall volume chart, savings curve, and filtered recalls
+- **Proxy savings by agent** — every agent routed through the proxy
 
 ---
 
@@ -275,10 +298,11 @@ memor help                           Print the full manual
 memor install-hook                   Install hook + download model (interactive agent picker)
   --agent claude|codex|copilot|kimi|goose   Choose agent directly
 memor install-proxy                  Install local proxy for token savings
-  --agent claude|codex               Claude Code, or Codex CLI (experimental)
+  --agent claude|codex|goose|kimi|cursor|cline|opencode
 memor uninstall-proxy                Restore original agent config
-  --agent claude|codex               Point the agent back at its provider
 memor proxy                          Run proxy server in foreground (localhost:8421)
+memor install-cursor-compress-hooks  Cursor Shell output compression (subscription)
+memor uninstall-cursor-compress-hooks
 memor daemon                         Auto-ingest + distill (Claude, Kimi, Goose)
 memor backfill                       One-shot ingest of past local agent sessions
 memor dashboard                      Web dashboard on localhost:8420
@@ -366,6 +390,18 @@ skill/recall.py                Standalone recall script
 - **The proxy binds localhost only** (`127.0.0.1:8421`) and accepts no remote connections.
 - **It makes the outbound call your agent would have made anyway**, to the same provider endpoint, carrying your existing provider API key. Keys are forwarded, never stored or logged.
 - **It rewrites request bodies** — compressing latest-turn tool payloads — so what the provider receives is not byte-identical to what your agent sent. Originals stay local in the CCR store.
+
+### Why no Composer interception
+
+Memor does **not** MITM Cursor's subscription traffic. An earlier attempt was measured and
+abandoned: with a local proxy in Cursor's path covering both its Node and Chromium network
+stacks, only control-plane traffic (telemetry, dashboard, model lists) appeared — no
+conversation RPC. And the exchange that actually gets billed, Cursor's servers to the model,
+never touches your machine at all, so any local savings figure would be unverifiable.
+
+Compression for Cursor therefore happens where it can be measured honestly: the Shell
+compress hooks crush tool output *before* Cursor ingests it. No CA trust, no TLS
+interception, nothing to break when Cursor updates.
 
 The only other optional network paths are the LLM-based abstractive distiller (requires explicitly setting `ANTHROPIC_API_KEY`) and the API embedding backend — both off by default.
 
