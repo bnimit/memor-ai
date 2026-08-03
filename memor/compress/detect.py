@@ -11,11 +11,19 @@ _LINE_INITIAL_MARKERS = (
     "package ", "func ", "fn ", "impl ", "pub ", "type ", "struct ",
     "public ", "private ", "protected ", "static ", "namespace ", "using ",
     "#include", "#define", "#!", "<!DOCTYPE", "<html", "<script", "<style",
-    "```", "---", "if (", "for (", "while (", "switch (", "} else",
+    "```", "if (", "for (", "while (", "switch (", "} else",
 )
 
 # Substrings so syntactically distinctive that prose effectively never has them.
 _STRONG_MARKERS = ("from __future__", "#include <", "=> {", "});", "</", "/>")
+
+# pytest / go test / jest / rspec result lines.
+_TEST_RESULT = re.compile(
+    r"\b(PASSED|FAILED|SKIPPED|XFAIL|XPASS)\b"
+    r"|^\s*---\s*(PASS|FAIL|SKIP)\b"      # go test: "--- PASS: TestThing (0.00s)"
+    r"|^\s*(ok|FAIL)\s+\S"                # go test package summary lines
+    r"|^\s*[✓✗√×]\s"                      # jest / mocha / vitest
+)
 
 _SHEBANG = re.compile(r"^#!\s*/")
 # A closing brace or semicolon ending a line is a strong structural code signal.
@@ -84,6 +92,11 @@ def detect_content_type(text: str) -> str:
     if search_matches >= 3:
         return "search"
 
+    # Test-runner output before the source guard: `--- PASS: TestX (0.00s)` is
+    # unambiguous, but its trailing `)` reads as code to the structural check.
+    if sum(1 for line in lines if _TEST_RESULT.search(line)) >= 3:
+        return "log"
+
     # Guard source code before the log heuristic. Code trips it constantly:
     # `var(--warn)` in CSS matches \bWARN\b, and any file with timestamps in
     # strings clears the threshold.
@@ -94,11 +107,11 @@ def detect_content_type(text: str) -> str:
     log_indicators = 0
     log_pattern = re.compile(r'\b(INFO|DEBUG|WARN(ING)?|ERROR|FATAL|CRITICAL|TRACE)\b', re.IGNORECASE)
     timestamp_pattern = re.compile(r'\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}')
-    
+
     for line in lines:
         if log_pattern.search(line) or timestamp_pattern.search(line):
             log_indicators += 1
             if log_indicators >= 3:
                 return "log"
-    
+
     return "text"

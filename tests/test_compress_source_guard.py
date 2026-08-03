@@ -143,3 +143,38 @@ def test_real_logs_still_compress():
     assert detect_content_type(text) == "log"
     result = compress_text(text)
     assert result.tokens_after < result.tokens_before * 0.5
+
+
+# --- detector coverage gaps that used to compress by 0% ---------------------
+
+
+@pytest.mark.parametrize(
+    "name,text",
+    [
+        ("pytest", "\n".join(f"tests/t.py::test_{i} PASSED" for i in range(300))),
+        ("go test", "\n".join(f"--- PASS: TestThing{i} (0.00s)" for i in range(200))),
+        ("jest", "\n".join(f"  ✓ renders row {i} (2 ms)" for i in range(200))),
+    ],
+)
+def test_test_runner_output_compresses(name, text):
+    """Test output is the most repetitive payload an agent reads."""
+    assert detect_content_type(text) == "log", name
+    result = compress_text(text)
+    assert result.tokens_after < result.tokens_before * 0.2, name
+
+
+def test_test_failures_survive_compression():
+    """Dropping the one FAILED line would make the compression actively harmful."""
+    lines = [
+        "tests/t.py::test_%d %s" % (i, "FAILED" if i == 150 else "PASSED")
+        for i in range(300)
+    ]
+    out = compress_text("\n".join(lines)).text
+    assert "FAILED" in out
+    assert "test_150" in out
+
+
+def test_go_test_output_not_stolen_by_source_guard():
+    """Regression: `--- PASS: ... (0.00s)` read as code via its trailing paren."""
+    text = "\n".join(f"--- PASS: TestThing{i} (0.00s)" for i in range(200))
+    assert detect_content_type(text) != "source"
