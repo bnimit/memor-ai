@@ -185,6 +185,21 @@
   }
   .chart-title { font-size: 13px; font-weight: 600; }
   .chart-meta { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .rw-body { padding: 4px 2px 2px; }
+  .rw-detail { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+  .rw-strata { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 4px; }
+  .rw-cell { font-family: var(--mono); font-size: 11px; padding: 6px 9px;
+             border: 1px solid var(--border); border-radius: 6px; min-width: 92px; }
+  .rw-cell .k { color: var(--text-muted); display: block; font-size: 10px; }
+  .rw-cell .v { font-size: 13px; }
+  .rw-cell.pos .v { color: var(--ok); }
+  .rw-cell.neg .v { color: var(--warn); }
+  .rw-cell.na .v { color: var(--text-muted); }
+  .rw-note { font-size: 11px; color: var(--text-muted); margin-top: 10px;
+             line-height: 1.5; border-top: 1px solid var(--border); padding-top: 8px; }
+  .rw-verdict-null { color: var(--text-dim); }
+  .rw-verdict-good { color: var(--ok); }
+  .rw-verdict-bad { color: var(--warn); }
   .chart-big {
     font-family: var(--mono); font-size: 22px; font-weight: 600;
     color: var(--ok); margin-bottom: 4px;
@@ -406,6 +421,23 @@
           <div class="chart-meta">30d equity curve · all proxied agents</div>
         </div>
         <div class="chart-canvas tall" id="savings-equity"></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="chart-panel" id="recall-worth-panel">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Does recall reduce work?</div>
+            <div class="chart-big" id="rw-headline">–</div>
+          </div>
+          <div class="chart-meta" id="rw-meta">episode-level · tool calls per task</div>
+        </div>
+        <div class="rw-body">
+          <div class="rw-detail" id="rw-detail">measuring…</div>
+          <div class="rw-strata" id="rw-strata"></div>
+          <div class="rw-note" id="rw-note"></div>
+        </div>
       </div>
     </section>
 
@@ -1293,12 +1325,76 @@
     } catch (e) { console.warn(e); }
   }
 
+  // Reports what recall actually does per episode — including when the answer
+  // is "nothing measurable". Showing a null is the point: an inferred savings
+  // number nobody can verify is worse than an honest blank.
+  async function loadRecallWorth() {
+    var headline = document.getElementById('rw-headline');
+    var detail = document.getElementById('rw-detail');
+    var strataEl = document.getElementById('rw-strata');
+    var noteEl = document.getElementById('rw-note');
+    if (!headline) return;
+
+    var data;
+    try {
+      data = await api('/api/recall-worth');
+    } catch (e) {
+      headline.textContent = '–';
+      detail.textContent = 'measurement unavailable';
+      return;
+    }
+    var o = (data && data.overall) || {};
+    var withN = (o.with_recall && o.with_recall.n) || 0;
+    var withoutN = (o.without_recall && o.without_recall.n) || 0;
+
+    document.getElementById('rw-meta').textContent =
+      (o.usable || 0).toLocaleString() + ' episodes · tool calls per task';
+
+    if (o.verdict === 'saves' || o.verdict === 'costs') {
+      var d = o.tool_call_delta_pct;
+      headline.textContent = (d > 0 ? '−' : '+') + Math.abs(d).toFixed(1) + '% work';
+      headline.className = 'chart-big ' + (o.verdict === 'saves' ? 'rw-verdict-good' : 'rw-verdict-bad');
+      detail.textContent = (o.verdict === 'saves'
+        ? 'Episodes with recall used measurably fewer tool calls, and the direction held across prompt sizes.'
+        : 'Episodes with recall used measurably MORE tool calls, consistently across prompt sizes.');
+    } else if (o.verdict === 'no_effect') {
+      headline.textContent = 'no measurable effect';
+      headline.className = 'chart-big rw-verdict-null';
+      detail.textContent = 'Recall neither reduced nor increased work by an amount this data can '
+        + 'distinguish from noise. The aggregate difference reverses sign across prompt sizes, '
+        + 'which means it reflects which prompts receive recall rather than what recall does.';
+    } else {
+      headline.textContent = 'not enough data';
+      headline.className = 'chart-big rw-verdict-null';
+      detail.textContent = 'Needs at least ' + (o.min_per_arm || 20)
+        + ' episodes in each group. Have ' + withN + ' with recall, ' + withoutN + ' without.';
+    }
+
+    strataEl.innerHTML = '';
+    (data.strata || []).forEach(function(c) {
+      var cls = 'rw-cell na', val = 'n/a';
+      if (c.scored && c.tool_call_delta_pct !== null) {
+        cls = 'rw-cell ' + (c.tool_call_delta_pct > 0 ? 'pos' : 'neg');
+        val = (c.tool_call_delta_pct > 0 ? '−' : '+')
+            + Math.abs(c.tool_call_delta_pct).toFixed(0) + '%';
+      }
+      var el = document.createElement('div');
+      el.className = cls;
+      el.innerHTML = '<span class="k">' + c.prompt_chars + ' chars</span>'
+        + '<span class="v">' + val + '</span>';
+      el.title = c.n_with + ' with recall / ' + c.n_without + ' without';
+      strataEl.appendChild(el);
+    });
+
+    noteEl.textContent = data.confound || '';
+  }
+
   async function refreshOverview() {
     await Promise.allSettled([
       loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(),
       loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(),
       loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(),
-      loadProxySavingsByAgent(),
+      loadProxySavingsByAgent(), loadRecallWorth(),
     ]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
   }

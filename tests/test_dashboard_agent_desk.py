@@ -99,3 +99,25 @@ def test_dashboard_html_has_desk_tabs(tmp_path):
     # The Cursor wire MITM was removed — no chip, colour, or label may survive.
     assert "cursor-wire" not in html
     assert "cursor_wire" not in html
+
+
+def test_recall_worth_endpoint(tmp_path):
+    """The episode meter must never take the dashboard down, even with no data."""
+    app, _ = _seed(tmp_path)
+    client = TestClient(app)
+    r = client.get("/api/recall-worth")
+    assert r.status_code == 200
+    data = r.json()
+    assert "overall" in data
+    assert data["overall"]["verdict"] in {
+        "insufficient_data", "no_effect", "saves", "costs",
+    }
+
+
+def test_dashboard_html_has_recall_worth_panel(tmp_path):
+    app, _ = _seed(tmp_path)
+    html = TestClient(app).get("/").text
+    assert "recall-worth-panel" in html
+    assert "Does recall reduce work?" in html
+    # A null must be presentable, not hidden.
+    assert "no measurable effect" in html
