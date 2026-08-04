@@ -903,6 +903,51 @@ def recall_worth_cmd(
         typer.echo(line)
 
 
+@app.command("compression-worth")
+def compression_worth_cmd(
+    days: int = typer.Option(30, "--days", help="Window to report over."),
+    db: str = typer.Option(
+        str(Path.home() / ".memor" / "memor.db"), "--db", help="Memor DB path."
+    ),
+):
+    """Report realized compression savings from the ledger, not from samples.
+
+    A build log compresses 97%, but if most requests carry nothing compressible
+    the realized figure is far lower. This reports what actually happened on
+    your traffic.
+    """
+    from memor.compression_worth import report
+
+    for line in report(_db_path(db), days=days):
+        typer.echo(line)
+
+
+@app.command("compress-older")
+def compress_older_cmd(
+    enable: bool = typer.Option(
+        None, "--enable/--disable", help="Turn older-turn compression on or off."
+    ),
+):
+    """Show or set whether payloads the agent has moved past get compressed.
+
+    Off by default. The newest read of each file is always left byte-exact;
+    only stale reads are skeletonized. Measure with `memor compression-worth`
+    before leaving this on.
+    """
+    from memor.config import is_compress_older_turns, set_compress_older_turns
+
+    if enable is None:
+        state = "on" if is_compress_older_turns() else "off"
+        typer.echo(f"compress_older_turns: {state}")
+        typer.echo("  newest read of each file is always left uncompressed")
+        typer.echo("  override for one run: MEMOR_COMPRESS_OLDER=1")
+        return
+    set_compress_older_turns(enable)
+    typer.echo(f"compress_older_turns: {'on' if enable else 'off'}")
+    if enable:
+        typer.echo("Restart the proxy to pick it up: memor service restart")
+
+
 @app.command("dashboard")
 def dashboard(port: int = typer.Option(8420, help="Port to serve on"),
               no_open: bool = typer.Option(False, help="Don't open browser"),

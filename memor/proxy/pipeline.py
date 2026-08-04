@@ -3,7 +3,13 @@ from dataclasses import dataclass
 from hashlib import blake2b
 import time
 from memor.compress import compress_text
-from memor.proxy.adapters import extract_latest_tool_payloads, apply_payload_text
+from memor.compress.code import looks_like_python, skeletonize_python
+from memor.compress.types import CompressResult
+from memor.proxy.adapters import (
+    apply_payload_text,
+    extract_all_tool_payloads,
+    extract_latest_tool_payloads,
+)
 from memor.store.sqlite_store import SqliteStore
 from memor.tokencount import count_tokens
 
@@ -44,6 +50,28 @@ def ccr_id_for(text: str) -> str:
     ]
 
 
+def _compress_payload(payload, *, skeleton_ok: bool) -> CompressResult:
+    """Compress one payload, skeletonizing code the agent has moved past.
+
+    The newest read of a file is left byte-exact: it is the one an agent is
+    most likely about to edit, and editing against elided lines is the failure
+    this whole design exists to avoid. Older reads are fair game — the agent has
+    moved on, and they are what the trajectory resends on every subsequent step.
+    """
+    if skeleton_ok and not payload.is_latest_for_file:
+        if looks_like_python(payload.text, payload.file_path):
+            skeleton = skeletonize_python(payload.text)
+            if skeleton != payload.text:
+                return CompressResult(
+                    text=skeleton,
+                    content_type="code",
+                    tokens_before=count_tokens(payload.text),
+                    tokens_after=count_tokens(skeleton),
+                    passthrough=False,
+                )
+    return compress_text(payload.text)
+
+
 @dataclass
 class PipelineResult:
     """Result of running the compression pipeline."""
@@ -67,10 +95,19 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
     than the original.
     """
     _maybe_evict(store)
-    
-    # Extract latest tool payloads
-    payloads = extract_latest_tool_payloads(provider, body)
-    
+
+    # Older payloads are where the tokens are: the whole trajectory is resent on
+    # every step, so a file dumped early is re-read on each one. Opt-in until
+    # measured, because it changes what the model sees.
+    from memor.config import is_compress_older_turns
+
+    skeleton_ok = is_compress_older_turns()
+    payloads = (
+        extract_all_tool_payloads(provider, body)
+        if skeleton_ok
+        else extract_latest_tool_payloads(provider, body)
+    )
+
     if not payloads:
         # No payloads to compress
         return PipelineResult(
@@ -91,8 +128,8 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
     success_count = 0
     
     for payload in payloads:
-        result = compress_text(payload.text)
-        
+        result = _compress_payload(payload, skeleton_ok=skeleton_ok)
+
         total_tokens_before += result.tokens_before
         
         # Compression failed or was a no-op: nothing to reference, nothing to save.
