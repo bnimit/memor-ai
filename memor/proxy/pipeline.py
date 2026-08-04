@@ -50,6 +50,21 @@ def ccr_id_for(text: str) -> str:
     ]
 
 
+#: Prefix stamped on a payload this pipeline has already rewritten.
+CCR_MARKER_PREFIX = "[memor:ccr:"
+
+
+def already_compressed(text: str) -> bool:
+    """True when this payload is one we rewrote in an earlier request.
+
+    Once older turns are in scope, a payload compressed in request N reappears
+    in request N+1 carrying its marker. Re-measuring it double-counts: the
+    already-shrunk text lands in ``tokens_before`` and yields nothing, so the
+    realized-savings rate falls the more successfully the compressor works.
+    """
+    return text.lstrip().startswith(CCR_MARKER_PREFIX)
+
+
 def _compress_payload(payload, *, skeleton_ok: bool) -> CompressResult:
     """Compress one payload, skeletonizing code the agent has moved past.
 
@@ -131,6 +146,11 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
     success_count = 0
     
     for payload in payloads:
+        # Our own earlier output. Leave it alone and keep it out of the
+        # denominator, or the rate drops the better the compressor does.
+        if already_compressed(payload.text):
+            continue
+
         result = _compress_payload(payload, skeleton_ok=skeleton_ok)
 
         total_tokens_before += result.tokens_before

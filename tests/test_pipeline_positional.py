@@ -171,3 +171,31 @@ def test_unresolvable_origin_is_never_skeletonized(store, older_enabled):
     ]}
     result = run_pipeline("anthropic", body, store)
     assert _texts(result.body)[0] == BIG_MODULE
+
+
+def test_already_compressed_payloads_are_not_recounted(store, older_enabled):
+    """Our own prior output must not inflate the denominator.
+
+    Once older turns are in scope, a payload compressed in request N reappears
+    in request N+1 with its marker. Re-measuring it makes the realized-savings
+    rate fall the more successfully compression works.
+    """
+    from memor.proxy.pipeline import already_compressed
+
+    marked = "[memor:ccr:deadbeef]\n" + BIG_MODULE
+    body = _body([("t1", "/a.py", marked), ("t2", "/a.py", BIG_MODULE)])
+    result = run_pipeline("anthropic", body, store)
+
+    assert already_compressed(marked)
+    # The marked payload is passed through untouched...
+    assert _texts(result.body)[0] == marked
+    # ...and contributes nothing to the accounting.
+    assert result.tokens_before < len(marked)
+
+
+def test_marker_detection_tolerates_leading_whitespace():
+    from memor.proxy.pipeline import already_compressed
+
+    assert already_compressed("\n  [memor:ccr:abc]\nrest") is True
+    assert already_compressed("def f(): pass") is False
+    assert already_compressed("") is False
