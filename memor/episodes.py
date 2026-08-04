@@ -62,6 +62,27 @@ class Episode:
     def total_tokens(self) -> int:
         return self.context_tokens + self.output_tokens
 
+    @property
+    def cost_units(self) -> float:
+        """Billed tokens weighted by what each kind actually costs.
+
+        Raw token totals are dominated by cache reads, which are the cheapest
+        thing in the request — summing them unweighted makes an episode look
+        expensive when it was mostly cache hits. These are Anthropic's relative
+        rates (cache read 0.1x input, cache write 1.25x, output 5x), so the
+        number tracks spend rather than volume.
+
+        Crucially this counts ``cache_creation`` at full weight, so the cost of
+        re-forming the prompt cache after a rewrite shows up here — the one
+        thing memor's own ledger cannot see.
+        """
+        return (
+            self.input_tokens
+            + self.cache_creation_tokens * 1.25
+            + self.cache_read_tokens * 0.10
+            + self.output_tokens * 5.0
+        )
+
 
 def _epoch(ts) -> float:
     if isinstance(ts, (int, float)):
@@ -263,6 +284,117 @@ def summarize(episodes: list[Episode], *, min_per_arm: int = 20) -> dict:
         "strata": strata,
         "confound": CONFOUND_NOTE,
     }
+
+
+#: Episode complexity bands. A 30-tool episode costs more than a 1-tool episode
+#: for reasons unrelated to compression, so before/after is compared within
+#: bands rather than in aggregate.
+_COMPLEXITY_BANDS = ((0, 1), (1, 4), (4, 12), (12, 10**6))
+
+
+def compare_at(episodes: list[Episode], boundary: float, *, min_per_cell: int = 15) -> dict:
+    """Compare per-episode cost before and after a change, from billed tokens.
+
+    ``boundary`` is a unix timestamp — when the change was switched on. This
+    reads the provider's own usage numbers rather than memor's ledger, so it
+    measures spend rather than what the compressor believed it saved, and it
+    includes cache re-formation cost.
+
+    Compared within complexity bands: if the week after a change happens to
+    contain harder work, an aggregate would attribute that to the change.
+    """
+    before = [e for e in episodes if e.assistant_steps > 0 and e.started_at < boundary]
+    after = [e for e in episodes if e.assistant_steps > 0 and e.started_at >= boundary]
+
+    bands = []
+    for lo, hi in _COMPLEXITY_BANDS:
+        b = [e for e in before if lo <= e.tool_calls < hi]
+        a = [e for e in after if lo <= e.tool_calls < hi]
+        cell = {
+            "tool_calls": f"{lo}-{'+' if hi > 10**5 else hi}",
+            "n_before": len(b),
+            "n_after": len(a),
+            "scored": len(b) >= min_per_cell and len(a) >= min_per_cell,
+            "cost_delta_pct": None,
+            "median_cost_before": median(e.cost_units for e in b) if b else 0,
+            "median_cost_after": median(e.cost_units for e in a) if a else 0,
+        }
+        if cell["scored"]:
+            base = cell["median_cost_before"]
+            if base:
+                cell["cost_delta_pct"] = round(
+                    (base - cell["median_cost_after"]) / base * 100, 1
+                )
+        bands.append(cell)
+
+    scored = [c for c in bands if c["scored"] and c["cost_delta_pct"] is not None]
+    overall = None
+    if before and after:
+        mb = median(e.cost_units for e in before)
+        if mb:
+            overall = round((mb - median(e.cost_units for e in after)) / mb * 100, 1)
+
+    if len(scored) < 2:
+        verdict = "insufficient_data"
+    elif len({c["cost_delta_pct"] > 0 for c in scored}) > 1:
+        verdict = "no_effect"
+    elif overall is None or abs(overall) < EFFECT_THRESHOLD_PCT:
+        verdict = "no_effect"
+    else:
+        verdict = "cheaper" if overall > 0 else "dearer"
+
+    return {
+        "boundary": boundary,
+        "n_before": len(before),
+        "n_after": len(after),
+        "cost_delta_pct": overall,
+        "bands": bands,
+        "verdict": verdict,
+        "confound": (
+            "Observational: traffic differs week to week. Compared within "
+            "complexity bands, but only a flag that flips daily would control "
+            "for drift properly."
+        ),
+    }
+
+
+COST_VERDICT_TEXT = {
+    "insufficient_data": "not enough episodes on both sides yet",
+    "no_effect": "no measurable change in cost",
+    "cheaper": "episodes cost less after the change",
+    "dearer": "episodes cost MORE after the change",
+}
+
+
+def format_comparison(result: dict) -> list[str]:
+    lines = ["memor — cost per episode, before vs after", "=" * 58]
+    lines.append(f"episodes before={result['n_before']:,}  after={result['n_after']:,}")
+    lines.append("")
+    lines.append(f"{'tool calls':<14}{'n before':>10}{'n after':>9}{'cost delta':>13}")
+    for c in result["bands"]:
+        delta = (
+            f"{c['cost_delta_pct']:+.1f}%" if c["cost_delta_pct"] is not None
+            else "(too few)"
+        )
+        lines.append(
+            f"  {c['tool_calls']:<12}{c['n_before']:>10,}{c['n_after']:>9,}{delta:>13}"
+        )
+    lines.append("")
+    lines.append("=" * 58)
+    lines.append(f"VERDICT: {COST_VERDICT_TEXT[result['verdict']]}")
+    if result["cost_delta_pct"] is not None:
+        lines.append(
+            f"  aggregate: {result['cost_delta_pct']:+.1f}% "
+            "(positive = cheaper after)"
+        )
+    if result["verdict"] == "no_effect":
+        lines.append("  Direction is not consistent across complexity bands.")
+    lines.append(f"  {result['confound']}")
+    lines.append(
+        "  Cost-weighted from the provider's own usage numbers, so cache"
+    )
+    lines.append("  re-formation is included rather than invisible.")
+    return lines
 
 
 VERDICT_TEXT = {

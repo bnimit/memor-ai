@@ -94,8 +94,18 @@ def is_compress_older_turns() -> bool:
 
 
 def set_compress_older_turns(enabled: bool) -> None:
+    """Flip the flag and stamp when, so the change has a measurable boundary.
+
+    Without a recorded instant there is nothing to compare before and after
+    against, and the whole point of shipping this off-by-default is that it has
+    to earn its default from data.
+    """
+    import time
+
     cfg = load_config()
     cfg["compress_older_turns"] = bool(enabled)
+    if enabled and not cfg.get("compress_started_at"):
+        cfg["compress_started_at"] = time.time()
     save_config(cfg)
 
 
