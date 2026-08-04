@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, re, sqlite3, struct
+import json, re, sqlite3, struct, sys
 from pathlib import Path
 import sqlite_vec
 from memor.types import Artifact, Scope, SessionUsage
@@ -43,8 +43,13 @@ class SqliteStore:
     def __init__(self, path: str, dim: int):
         self.dim = dim
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        # The daemon ingests continuously against this same file while the proxy
+        # writes to it from the request path. Python's 5s default was not enough
+        # under real load — 356 "database is locked" errors in one session, each
+        # of which discarded a completed compression.
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=30.0)
         self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA busy_timeout=30000")
         self.db.row_factory = sqlite3.Row
         self.db.enable_load_extension(True)
         sqlite_vec.load(self.db)
@@ -996,20 +1001,32 @@ class SqliteStore:
             return "full"
         return "extractive"
 
-    def record_proxy_savings(self, row: dict) -> int:
+    def record_proxy_savings(self, row: dict) -> int | None:
+        """Append a savings row. Never raises — this is bookkeeping.
+
+        It runs on the proxy's request path while the daemon writes to the same
+        file. A lock here used to propagate out of the pipeline and trip the
+        shim's fail-open, so a metrics write failing discarded the compression
+        that had already succeeded. Losing a ledger row costs a statistic;
+        losing the rewrite costs the user tokens.
+        """
         content_types_json = json.dumps(row.get("content_types", {}))
-        cur = self.db.execute(
-            "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
-            "tokens_before, tokens_after, content_types, passthrough, "
-            "upstream_input_tokens, upstream_cache_read_tokens, upstream_output_tokens) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (row.get("timestamp"), row.get("agent"), row.get("provider"),
-             row.get("session_id"), row.get("tokens_before"), row.get("tokens_after"),
-             content_types_json, row.get("passthrough", 0),
-             row.get("upstream_input_tokens"), row.get("upstream_cache_read_tokens"),
-             row.get("upstream_output_tokens")))
-        self.db.commit()
-        return cur.lastrowid
+        try:
+            cur = self.db.execute(
+                "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
+                "tokens_before, tokens_after, content_types, passthrough, "
+                "upstream_input_tokens, upstream_cache_read_tokens, upstream_output_tokens) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (row.get("timestamp"), row.get("agent"), row.get("provider"),
+                 row.get("session_id"), row.get("tokens_before"), row.get("tokens_after"),
+                 content_types_json, row.get("passthrough", 0),
+                 row.get("upstream_input_tokens"), row.get("upstream_cache_read_tokens"),
+                 row.get("upstream_output_tokens")))
+            self.db.commit()
+            return cur.lastrowid
+        except sqlite3.Error as exc:
+            print(f"[memor] savings ledger write skipped: {exc}", file=sys.stderr)
+            return None
 
     def get_proxy_savings_summary(self, days: int = 30, agent: str | None = None) -> dict:
         import time as _time

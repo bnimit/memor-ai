@@ -171,8 +171,19 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
             total_tokens_after += result.tokens_before
             continue
         
+        # The marker is a promise that the original can be fetched back through
+        # the retrieve MCP tool. If the blob cannot be stored, do not make the
+        # promise — leave the payload verbatim rather than hand out a reference
+        # to nothing. Never fatal: a storage problem must not discard the whole
+        # request's compression.
+        try:
+            store.ccr_put(ccr_id, payload.text, result.content_type, time.time())
+        except Exception:
+            compressed_payloads.append((payload.path, payload.text, None))
+            total_tokens_after += result.tokens_before
+            continue
+
         success_count += 1
-        store.ccr_put(ccr_id, payload.text, result.content_type, time.time())
         ccr_ids.append(ccr_id)
         compressed_payloads.append((payload.path, marked_text, result.content_type))
         total_tokens_after += marked_tokens

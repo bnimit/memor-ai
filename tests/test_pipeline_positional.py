@@ -199,3 +199,36 @@ def test_marker_detection_tolerates_leading_whitespace():
     assert already_compressed("\n  [memor:ccr:abc]\nrest") is True
     assert already_compressed("def f(): pass") is False
     assert already_compressed("") is False
+
+
+def test_a_locked_ledger_does_not_discard_compression(store, older_enabled, monkeypatch):
+    """Bookkeeping failure must not cost the user the rewrite.
+
+    Observed live: 356 'database is locked' errors while the daemon ingested,
+    each one propagating out of the pipeline into the shim's fail-open, so 219
+    consecutive requests forwarded uncompressed despite compression succeeding.
+    """
+    import sqlite3
+
+    def boom(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "record_proxy_savings", boom)
+    body = _body([("t1", "/a.py", BIG_MODULE), ("t2", "/a.py", BIG_MODULE)])
+    result = run_pipeline("anthropic", body, store)
+    assert result.tokens_after < result.tokens_before
+
+
+def test_unstorable_blob_leaves_the_payload_verbatim(store, older_enabled, monkeypatch):
+    """A marker promises the original is retrievable; do not promise falsely."""
+    import sqlite3
+
+    def boom(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "ccr_put", boom)
+    body = _body([("t1", "/a.py", BIG_MODULE), ("t2", "/a.py", BIG_MODULE)])
+    result = run_pipeline("anthropic", body, store)
+    for text in _texts(result.body):
+        assert "[memor:ccr:" not in text, "dangling marker with no stored blob"
+    assert result.passthrough is True
