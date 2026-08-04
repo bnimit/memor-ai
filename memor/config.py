@@ -104,8 +104,13 @@ def set_compress_older_turns(enabled: bool) -> None:
 
     cfg = load_config()
     cfg["compress_older_turns"] = bool(enabled)
-    if enabled and not cfg.get("compress_started_at"):
+    if enabled:
+        # Always re-stamp. Keeping an older value would date the boundary to a
+        # run that has since ended — and a cost comparison split at a moment
+        # when the current build was not yet deployed is confidently wrong.
         cfg["compress_started_at"] = time.time()
+    else:
+        cfg.pop("compress_started_at", None)
     save_config(cfg)
 
 

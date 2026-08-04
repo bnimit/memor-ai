@@ -30,3 +30,31 @@ def test_defaults(tmp_path, monkeypatch):
     assert cfg.proxy_port() == 8421
     assert cfg.ccr_ttl_seconds() == 7 * 86400
     assert cfg.ccr_max_bytes() == 2 * 1024**3
+
+
+def test_enabling_compression_stamps_a_fresh_boundary():
+    """The timestamp marks when THIS run began, not some earlier one."""
+    import time
+
+    from memor.config import load_config, set_compress_older_turns
+
+    set_compress_older_turns(True)
+    first = load_config()["compress_started_at"]
+    assert abs(first - time.time()) < 5
+
+    set_compress_older_turns(False)
+    assert "compress_started_at" not in load_config()
+
+    set_compress_older_turns(True)
+    second = load_config()["compress_started_at"]
+    assert second >= first, "re-enabling must re-stamp, not reuse a stale boundary"
+
+
+def test_disabling_clears_the_boundary():
+    from memor.config import load_config, set_compress_older_turns
+
+    set_compress_older_turns(True)
+    set_compress_older_turns(False)
+    cfg = load_config()
+    assert cfg["compress_older_turns"] is False
+    assert cfg.get("compress_started_at") is None
