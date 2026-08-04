@@ -247,3 +247,54 @@ def test_looks_like_python_uses_extension_when_available():
 def test_looks_like_python_falls_back_to_content():
     assert looks_like_python("def f():\n    return 1\n") is True
     assert looks_like_python("hello world") is False
+
+
+# --- the line-number gutter agent readers add --------------------------------
+
+
+def _gutter(src: str) -> str:
+    return "\n".join(f"{i+1}\t{l}" for i, l in enumerate(src.split("\n")))
+
+
+def test_gutter_is_detected_and_split():
+    from memor.compress.code import split_line_gutter
+
+    clean, numbers = split_line_gutter(_gutter(SAMPLE))
+    assert clean == SAMPLE
+    assert numbers[0] == "1"
+
+
+def test_plain_source_is_not_mistaken_for_a_gutter():
+    from memor.compress.code import split_line_gutter
+
+    clean, numbers = split_line_gutter(SAMPLE)
+    assert numbers is None and clean == SAMPLE
+
+
+def test_gutter_prefixed_python_actually_compresses():
+    """Regression: Read output is line-numbered, so ast.parse rejected every
+    real payload and the compressor silently did nothing."""
+    numbered = _gutter(SAMPLE)
+    out = skeletonize_python(numbered)
+    assert out != numbered
+    assert len(out) < len(numbered)
+
+
+def test_original_line_numbers_are_preserved():
+    """Numbering must stay true to the file, not be resequenced."""
+    src = (REPO / "memor/service.py").read_text()
+    out = skeletonize_python(_gutter(src))
+    first = out.split("\n")[0]
+    assert first.startswith("1\t")
+    # A surviving later line keeps its real number, not a compacted one.
+    kept = [l for l in out.split("\n") if l.split("\t")[0].isdigit()]
+    numbers = [int(l.split("\t")[0]) for l in kept]
+    assert numbers == sorted(numbers)
+    assert max(numbers) > len(kept), "numbers were resequenced, not preserved"
+
+
+def test_placeholders_carry_no_line_number():
+    out = skeletonize_python(_gutter(SAMPLE))
+    for line in out.split("\n"):
+        if "lines omitted" in line:
+            assert not line.split("\t")[0].strip().isdigit()

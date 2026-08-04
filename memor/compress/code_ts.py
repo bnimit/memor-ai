@@ -138,7 +138,14 @@ def skeletonize(source: str, language: str) -> str:
     except Exception:
         return source
 
-    data = source.encode("utf-8", "surrogatepass")
+    # Agent readers prefix every line with its number and a tab. Tree-sitter is
+    # error-tolerant so it limps along, but every prefixed line reads as a parse
+    # error and most structure is missed — Go scored 47% against 66% on clean
+    # source. Strip the gutter, parse real code, put the numbers back.
+    from memor.compress.code import restore_gutter, split_line_gutter
+
+    clean, numbers = split_line_gutter(source)
+    data = clean.encode("utf-8", "surrogatepass")
     try:
         tree = parser.parse(data)
     except Exception:
@@ -172,4 +179,4 @@ def skeletonize(source: str, language: str) -> str:
         return source
     if _error_count(after.root_node) > before_errors:
         return source
-    return skeleton
+    return restore_gutter(clean, skeleton, numbers) if numbers else skeleton

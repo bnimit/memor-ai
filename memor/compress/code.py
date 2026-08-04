@@ -22,6 +22,7 @@ compression for determinism and speed.
 from __future__ import annotations
 
 import ast
+import re
 
 #: Functions with bodies at or below this many lines are left alone — the
 #: placeholder would not pay for itself.
@@ -101,12 +102,86 @@ def _collect_regions(tree: ast.AST) -> list[tuple[int, int, str]]:
     return regions
 
 
+#: Agent file readers prefix each line with its number and a tab. The result is
+#: not valid source in any language, so a strict parser rejects the whole file
+#: and the compressor silently does nothing — which is exactly what was
+#: happening to every Python payload in real traffic.
+_GUTTER = re.compile(r"^(\s*\d+)\t")
+
+
+def split_line_gutter(source: str) -> tuple[str, list[str] | None]:
+    """Separate a line-number gutter from the code, if one is present.
+
+    Returns ``(code, numbers)``; ``numbers`` is None when there is no gutter.
+    Requires most lines to match so a stray "1\\tfoo" in real source does not
+    trigger it.
+    """
+    lines = source.split("\n")
+    matches = [_GUTTER.match(ln) for ln in lines]
+    hits = sum(1 for m in matches if m)
+    substantive = sum(1 for ln in lines if ln.strip())
+    if not substantive or hits < substantive * 0.8:
+        return source, None
+
+    numbers: list[str] = []
+    code: list[str] = []
+    for ln, m in zip(lines, matches):
+        if m:
+            numbers.append(m.group(1))
+            code.append(ln[m.end():])
+        else:
+            numbers.append("")
+            code.append(ln)
+    return "\n".join(code), numbers
+
+
+def _apply_gutter(rendered: list[tuple[int | None, str]], numbers: list[str]) -> str:
+    """Re-attach original line numbers to the lines that survived.
+
+    Numbering stays true to the source rather than being resequenced, so a line
+    the agent sees as 412 really is line 412 in the file. Placeholders get no
+    number — they stand for a range, not a line.
+    """
+    out = []
+    for idx, text in rendered:
+        if idx is None or idx >= len(numbers) or not numbers[idx]:
+            out.append(text)
+        else:
+            out.append(f"{numbers[idx]}\t{text}")
+    return "\n".join(out)
+
+
+def restore_gutter(clean: str, skeleton: str, numbers: list[str]) -> str:
+    """Re-attach line numbers to a skeleton produced from gutter-stripped code.
+
+    Used by parsers that rebuild text rather than track line indices. Walks both
+    sides in order: a skeleton line that matches the next unconsumed original
+    keeps that original's number, and anything else (a placeholder) gets none.
+    """
+    original = clean.split("\n")
+    out: list[str] = []
+    cursor = 0
+    for line in skeleton.split("\n"):
+        probe = cursor
+        while probe < len(original) and original[probe] != line:
+            probe += 1
+        if probe < len(original):
+            number = numbers[probe] if probe < len(numbers) else ""
+            out.append(f"{number}\t{line}" if number else line)
+            cursor = probe + 1
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def skeletonize_python(source: str) -> str:
     """Return a structure-preserving skeleton, or the input if that is not safe."""
     if not source.strip():
         return source
+
+    code, numbers = split_line_gutter(source)
     try:
-        tree = ast.parse(source)
+        tree = ast.parse(code)
     except (SyntaxError, ValueError, RecursionError):
         return source
 
@@ -114,31 +189,31 @@ def skeletonize_python(source: str) -> str:
     if not regions:
         return source
 
-    lines = source.split("\n")
+    lines = code.split("\n")
     drop: dict[int, tuple[int, str]] = {}
     for start, end, indent in regions:
         drop[start] = (end, indent)
 
-    out: list[int | str] = []
+    rendered: list[tuple[int | None, str]] = []
     i = 0
     while i < len(lines):
         if i in drop:
             end, indent = drop[i]
-            omitted = end - i
-            out.append(f"{indent}{PLACEHOLDER.format(n=omitted)}")
+            rendered.append((None, f"{indent}{PLACEHOLDER.format(n=end - i)}"))
             i = end
             continue
-        out.append(lines[i])
+        rendered.append((i, lines[i]))
         i += 1
 
-    skeleton = "\n".join(str(x) for x in out)
+    skeleton = "\n".join(text for _, text in rendered)
 
     # The gate: a skeleton that does not parse is worse than no compression.
     try:
         ast.parse(skeleton)
     except (SyntaxError, ValueError, RecursionError):
         return source
-    return skeleton
+
+    return _apply_gutter(rendered, numbers) if numbers else skeleton
 
 
 def compress_code(
