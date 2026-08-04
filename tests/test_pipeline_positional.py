@@ -145,12 +145,14 @@ def test_compressed_older_read_is_still_valid_python(store, older_enabled):
 
 
 def test_code_savings_are_attributed_to_a_code_content_type(store, older_enabled):
+    """Attributed per language, so the ledger shows which parser earned what."""
     body = _body([
         ("t1", "/a.py", BIG_MODULE),
         ("t2", "/a.py", BIG_MODULE),
     ])
     result = run_pipeline("anthropic", body, store)
-    assert "code" in result.content_types
+    assert any(k.startswith("code:") for k in result.content_types)
+    assert "code:python" in result.content_types
 
 
 def test_non_python_older_reads_are_not_skeletonized(store, older_enabled):

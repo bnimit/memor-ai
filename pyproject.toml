@@ -53,6 +53,10 @@ dependencies = [
 api-embed = ["openai>=1.0"]
 anthropic = ["anthropic>=0.40"]
 llm = ["llama-cpp-python>=0.3.0"]
+# Multi-language code skeletonization (Go, TypeScript, TSX, JavaScript, Rust).
+# ~4.8 MB. Python needs no extra — it uses the stdlib ast. Without this,
+# non-Python payloads pass through uncompressed.
+code = ["tree-sitter>=0.23", "tree-sitter-language-pack>=1.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [project.urls]

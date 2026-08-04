@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from hashlib import blake2b
 import time
 from memor.compress import compress_text
-from memor.compress.code import looks_like_python, skeletonize_python
+from memor.compress.code import compress_code, compressible_language
 from memor.compress.types import CompressResult
 from memor.proxy.adapters import (
     apply_payload_text,
@@ -59,12 +59,15 @@ def _compress_payload(payload, *, skeleton_ok: bool) -> CompressResult:
     moved on, and they are what the trajectory resends on every subsequent step.
     """
     if skeleton_ok and not payload.is_latest_for_file:
-        if looks_like_python(payload.text, payload.file_path):
-            skeleton = skeletonize_python(payload.text)
+        language = compressible_language(payload.file_path)
+        if language:
+            skeleton = compress_code(
+                payload.text, language=language, file_path=payload.file_path
+            )
             if skeleton != payload.text:
                 return CompressResult(
                     text=skeleton,
-                    content_type="code",
+                    content_type=f"code:{language}",
                     tokens_before=count_tokens(payload.text),
                     tokens_after=count_tokens(skeleton),
                     passthrough=False,

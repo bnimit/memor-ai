@@ -200,9 +200,21 @@ def test_empty_input_passes_through():
     assert skeletonize_python("   \n") == "   \n"
 
 
-def test_non_python_language_passes_through():
-    js = "function f() {\n  const a = 1;\n  return a;\n}\n"
-    assert compress_code(js, language="javascript") == js
+def test_language_without_a_parser_passes_through():
+    """A language neither parser handles must be returned untouched."""
+    ruby = "def hello\n  a = 1\n  b = 2\n  a + b\nend\n"
+    assert compress_code(ruby, file_path="/x/a.rb") == ruby
+
+
+def test_javascript_is_handled_when_tree_sitter_is_installed():
+    from memor.compress.code_ts import available
+
+    js = "function f() {\n  const a = 1;\n  const b = 2;\n  const c = 3;\n  return a;\n}\n"
+    out = compress_code(js, language="javascript")
+    if available():
+        assert "function f()" in out and "const a = 1" not in out
+    else:
+        assert out == js
 
 
 def test_prose_is_not_mangled():

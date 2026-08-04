@@ -141,15 +141,35 @@ def skeletonize_python(source: str) -> str:
     return skeleton
 
 
-def compress_code(text: str, *, language: str | None = None) -> str:
-    """Compress source code. Currently Python only; other languages pass through.
+def compress_code(
+    text: str, *, language: str | None = None, file_path: str | None = None
+) -> str:
+    """Compress source code, choosing a parser from the language or path.
 
-    Non-Python files are returned untouched rather than guessed at — a language
-    this cannot parse is a language it cannot safely cut.
+    Python goes through the stdlib ``ast`` and needs no dependency. Go,
+    TypeScript, TSX, JavaScript, and Rust go through tree-sitter when it is
+    installed, and pass through untouched when it is not. A language neither
+    path can parse is a language neither can safely cut, so it is returned as-is.
     """
-    if language not in (None, "python"):
+    if language == "python" or (language is None and looks_like_python(text, file_path)):
+        return skeletonize_python(text)
+
+    from memor.compress.code_ts import language_for_path, skeletonize
+
+    lang = language or language_for_path(file_path)
+    if not lang:
         return text
-    return skeletonize_python(text)
+    return skeletonize(text, lang)
+
+
+def compressible_language(file_path: str | None) -> str | None:
+    """Language name if this path is one we can skeletonize, else None."""
+    if file_path and file_path.lower().endswith((".py", ".pyi")):
+        return "python"
+    from memor.compress.code_ts import available, language_for_path
+
+    lang = language_for_path(file_path)
+    return lang if (lang and available()) else None
 
 
 def looks_like_python(text: str, file_path: str | None = None) -> bool:
