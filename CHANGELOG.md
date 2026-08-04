@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-04
+
+### Fixed
+- **Source code was being silently destroyed.** `detect_content_type` classified source as `log`, and the log crusher deletes lines it judges repetitive. Reading `memor/service.py` through the compressor returned 580 of 3,977 tokens with 399 lines gone; `index.html` lost 1,303 lines (97%). The trigger is cheap — `var(--warn)` in CSS matches `\bWARN\b`, and three such lines classify a whole file. This was live in the proxy path, so an agent could receive a mutilated file and edit against content that was never in it. Source is now its own content type and passes through untouched, and truncation markers report the real number of omitted lines instead of claiming "dropped repetitive INFO/DEBUG lines" over a Python file.
+- **Content type is now read from the filename** before guessing from bytes. The agent's tool call already carries `input.file_path`; the pipeline discarded it and had no option but to sniff. Sniffing is now reserved for payloads with no file behind them — shell output, grep results, API responses.
+
+### Added
+- **Code-aware compression.** AST-boundary skeletonization keeps imports, signatures, decorators, docstrings and module/class-level assignments, eliding only function bodies. The result is re-parsed before return and discarded if it does not parse. Python via stdlib `ast`; Go, TypeScript, TSX, JavaScript and Rust via the optional `code` extra (~4.8 MB, degrades to passthrough without it). Measured: Python 63.7% over 74 files, Go 66% / TypeScript 26% over 398 files, zero parse failures.
+- **Compression of older tool payloads** (`compress_older_turns`, default off). The newest read of each file stays byte-exact; stale reads are skeletonized. 78.5% of code payload is re-reads, so the rule reaches most of it.
+- **Tool-result provenance** — `extract_all_tool_payloads` correlates `tool_result.tool_use_id` back to the originating `tool_use`, recovering tool name, file path, and per-file recency.
+- **Episode-level recall accounting** — `memor recall-worth` and `/api/recall-worth`. An episode is one user prompt through every tool call it triggers. Result on 4,078 episodes: no measurable effect, reported as such rather than hidden.
+- **Realized-savings and cost reporting** — `memor compression-worth` reads the ledger; `memor cost-compare` reads the provider's own token usage from transcripts, so prompt-cache re-formation is counted rather than invisible. Both refuse to report an effect unless the direction survives stratification.
+- **Compression panel on the dashboard**, leading with whether the feature is actually running. A flag can be true while the installed build predates it; `liveness()` compares intent against the ledger and says so.
+- Test-runner output (pytest, go test, jest) and nested JSON arrays now compress; both previously fell through at 0%.
+
+### Changed
+- CCR ids are content-addressed (`blake2b`) rather than `uuid4()`, so rewriting a payload that recurs across requests no longer changes the prompt prefix every call and misses the cache every time.
+
 ### Removed
 - **Cursor subscription wire MITM** — the mitmproxy addon, `cursor-wire-*` commands, `ai.memor.cursor-wire` service unit, `cursor_wire` config keys, and the dashboard Cursor Wire chip are gone. Measurement showed Cursor's Composer traffic never reaches a local proxy (both the Node and Chromium network stacks were covered; only control-plane RPCs appeared), and the exchange that is actually billed — Cursor's servers to the model — never touches the user's machine, so no local savings figure could be verified. Compression for Cursor now runs entirely through the Shell compress hooks, which crush tool output before Cursor ingests it.
 - `memor uninstall-proxy --agent cursor` and `memor service uninstall` clean up any leftover wire settings, service unit, and config keys from 0.12.0.
