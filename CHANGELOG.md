@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.13.0] - 2026-08-04
+## [0.12.0] - 2026-08-04
 
 ### Fixed
 - **Source code was being silently destroyed.** `detect_content_type` classified source as `log`, and the log crusher deletes lines it judges repetitive. Reading `memor/service.py` through the compressor returned 580 of 3,977 tokens with 399 lines gone; `index.html` lost 1,303 lines (97%). The trigger is cheap — `var(--warn)` in CSS matches `\bWARN\b`, and three such lines classify a whole file. This was live in the proxy path, so an agent could receive a mutilated file and edit against content that was never in it. Source is now its own content type and passes through untouched, and truncation markers report the real number of omitted lines instead of claiming "dropped repetitive INFO/DEBUG lines" over a Python file.
@@ -24,20 +24,13 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 - **Cursor subscription wire MITM** — the mitmproxy addon, `cursor-wire-*` commands, `ai.memor.cursor-wire` service unit, `cursor_wire` config keys, and the dashboard Cursor Wire chip are gone. Measurement showed Cursor's Composer traffic never reaches a local proxy (both the Node and Chromium network stacks were covered; only control-plane RPCs appeared), and the exchange that is actually billed — Cursor's servers to the model — never touches the user's machine, so no local savings figure could be verified. Compression for Cursor now runs entirely through the Shell compress hooks, which crush tool output before Cursor ingests it.
-- `memor uninstall-proxy --agent cursor` and `memor service uninstall` clean up any leftover wire settings, service unit, and config keys from 0.12.0.
+- `memor uninstall-proxy --agent cursor` and `memor service uninstall` clean up any leftover wire settings, service unit, and config keys. The wire was built and removed within this same unreleased cycle, so this only affects installs built from source — nothing on PyPI ever shipped it.
 
-## [0.12.0] - never published
-
-Developed but not released to PyPI, which went 0.11.0 → 0.13.0. Kept as a
-record of what changed and when; no user received it, so the wire-MITM cleanup
-paths above only matter to installs built from source.
-
-### Added
+### Also in this release (developed earlier in the cycle)
 - **Cursor install automation** — `memor install-proxy --agent cursor` enables memory hooks, Shell compress hooks, and the BYOK proxy on `:8421`. Flag: `--yes`.
-- **Agent desk dashboard** — Overview plus per-agent panes (Claude, Cursor, Codex, …) with fintech-style cumulative savings equity curves, recall volume charts, and `/api/agent-desk`.
-
-### Changed
-- Dashboard layout de-densified: status chips + portfolio KPIs on Overview; deep tables stay on Overview; each agent desk shows focused KPIs and filtered recalls.
+- **Agent desk dashboard** — Overview plus per-agent panes (Claude, Cursor, Codex, …) with cumulative savings equity curves, recall volume charts, and `/api/agent-desk`.
+- Dashboard layout de-densified: status chips + portfolio KPIs on Overview; each agent desk shows focused KPIs and filtered recalls.
+- Multi-IDE proxy installs (Cline, OpenCode, Cursor BYOK) and per-agent proxy attribution.
 
 ## [0.11.0] - 2026-08-01
 
