@@ -4,6 +4,7 @@ from memor.compress.detect import detect_content_type
 from memor.compress.logs import compress_log
 from memor.compress.json_crush import compress_json
 from memor.compress.search import compress_search
+from memor.compress.text import compress_plain_text
 from memor.tokencount import count_tokens
 
 def compress_text(
@@ -29,7 +30,13 @@ def compress_text(
             compressed = compress_json(text)
         elif content_type == "search":
             compressed = compress_search(text)
-        else:  # source, text, or unknown — never crushed
+        elif content_type == "text" and not file_path:
+            # Only pathless payloads — shell output, API responses. A payload
+            # with a filename is a file, and files are returned byte-exact:
+            # trailing whitespace is a hard line break in Markdown, so tidying
+            # one would silently change how it renders.
+            compressed = compress_plain_text(text)
+        else:  # source or unknown — never touched
             compressed = text
         
         tokens_after = count_tokens(compressed)
