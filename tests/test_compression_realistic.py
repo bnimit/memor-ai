@@ -28,7 +28,9 @@ REPO = Path(__file__).resolve().parent.parent
 BASH_LOG = "\n".join(
     f"2026-08-04 10:00:{i % 60:02d} INFO worker heartbeat ok id={i}" for i in range(400)
 )
-GREP_OUT = "\n".join(f"memor/mod{i}.py:{i}:    return value_{i}" for i in range(200))
+GREP_OUT = "\n".join(
+    f"memor/mod{f}.py:{n}:    return value_{n}" for f in range(5) for n in range(40)
+)
 API_JSON = json.dumps({"data": {"results": [{"id": i, "name": f"row{i}"} for i in range(300)]}})
 PY_FILE = (REPO / "memor" / "episodes.py").read_text()
 def _go_source(n_funcs: int = 12) -> str:
