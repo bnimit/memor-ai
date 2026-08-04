@@ -877,6 +877,32 @@ def compress_exec_cmd(
     raise typer.Exit(run_compress_exec(cwd=workdir, command=shell_command))
 
 
+@app.command("recall-worth")
+def recall_worth_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Emit the raw summary as JSON."),
+    min_per_arm: int = typer.Option(
+        20, "--min-per-arm", help="Minimum episodes per arm before scoring."
+    ),
+):
+    """Measure whether recall reduces work, per episode rather than per prompt.
+
+    An episode is one user prompt through every tool call it triggers. Compares
+    episodes where memor injected context against those where it did not,
+    stratified by prompt length so an aggregate difference cannot come purely
+    from which prompts happen to get recall.
+    """
+    import json as _json
+
+    from memor.episodes import format_report, scan_episodes, summarize
+
+    summary = summarize(scan_episodes(), min_per_arm=min_per_arm)
+    if json_out:
+        typer.echo(_json.dumps(summary, indent=2, default=str))
+        return
+    for line in format_report(summary):
+        typer.echo(line)
+
+
 @app.command("dashboard")
 def dashboard(port: int = typer.Option(8420, help="Port to serve on"),
               no_open: bool = typer.Option(False, help="Don't open browser"),

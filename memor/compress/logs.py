@@ -36,7 +36,8 @@ def compress_log(text: str) -> str:
         # No important lines found, keep first/last and sample middle
         result_lines = lines[:5]
         if len(lines) > 10:
-            result_lines.append("... [memor: dropped repetitive middle lines] ...")
+            dropped = len(lines) - 10
+            result_lines.append(f"... [memor: omitted {dropped} lines] ...")
             result_lines.extend(lines[-5:])
         else:
             result_lines.extend(lines[5:])
@@ -50,8 +51,11 @@ def compress_log(text: str) -> str:
     
     for idx in sorted_indices:
         if idx > prev_idx + 1:
-            # Gap detected
-            result_lines.append("... [memor: dropped repetitive INFO/DEBUG lines] ...")
+            # Gap: state how many lines went missing so the reader can tell
+            # truncated output from complete output.
+            gap = idx if prev_idx < 0 else idx - prev_idx - 1
+            if gap > 0:
+                result_lines.append(f"... [memor: omitted {gap} lines] ...")
         result_lines.append(lines[idx])
         prev_idx = idx
     

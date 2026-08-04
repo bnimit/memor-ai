@@ -153,6 +153,32 @@ def create_app(db_path: str | None = None) -> FastAPI:
         store = _store()
         return store.get_recall_trend(days=days, agent=agent)
 
+    @app.get("/api/recall-worth")
+    def recall_worth():
+        """Episode-level accounting: does recall reduce work, or just add tokens?
+
+        Parses transcripts on demand, so results are cached briefly to keep the
+        dashboard responsive.
+        """
+        import time as _time
+
+        cached = getattr(app.state, "_recall_worth", None)
+        if cached and _time.time() - cached[0] < 300:
+            return cached[1]
+        try:
+            from memor.episodes import scan_episodes, summarize
+
+            summary = summarize(scan_episodes())
+        except Exception as exc:  # never take the dashboard down for a metric
+            summary = {
+                "overall": {"verdict": "insufficient_data", "episodes": 0, "usable": 0},
+                "by_project": {},
+                "strata": [],
+                "error": str(exc)[:200],
+            }
+        app.state._recall_worth = (_time.time(), summary)
+        return summary
+
     @app.get("/api/agent-desk")
     def agent_desk(agent: str = Query(..., min_length=1)):
         """Per-agent pane payload: stats + trends + recent recalls."""
