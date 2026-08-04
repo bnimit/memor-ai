@@ -72,7 +72,7 @@ def _compress_payload(payload, *, skeleton_ok: bool) -> CompressResult:
                     tokens_after=count_tokens(skeleton),
                     passthrough=False,
                 )
-    return compress_text(payload.text)
+    return compress_text(payload.text, file_path=payload.file_path)
 
 
 @dataclass

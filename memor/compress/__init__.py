@@ -6,14 +6,20 @@ from memor.compress.json_crush import compress_json
 from memor.compress.search import compress_search
 from memor.tokencount import count_tokens
 
-def compress_text(text: str, *, content_type: str | None = None) -> CompressResult:
-    """Compress text based on content type."""
-    
+def compress_text(
+    text: str, *, content_type: str | None = None, file_path: str | None = None
+) -> CompressResult:
+    """Compress text based on content type.
+
+    ``file_path`` makes detection evidence-based rather than a guess — see
+    ``detect_content_type``.
+    """
+
     tokens_before = count_tokens(text)
-    
+
     # Detect content type if not provided
     if content_type is None:
-        content_type = detect_content_type(text)
+        content_type = detect_content_type(text, file_path)
     
     try:
         # Apply appropriate compressor
