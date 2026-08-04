@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from uuid import uuid4
+from hashlib import blake2b
 import time
 from memor.compress import compress_text
 from memor.proxy.adapters import extract_latest_tool_payloads, apply_payload_text
@@ -23,6 +23,26 @@ def _maybe_evict(store: SqliteStore) -> None:
         store.ccr_evict(ccr_ttl_seconds(), ccr_max_bytes())
     except Exception:
         pass
+
+#: Marker id length, matching the previous uuid4().hex so marker width — and
+#: therefore token count — is unchanged.
+_CCR_ID_LEN = 32
+
+
+def ccr_id_for(text: str) -> str:
+    """Content-addressed id for a payload.
+
+    Previously ``uuid4().hex``, which meant compressing identical content twice
+    produced different marker text. Any strategy that rewrites a payload
+    appearing in more than one request — notably compressing older turns — would
+    then change the prompt prefix on every call and miss the cache every time,
+    costing far more than the compression saves. Hashing the content makes the
+    rewrite stable, so the cache re-forms once on the shorter prefix.
+    """
+    return blake2b(text.encode("utf-8", "replace"), digest_size=16).hexdigest()[
+        :_CCR_ID_LEN
+    ]
+
 
 @dataclass
 class PipelineResult:
@@ -81,7 +101,7 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
             total_tokens_after += result.tokens_before
             continue
         
-        ccr_id = uuid4().hex
+        ccr_id = ccr_id_for(payload.text)
         marked_text = f"[memor:ccr:{ccr_id}]\n{result.text}"
         marked_tokens = count_tokens(marked_text)
         
