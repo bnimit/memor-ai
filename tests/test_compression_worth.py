@@ -156,3 +156,61 @@ def test_rows_outside_the_window_are_excluded(tmp_path):
     db.commit()
     db.close()
     assert load_savings_rows(str(path), days=30) == []
+
+
+# --- is the experiment actually running? -------------------------------------
+
+from memor.compression_worth import liveness  # noqa: E402
+
+
+def _summary(requests, code=0):
+    rows = [_row(types={"code:go": 1}) for _ in range(code)]
+    rows += [_row(types={"log": 1}) for _ in range(max(0, requests - code))]
+    return summarize_savings(rows)
+
+
+def test_disabled_reports_off():
+    assert liveness(False, None, None)["state"] == "off"
+
+
+def test_enabled_with_no_traffic_is_pending():
+    assert liveness(True, 1000.0, _summary(0))["state"] == "pending"
+
+
+def test_enabled_with_code_compressed_is_live():
+    r = liveness(True, 1000.0, _summary(60, code=5))
+    assert r["state"] == "live"
+    assert "5" in r["detail"]
+
+
+def test_enabled_but_nothing_compressed_after_enough_traffic_is_flagged():
+    """The failure that costs a week: flag on, running build too old to act on it."""
+    r = liveness(True, 1000.0, _summary(200, code=0))
+    assert r["state"] == "not_taking_effect"
+    assert "older build" in r["detail"]
+    assert "pipx install --force" in r["detail"]
+
+
+def test_small_traffic_does_not_cry_wolf():
+    """Below the evidence threshold, absence of compression proves nothing."""
+    assert liveness(True, 1000.0, _summary(5, code=0))["state"] == "pending"
+
+
+def test_since_filter_reads_only_rows_after_the_boundary(tmp_path):
+    import sqlite3
+    import time
+
+    path = tmp_path / "m.db"
+    db = sqlite3.connect(path)
+    db.execute(
+        "CREATE TABLE proxy_savings(timestamp REAL, agent TEXT, tokens_before INT,"
+        " tokens_after INT, content_types TEXT, passthrough INT)"
+    )
+    now = time.time()
+    db.executemany(
+        "INSERT INTO proxy_savings VALUES(?,?,?,?,?,?)",
+        [(now - 5000, "claude", 10, 5, "{}", 0), (now - 10, "claude", 10, 5, "{}", 0)],
+    )
+    db.commit()
+    db.close()
+    assert len(load_savings_rows(str(path), since=now - 100)) == 1

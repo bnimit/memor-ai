@@ -441,6 +441,23 @@
       </div>
     </section>
 
+    <section>
+      <div class="chart-panel" id="compression-panel">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Compression</div>
+            <div class="chart-big" id="cx-headline">–</div>
+          </div>
+          <div class="chart-meta" id="cx-meta">realized on your traffic</div>
+        </div>
+        <div class="rw-body">
+          <div class="rw-detail" id="cx-live"></div>
+          <div class="rw-strata" id="cx-types"></div>
+          <div class="rw-note" id="cx-note"></div>
+        </div>
+      </div>
+    </section>
+
     <section id="agent-compare-section" style="display:none;">
       <div class="section-label"><span class="dot"></span> Desks</div>
       <div class="agent-compare" id="agent-compare"></div>
@@ -1389,12 +1406,77 @@
     noteEl.textContent = data.confound || '';
   }
 
+  // Leads with whether compression is actually running. A flag can be true while
+  // the installed build predates the feature — that looks identical to working
+  // and costs a week of silence before anyone notices.
+  var RW_LIVE_STYLE = {
+    live: ['rw-verdict-good', 'running'],
+    pending: ['rw-verdict-null', 'waiting for traffic'],
+    not_taking_effect: ['rw-verdict-bad', 'NOT taking effect'],
+    off: ['rw-verdict-null', 'off'],
+    on: ['rw-verdict-null', 'on'],
+  };
+
+  async function loadCompression() {
+    var headline = document.getElementById('cx-headline');
+    if (!headline) return;
+    var liveEl = document.getElementById('cx-live');
+    var typesEl = document.getElementById('cx-types');
+    var noteEl = document.getElementById('cx-note');
+
+    var d;
+    try { d = await api('/api/compression'); }
+    catch (e) { headline.textContent = '–'; liveEl.textContent = 'unavailable'; return; }
+
+    var r = d.realized || {};
+    var live = d.liveness || {state: 'off', detail: ''};
+    var style = RW_LIVE_STYLE[live.state] || RW_LIVE_STYLE.off;
+
+    if (r.scored) {
+      headline.textContent = (r.saved_pct || 0).toFixed(1) + '% saved';
+      headline.className = 'chart-big';
+    } else {
+      headline.textContent = 'not enough requests yet';
+      headline.className = 'chart-big rw-verdict-null';
+    }
+    document.getElementById('cx-meta').textContent =
+      (r.requests || 0).toLocaleString() + ' requests · ' +
+      (r.passthrough_pct || 0).toFixed(0) + '% carried nothing compressible';
+
+    liveEl.innerHTML = '<span class="' + style[0] + '"><strong>' + style[1]
+      + '</strong></span> — ' + (live.detail || '');
+
+    typesEl.innerHTML = '';
+    var types = r.by_type || {};
+    Object.keys(types).sort(function(a, b) { return types[b] - types[a]; })
+      .forEach(function(k) {
+        var el = document.createElement('div');
+        el.className = 'rw-cell' + (k.indexOf('code') === 0 ? ' pos' : '');
+        el.innerHTML = '<span class="k">' + k + '</span><span class="v">'
+          + types[k].toLocaleString() + '</span>';
+        typesEl.appendChild(el);
+      });
+
+    var cost = d.cost;
+    if (cost && cost.verdict && cost.verdict !== 'insufficient_data') {
+      var word = {cheaper: 'costs less', dearer: 'costs MORE', no_effect: 'no cost change'}[cost.verdict];
+      noteEl.textContent = 'Bill: ' + word + ' since enabled ('
+        + (cost.cost_delta_pct >= 0 ? '−' : '+')
+        + Math.abs(cost.cost_delta_pct).toFixed(1) + '%, '
+        + cost.n_after + ' episodes after). Measured from the provider’s own token usage.';
+    } else if (cost) {
+      noteEl.textContent = 'Bill: not enough episodes on both sides of the change yet.';
+    } else {
+      noteEl.textContent = 'Savings are gross — provider cache re-formation is not visible here.';
+    }
+  }
+
   async function refreshOverview() {
     await Promise.allSettled([
       loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(),
       loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(),
       loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(),
-      loadProxySavingsByAgent(), loadRecallWorth(),
+      loadProxySavingsByAgent(), loadRecallWorth(), loadCompression(),
     ]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
   }

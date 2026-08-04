@@ -92,8 +92,14 @@ def summarize_savings(rows: list[dict]) -> CompressionSummary:
     return s
 
 
-def load_savings_rows(db_path: str, *, days: int = 30) -> list[dict]:
-    """Read proxy_savings rows from the ledger, read-only."""
+def load_savings_rows(
+    db_path: str, *, days: int = 30, since: float | None = None
+) -> list[dict]:
+    """Read proxy_savings rows from the ledger, read-only.
+
+    ``since`` overrides ``days`` and is used to ask a sharper question: has
+    anything actually been compressed *since the flag was switched on*.
+    """
     import sqlite3
     import time
     from pathlib import Path
@@ -101,7 +107,7 @@ def load_savings_rows(db_path: str, *, days: int = 30) -> list[dict]:
     path = Path(db_path)
     if not path.exists():
         return []
-    cutoff = time.time() - days * 86400
+    cutoff = since if since is not None else time.time() - days * 86400
     try:
         db = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
         db.row_factory = sqlite3.Row
@@ -114,6 +120,51 @@ def load_savings_rows(db_path: str, *, days: int = 30) -> list[dict]:
     except sqlite3.Error:
         return []
     return [dict(r) for r in rows]
+
+
+#: Requests seen since the flag flipped before "nothing happened" means anything.
+_LIVENESS_MIN_REQUESTS = 40
+
+
+def liveness(
+    enabled: bool, started_at: float | None, since_summary: CompressionSummary | None
+) -> dict:
+    """Is the experiment actually running, or only switched on in config?
+
+    A flag can be true while the installed build predates the feature, or while
+    the proxy has not been restarted. Both look identical to config and produce
+    a week of silence before anyone notices. This compares intent against the
+    ledger and says so.
+    """
+    if not enabled:
+        return {"state": "off", "detail": "compression of older payloads is disabled"}
+    if started_at is None:
+        return {"state": "on", "detail": "enabled (no start time recorded)"}
+    if since_summary is None or since_summary.requests == 0:
+        return {
+            "state": "pending",
+            "detail": "enabled, but no proxied requests recorded yet",
+        }
+    code = sum(v for k, v in since_summary.by_type.items() if k.startswith("code"))
+    if code == 0 and since_summary.requests >= _LIVENESS_MIN_REQUESTS:
+        return {
+            "state": "not_taking_effect",
+            "detail": (
+                f"enabled, but {since_summary.requests:,} requests have gone through "
+                "with zero code payloads compressed — the running proxy is probably "
+                "an older build. Reinstall and restart: "
+                "pipx install --force . && memor service restart"
+            ),
+        }
+    if code == 0:
+        return {
+            "state": "pending",
+            "detail": f"enabled; {since_summary.requests:,} requests so far, none with code yet",
+        }
+    return {
+        "state": "live",
+        "detail": f"{code:,} code payloads compressed since enabled",
+    }
 
 
 def format_report(summary: CompressionSummary, *, days: int = 30) -> list[str]:
