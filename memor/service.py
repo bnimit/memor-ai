@@ -124,6 +124,11 @@ def _units(
             "description": "Memor dashboard — web UI for memory metrics",
             "args": [memor_bin, "dashboard", "--port", str(port), "--no-open"],
             "log": DASHBOARD_LOG,
+            # The dashboard answers a person waiting at a browser, so it must
+            # not be filed under Background: that caps CPU *and* forces
+            # throttled disk I/O, which turned a 2.0s cold load of the
+            # transcript corpus into 9.2s. Same code, same machine, measured.
+            "process_type": "Interactive",
         })
     if with_proxy:
         units.append({
@@ -133,6 +138,9 @@ def _units(
             "description": "Memor proxy — context compression for AI agents",
             "args": [memor_bin, "proxy", "--port", str(proxy_p)],
             "log": PROXY_LOG,
+            # The proxy sits in the request path of every agent call, so any
+            # throttling here is added latency on work someone is waiting for.
+            "process_type": "Interactive",
         })
     return units
 
@@ -156,7 +164,7 @@ def _unit_path(systemd_name: str) -> Path:
     return SYSTEMD_DIR / f"{systemd_name}.service"
 
 
-def _plist_content(label: str, args, log_file) -> str:
+def _plist_content(label: str, args, log_file, process_type: str = "Background") -> str:
     if isinstance(args, str):  # back-compat: old callers passed just the memor bin
         args = [args, "daemon"]
     arg_xml = "\n".join(f"                <string>{a}</string>" for a in args)
@@ -181,7 +189,7 @@ def _plist_content(label: str, args, log_file) -> str:
             <key>StandardErrorPath</key>
             <string>{log_file}</string>
             <key>ProcessType</key>
-            <string>Background</string>
+            <string>{process_type}</string>
         </dict>
         </plist>
     """)
@@ -284,7 +292,10 @@ def install(with_dashboard: bool = True, with_proxy: bool = False) -> str:
         PLIST_DIR.mkdir(parents=True, exist_ok=True)
         for u in units:
             path = _plist_path(u["label"])
-            path.write_text(_plist_content(u["label"], u["args"], u["log"]))
+            path.write_text(_plist_content(
+                u["label"], u["args"], u["log"],
+                process_type=u.get("process_type", "Background"),
+            ))
             subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(path)],
                            capture_output=True)
             subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)],

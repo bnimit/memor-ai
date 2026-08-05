@@ -23,6 +23,47 @@ DISTILLED_FILE = STATE_DIR / "distilled.json"
 POLL_INTERVAL = 30  # seconds
 MAX_DISTILL_TOKENS = 4000  # cap text sent to LLM per session
 
+#: How often the whole-store maintenance sweeps may run.
+#:
+#: Quality decay, cross-project promotion and near-duplicate compaction each
+#: scan every memory in the store. They were gated on "did we ingest anything",
+#: which during an active coding session is true on essentially every 30s poll,
+#: so all three swept the entire store every 30 seconds and the daemon never
+#: went idle. None of them is time-critical: they look for patterns that
+#: accumulate over days.
+MAINTENANCE_INTERVAL = 3600  # seconds
+MAINTENANCE_STAMP = STATE_DIR / "last_maintenance"
+
+
+def _maintenance_due(now: float | None = None, *, interval: float | None = None) -> bool:
+    """True when the whole-store sweeps should run again.
+
+    The stamp lives on disk so a restart cannot turn into a fresh full sweep,
+    which is what made restarting the daemon look like a CPU spike.
+    """
+    import time as _time
+
+    # Read the module attribute at call time rather than binding it as a
+    # default, so the interval stays adjustable at runtime.
+    interval = MAINTENANCE_INTERVAL if interval is None else interval
+    now = _time.time() if now is None else now
+    try:
+        last = float(MAINTENANCE_STAMP.read_text().strip())
+    except (OSError, ValueError):
+        last = 0.0
+    return (now - last) >= interval
+
+
+def _mark_maintenance(now: float | None = None) -> None:
+    import time as _time
+
+    now = _time.time() if now is None else now
+    try:
+        MAINTENANCE_STAMP.parent.mkdir(parents=True, exist_ok=True)
+        MAINTENANCE_STAMP.write_text(str(now))
+    except OSError:
+        pass
+
 
 def _project_name_from_dir(dirname: str) -> str:
     """Derive a clean project name from a Claude projects directory name.
@@ -190,20 +231,30 @@ def compact_memories(store: SqliteStore, embedder) -> int:
         return 0
     memories = [store._row_to_artifact(r) for r in rows]
     vecs = embedder.embed([m.text for m in memories])
+    # Same O(n^2) shape as cross-project promotion: at these sizes a Python
+    # cosine per pair costs seconds on every cycle that ingests anything, and
+    # the daemon polls every 30s. One normalized matrix turns the inner loop
+    # into a lookup. Falls back to the original arithmetic without numpy.
+    from memor.global_memories import _similarity_matrix
+    unit = _similarity_matrix(vecs)
     deactivated = 0
     seen = set()
     for i in range(len(memories)):
         if memories[i].id in seen:
             continue
+        sims = unit[i + 1:] @ unit[i] if unit is not None else None
         for j in range(i + 1, len(memories)):
             if memories[j].id in seen:
                 continue
             if memories[i].project != memories[j].project:
                 continue
-            dot = sum(a * b for a, b in zip(vecs[i], vecs[j]))
-            norm_i = sum(a * a for a in vecs[i]) ** 0.5
-            norm_j = sum(a * a for a in vecs[j]) ** 0.5
-            sim = dot / (norm_i * norm_j) if norm_i and norm_j else 0
+            if sims is not None:
+                sim = float(sims[j - i - 1])
+            else:
+                dot = sum(a * b for a, b in zip(vecs[i], vecs[j]))
+                norm_i = sum(a * a for a in vecs[i]) ** 0.5
+                norm_j = sum(a * a for a in vecs[j]) ** 0.5
+                sim = dot / (norm_i * norm_j) if norm_i and norm_j else 0
             if sim >= COMPACT_SIM_THRESHOLD:
                 qi = store.get_quality_score(memories[i].id)
                 qj = store.get_quality_score(memories[j].id)
@@ -345,8 +396,15 @@ def run_poll_cycle(
             except Exception:
                 pass
 
+    # Whole-store maintenance. Each of these scans every memory, so they run on
+    # an interval rather than on every cycle that happened to ingest a chunk --
+    # during an active session that was every 30 seconds, and it kept the
+    # daemon permanently busy. They look for patterns that build up over days,
+    # so an hourly sweep loses nothing.
+    maintenance = new_ingested and _maintenance_due()
+
     # Soft quality decay: unused memories lose quality over time
-    if new_ingested:
+    if maintenance:
         try:
             decayed = store.decay_quality(stale_days=14, factor=0.5, deactivate_floor=0.03)
             if decayed > 0:
@@ -355,7 +413,7 @@ def run_poll_cycle(
             pass
 
     # Promote cross-project patterns to global scope
-    if new_ingested:
+    if maintenance:
         try:
             from memor.global_memories import run_promotion
             promoted = run_promotion(store, embedder, min_projects=3)
@@ -365,7 +423,7 @@ def run_poll_cycle(
             pass
 
     # Compact near-duplicate memories (run occasionally, not every cycle)
-    if new_ingested:
+    if maintenance:
         try:
             compacted = compact_memories(store, embedder)
             if compacted > 0:
@@ -374,7 +432,7 @@ def run_poll_cycle(
             pass
 
     # Auto-compact vec index if bloated
-    if new_ingested:
+    if maintenance:
         try:
             result = auto_compact(store, embedder)
             if result:
@@ -382,6 +440,11 @@ def run_poll_cycle(
                       f"({result['vectors_reindexed']} vectors, {result['duration_ms']}ms)")
         except Exception:
             pass
+
+    if maintenance:
+        # Stamped after the sweeps, not before, so a crash mid-sweep retries on
+        # the next cycle rather than waiting out the whole interval.
+        _mark_maintenance()
 
     return state, distilled, counts_by_agent
 
