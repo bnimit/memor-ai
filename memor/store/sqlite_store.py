@@ -452,6 +452,35 @@ class SqliteStore:
             out.append((self._row_to_artifact(r), sim))
         return out
 
+    def vectors_for(self, artifact_ids: list[str]) -> dict[str, list[float]]:
+        """Embeddings for the given artifacts, for redundancy-aware selection.
+
+        Joins through ``artifacts.rowid``, which is what vec_artifacts is keyed
+        on. Returns whatever it can: a missing vector costs a candidate its
+        redundancy check, not its place in the ranking.
+        """
+        ids = list(artifact_ids)
+        if not ids:
+            return {}
+        out: dict[str, list[float]] = {}
+        marks = ",".join("?" * len(ids))
+        try:
+            rows = self.db.execute(
+                f"SELECT a.id AS id, v.embedding AS embedding "
+                f"FROM artifacts a JOIN vec_artifacts v ON v.rowid = a.rowid "
+                f"WHERE a.id IN ({marks})", ids).fetchall()
+        except sqlite3.Error:
+            return {}
+        for row in rows:
+            blob = row["embedding"]
+            if not blob:
+                continue
+            try:
+                out[row["id"]] = list(struct.unpack("%sf" % (len(blob) // 4), blob))
+            except (struct.error, TypeError):
+                continue
+        return out
+
     def rebuild_fts(self) -> int:
         """Backfill the FTS index from the artifacts table. Idempotent — used to
         index databases created before lexical search existed. Returns the row

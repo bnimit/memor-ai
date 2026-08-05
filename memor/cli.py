@@ -971,6 +971,46 @@ def cost_compare_cmd(
         typer.echo(line)
 
 
+@app.command("prune")
+def prune_cmd(
+    apply: bool = typer.Option(
+        False, "--apply", help="Actually retire them. Without this, reports only."
+    ),
+):
+    """Retire harness noise and duplicate copies from the retrieval pool.
+
+    Ingestion deduplicates within a session but not across them, so anything an
+    agent emits every run accumulates one copy per session. Duplicates do not
+    merely waste space, they spend the recall budget: a live recall returned
+    five memories of which three were the same text.
+
+    Nothing is deleted. Rows are deactivated, so ids referenced by recall
+    history stay valid and the pass is reversible.
+    """
+    from pathlib import Path
+
+    from memor.prune import prune
+    from memor.store.sqlite_store import SqliteStore, read_dim
+
+    db_path = str(Path.home() / ".memor" / "memor.db")
+    if not Path(db_path).exists():
+        typer.echo("No database yet.", err=True)
+        raise typer.Exit(2)
+    store = SqliteStore(db_path, dim=read_dim(db_path, 256))
+    r = prune(store, dry_run=not apply)
+
+    typer.echo(f"active artifacts   {r['active_before']:>8,}")
+    typer.echo(f"  harness noise    {r['noise']:>8,}")
+    typer.echo(f"  duplicate copies {r['duplicates']:>8,}")
+    typer.echo(f"  ----------------------------")
+    typer.echo(f"  would retire     {r['total']:>8,}  ({r['pct']}%)")
+    if r["dry_run"]:
+        typer.echo("\nDry run. Re-run with --apply to retire them.")
+    else:
+        typer.echo(f"\nretired {r['retired']:,} — {r['active_after']:,} artifacts remain active")
+        typer.echo("Reversible: these rows are deactivated, not deleted.")
+
+
 @app.command("recall-baseline")
 def recall_baseline_cmd(
     stamp: bool = typer.Option(

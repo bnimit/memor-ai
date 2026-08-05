@@ -34,6 +34,26 @@ _LESSON_RE = re.compile(
     r"(always use|never use|never do|important:|note:|pattern:|"
     r"best practice|lesson learned|rule of thumb|should always|should never)", re.I)
 
+#: Harness chatter and agent scaffolding that reached the store in bulk: 150
+#: copies of the interrupt marker, and 40-53 copies each of subagent prompt
+#: headers from workflow runs. None of it is anything a future session could
+#: usefully be reminded of, and repeated verbatim across sessions it crowds the
+#: candidate pool by sheer count.
+_HARNESS_NOISE_RE = re.compile(
+    r"^\s*(?:\[Request interrupted"
+    r"|\[Tool use was (?:rejected|cancelled)"
+    r"|API Error"
+    r"|\[memor:ccr:"
+    r"|<local-command-(?:stdout|caveat)"
+    r"|Caveat: The messages below were generated"
+    r"|\[The user (?:sent|interrupted)"
+    r")", re.I)
+
+#: A subagent brief is a prompt written *to* a model, not a record of work done.
+#: These arrive identical on every run of a workflow.
+_AGENT_BRIEF_RE = re.compile(
+    r"^\s*#{1,3}\s+.*\((?:voter|reviewer|verifier|judge|agent)\s*\d+\s*/\s*\d+\)", re.I)
+
 _BASE64_RE = re.compile(r"[A-Za-z0-9+/=]{200,}")
 _PERMISSION_RE = re.compile(r"^(Allow |Permission |Do you want to allow |Grant )", re.I)
 _PATH_LINE_RE = re.compile(r"^[/~][\w./\-]+$")
@@ -65,6 +85,10 @@ def _signal_score(text: str, role: str, token_count: int) -> float:
     if token_count < MIN_SIGNAL_TOKENS:
         return 0.0
     if _SKILL_BOILERPLATE in text:
+        return 0.0
+    if _HARNESS_NOISE_RE.match(text):
+        return 0.0
+    if _AGENT_BRIEF_RE.match(text):
         return 0.0
     if _BASE64_RE.search(text):
         return 0.0
