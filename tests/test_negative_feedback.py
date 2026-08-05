@@ -160,11 +160,13 @@ def test_analyze_feedback_detects_negative(tmp_path):
         VALUES(?, 'proj', 'job queue', 1, 0.8, 100, 5.0, 'ok', 'sess1')
     """, (now,))
     s.db.commit()
+    rid = s.db.execute("SELECT id FROM recall_log ORDER BY id DESC LIMIT 1").fetchone()["id"]
     s.record_recall(["m1"])
+    s.record_recall_candidates(rid, ["m1"])
 
     transcript_path = _write_transcript(tmp_path, "sess1", [
         {"type": "assistant", "message": {"content": "Based on the recalled memory, we use postgres for the job queue."}},
-        {"type": "human", "message": {"content": "no that's wrong, we switched to redis for the job queue last sprint"}},
+        {"type": "user", "message": {"content": "no that's wrong, we switched to redis for the job queue last sprint"}},
         {"type": "assistant", "message": {"content": "I see, let me update that. We now use redis for the job queue."}},
     ])
 
@@ -192,11 +194,13 @@ def test_analyze_feedback_no_false_negative(tmp_path):
         VALUES(?, 'proj', 'password hashing', 1, 0.8, 100, 5.0, 'ok', 'sess1')
     """, (now,))
     s.db.commit()
+    rid = s.db.execute("SELECT id FROM recall_log ORDER BY id DESC LIMIT 1").fetchone()["id"]
     s.record_recall(["m1"])
+    s.record_recall_candidates(rid, ["m1"])
 
     transcript_path = _write_transcript(tmp_path, "sess1", [
         {"type": "assistant", "message": {"content": "Using argon2 for password hashing as previously decided."}},
-        {"type": "human", "message": {"content": "yes perfect, that looks good"}},
+        {"type": "user", "message": {"content": "yes perfect, that looks good"}},
     ])
 
     analyze_session_feedback(s, "sess1", transcript_path, embedder=e)

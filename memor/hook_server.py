@@ -191,7 +191,7 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
         try:
             from memor.store.sqlite_store import SqliteStore
             store = SqliteStore(db_path, dim=embedder.dim)
-            store.log_recall(
+            recall_id = store.log_recall(
                 project=project, query_preview=query[:100],
                 hits_count=result.hits_count, top_score=result.top_score,
                 tokens_injected=result.tokens_injected, latency_ms=result.latency_ms,
@@ -199,6 +199,7 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
                 agent=agent)
             if result.hit_ids:
                 store.record_recall(result.hit_ids)
+                store.record_recall_candidates(recall_id, result.hit_ids)
         except Exception:
             pass
 

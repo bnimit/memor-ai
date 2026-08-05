@@ -89,10 +89,12 @@ def test_feedback_uses_semantic_when_ngram_fails(tmp_path):
 
     # Simulate a recall event for this session
     now = time.time()
-    store.log_recall(project="p", query_preview="auth hashing",
-                     hits_count=1, top_score=0.8, tokens_injected=50,
-                     latency_ms=5.0, status="ok", session_id="sess1")
+    rid = store.log_recall(project="p", query_preview="auth hashing",
+                           hits_count=1, top_score=0.8, tokens_injected=50,
+                           latency_ms=5.0, status="ok", session_id="sess1")
     store.record_recall(["mem1"])
+    # Verdicts now hang off the recall that served the memory, not a time window.
+    store.record_recall_candidates(rid, ["mem1"])
 
     # Write transcript where the agent paraphrases the memory
     transcript = _write_transcript(tmp_path, "sess1", [

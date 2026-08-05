@@ -48,7 +48,7 @@ def _log_recall(store, *, project: str, query: str, result, agent: str,
     if store is None:
         return
     try:
-        store.log_recall(
+        recall_id = store.log_recall(
             project=project, query_preview=query[:100],
             hits_count=result.hits_count, top_score=result.top_score,
             tokens_injected=result.tokens_injected,
@@ -57,6 +57,9 @@ def _log_recall(store, *, project: str, query: str, result, agent: str,
             conversation_key=conversation_key)
         if result.hit_ids:
             store.record_recall(result.hit_ids)
+            # One pending row per memory served, so the verdict later hangs off
+            # the recall that produced it rather than a time window.
+            store.record_recall_candidates(recall_id, result.hit_ids)
     except Exception:
         pass
 

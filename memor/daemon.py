@@ -314,8 +314,18 @@ def run_poll_cycle(
                 continue
             session_id = unit.path.stem
             try:
+                # Proxy-served recalls carry no session id, so the analyzer is
+                # given the conversation key as well to find them.
+                from memor.conversation import conversation_key as _convo_key
+                from memor.episodes import parse_episodes as _parse
+                try:
+                    _eps = _parse(unit.path)
+                    convo = _eps[0].conversation_key if _eps else ""
+                except Exception:
+                    convo = ""
                 used = analyze_session_feedback(
-                    store, session_id, unit.path, embedder=embedder
+                    store, session_id, unit.path, embedder=embedder,
+                    conversation_key=convo,
                 )
                 if used > 0:
                     print(f"  feedback: {used} memories confirmed used in {session_id[:12]}...")

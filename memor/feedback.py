@@ -71,6 +71,76 @@ def _extract_assistant_texts(transcript_path: Path) -> list[str]:
     return assistant_texts
 
 
+def _record_epoch(rec: dict) -> float:
+    ts = rec.get("timestamp")
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    if isinstance(ts, str):
+        from datetime import datetime
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _extract_stamped_texts(
+    transcript_path: Path,
+) -> tuple[list[tuple[float, str]], list[tuple[float, str]]]:
+    """(assistant, user) texts paired with when they were written.
+
+    Timestamps are the whole point: a memory can only have been used by text
+    written *after* it was recalled, and the previous version compared against
+    the entire session in both directions.
+
+    Note ``type == "user"``. The old code tested for ``"human"``, which no
+    transcript emits, so the user channel was always empty and rejection
+    detection ran on assistant prose alone.
+    """
+    assistant: list[tuple[float, str]] = []
+    user: list[tuple[float, str]] = []
+    try:
+        lines = transcript_path.read_text(errors="replace").splitlines()
+    except OSError:
+        return [], []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        kind = rec.get("type")
+        if kind not in ("assistant", "user"):
+            continue
+        content = rec.get("message", {}).get("content", "")
+        parts = []
+        if isinstance(content, str):
+            parts.append(content.lower())
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block.get("text", "").lower())
+        if not parts:
+            continue
+        stamped = (_record_epoch(rec), " ".join(parts))
+        (assistant if kind == "assistant" else user).append(stamped)
+    return assistant, user
+
+
+def _rejected_after(stamped_user: list[tuple[float, str]],
+                    assistant_after: list[str], since: float) -> bool:
+    """Did the user push back, or the assistant contradict, after this recall?"""
+    for ts, text in stamped_user:
+        if (ts <= 0.0 or ts >= since) and any(p in text for p in _REJECTION_PATTERNS):
+            return True
+    joined = " ".join(assistant_after)
+    return any(p in joined for p in _CONTRADICTION_PATTERNS)
+
+
 def _detect_negative_signals(assistant_texts: list[str], user_texts: list[str]) -> bool:
     """Detect if user rejected or assistant contradicted recalled content."""
     combined_user = " ".join(user_texts)
@@ -120,56 +190,107 @@ def _semantic_match(memory_text: str, response_text: str, embedder) -> bool:
     return _cosine(vecs[0], vecs[1]) >= _SEMANTIC_SIM_THRESHOLD
 
 
+def _session_recalls(store: SqliteStore, session_id: str,
+                     conversation_key: str) -> list[dict]:
+    """Recalls belonging to this session, from either delivery path.
+
+    Hook-served recalls carry the session id. Proxy-served ones cannot — no
+    agent sends a session header — so they are found by the conversation key
+    both sides derive from the opening message.
+    """
+    clauses, params = [], []
+    if session_id:
+        clauses.append("session_id = ?")
+        params.append(session_id)
+    if conversation_key:
+        clauses.append("conversation_key = ?")
+        params.append(conversation_key)
+    if not clauses:
+        return []
+    rows = store.db.execute(
+        f"SELECT id, timestamp FROM recall_log WHERE hits_count > 0 "
+        f"AND ({' OR '.join(clauses)}) ORDER BY timestamp", params).fetchall()
+    return [{"id": r["id"], "timestamp": r["timestamp"] or 0.0} for r in rows]
+
+
 def analyze_session_feedback(
     store: SqliteStore, session_id: str, transcript_path: Path,
-    *, embedder=None,
+    *, embedder=None, conversation_key: str = "",
 ) -> int:
-    recalled_ids = set()
-    rows = store.db.execute("""
-        SELECT q.artifact_id FROM memory_quality q
-        JOIN artifacts a ON a.id = q.artifact_id
-        WHERE a.active = 1
-          AND a.project = (
-              SELECT project FROM recall_log
-              WHERE session_id = ? AND hits_count > 0
-              LIMIT 1
-          )
-          AND q.last_recalled >= (
-              SELECT MIN(timestamp) FROM recall_log
-              WHERE session_id = ? AND hits_count > 0
-          )
-          AND q.last_recalled <= (
-              SELECT MAX(timestamp) FROM recall_log
-              WHERE session_id = ? AND hits_count > 0
-          ) + 5
-    """, (session_id, session_id, session_id)).fetchall()
-    for row in rows:
-        recalled_ids.add(row["artifact_id"])
+    """Settle the verdict on every memory this session was actually served.
 
-    if not recalled_ids:
+    Rewritten against four defects that between them produced 2,180 uses and
+    1,770 rejections for an artifact recalled 40 times:
+
+    * usage was attributed by time window over ``last_recalled``, a single
+      mutable column, so a long session credited every artifact in the project
+      rather than the eight that were served;
+    * one rejection phrase anywhere in a session penalised every one of them;
+    * user turns were matched on ``type == "human"``, which never appears in a
+      transcript, so the rejection channel read only assistant text and fired
+      on phrases as ordinary as "actually use";
+    * counters were incremented, so re-analysing a session inflated them again.
+
+    Now each verdict hangs off the recall that served it, is judged only
+    against what the assistant wrote *after* that recall, and is written once
+    to a pending row that cannot be settled twice.
+    """
+    recalls = _session_recalls(store, session_id, conversation_key)
+    if not recalls:
+        return 0
+    pending = store.pending_outcomes([r["id"] for r in recalls])
+    if not pending:
         return 0
 
-    assistant_texts, user_texts = _extract_texts(transcript_path)
-    if not assistant_texts:
+    stamped_assistant, stamped_user = _extract_stamped_texts(transcript_path)
+    # A user correction with no assistant reply after it is still evidence —
+    # arguably the strongest kind — so this bails only when the transcript
+    # says nothing at all.
+    if not stamped_assistant and not stamped_user:
         return 0
 
-    used_ids = []
-    combined_response = " ".join(assistant_texts) if embedder else ""
-    for aid in recalled_ids:
-        art = store.db.execute(
-            "SELECT text FROM artifacts WHERE id=?", (aid,)
-        ).fetchone()
-        if not art:
+    at = {r["id"]: r["timestamp"] for r in recalls}
+    texts_cache: dict[str, str] = {}
+    verdicts: list[tuple[int, str, str, str]] = []
+
+    for item in pending:
+        rid, aid = item["recall_id"], item["artifact_id"]
+        if aid not in texts_cache:
+            row = store.db.execute(
+                "SELECT text FROM artifacts WHERE id=?", (aid,)).fetchone()
+            texts_cache[aid] = row["text"] if row else ""
+        text = texts_cache[aid]
+        if not text:
             continue
-        if _text_was_used(art["text"], assistant_texts):
-            used_ids.append(aid)
-        elif embedder and _semantic_match(art["text"], combined_response, embedder):
-            used_ids.append(aid)
 
-    if used_ids:
-        store.record_usage(used_ids)
+        # Only what came after the recall can be evidence of using it. A record
+        # with no usable timestamp is kept rather than dropped: excluding it
+        # would mark every memory in a transcript that lacks timestamps
+        # "unused", poisoning the labels exactly as the old bug did, only in
+        # the other direction.
+        since = at.get(rid, 0.0)
+        after = [t for ts, t in stamped_assistant if ts <= 0.0 or ts >= since]
 
-    if _detect_negative_signals(assistant_texts, user_texts) and recalled_ids:
-        store.record_negative(list(recalled_ids))
+        # Rejection outranks use, and is tested before the "nothing followed"
+        # shortcut: a user can correct a memory without the assistant writing
+        # anything afterwards, and that correction is the strongest signal
+        # available. A memory the agent acted on and was then corrected for is
+        # harmful, not helpful, and scoring it "used" would promote exactly the
+        # memories that cost the user a correction. Attributable because it is
+        # scoped to this recall's window; the old blanket version could not say
+        # which memory was wrong.
+        if _rejected_after(stamped_user, after, since):
+            verdicts.append((rid, aid, "rejected", "phrase"))
+        elif not after:
+            verdicts.append((rid, aid, "unused", ""))
+        elif _text_was_used(text, after):
+            verdicts.append((rid, aid, "used", "ngram"))
+        elif embedder and _semantic_match(text, " ".join(after), embedder):
+            verdicts.append((rid, aid, "used", "semantic"))
+        else:
+            # An unused hit is a clean negative, not a missing label: the agent
+            # saw it and did not use it.
+            verdicts.append((rid, aid, "unused", ""))
 
-    return len(used_ids)
+    store.resolve_outcomes(verdicts)
+    return sum(1 for _, _, outcome, _ in verdicts if outcome == "used")

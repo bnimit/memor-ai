@@ -102,6 +102,7 @@ class SqliteStore:
         self._migrate_attribute_unknown_savings()
         self._migrate_recall_agent()
         self._migrate_recall_conversation()
+        self._migrate_repair_impossible_counts()
         self._migrate_key_vectors()
 
     def _init_schema(self):
@@ -134,6 +135,17 @@ class SqliteStore:
           timestamp REAL, project TEXT, query_preview TEXT,
           hits_count INTEGER, top_score REAL, tokens_injected INTEGER,
           latency_ms REAL, status TEXT, session_id TEXT);
+        CREATE TABLE IF NOT EXISTS recall_outcomes(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          recall_id INTEGER NOT NULL,
+          artifact_id TEXT NOT NULL,
+          outcome TEXT NOT NULL DEFAULT 'pending',
+          evidence TEXT,
+          created_at REAL,
+          resolved_at REAL,
+          UNIQUE(recall_id, artifact_id));
+        CREATE INDEX IF NOT EXISTS idx_outcome_artifact ON recall_outcomes(artifact_id);
+        CREATE INDEX IF NOT EXISTS idx_outcome_recall ON recall_outcomes(recall_id, outcome);
         CREATE TABLE IF NOT EXISTS session_stats(
           session_id TEXT PRIMARY KEY,
           project TEXT NOT NULL,
@@ -314,6 +326,39 @@ class SqliteStore:
                 self.db.commit()
             except Exception:
                 pass
+
+    def _migrate_repair_impossible_counts(self):
+        """Clear use/rejection counts that exceed the recalls that produced them.
+
+        The old analyzer attributed usage by time window over a mutable
+        ``last_recalled`` column, so a long session credited every artifact in
+        the project. One row here reached 2,180 uses and 1,770 rejections
+        against 40 recalls -- numbers that describe the bug, not the memory.
+
+        ``recall_count`` is kept: it came from a single increment per recall and
+        is sound. The fabricated columns reset to zero and the score returns to
+        the neutral prior, which reads honestly as "recalled this often, no
+        verdict either way". Scoring these as (0 uses / 40 recalls) would be a
+        near-zero penalty for memories nobody has judged yet.
+        """
+        try:
+            rows = self.db.execute(
+                "SELECT artifact_id, recall_count FROM memory_quality "
+                "WHERE use_count > recall_count OR negative_count > recall_count"
+            ).fetchall()
+        except sqlite3.Error:
+            return
+        if not rows:
+            return
+        try:
+            for row in rows:
+                self.db.execute(
+                    "UPDATE memory_quality SET use_count=0, negative_count=0, "
+                    "quality_score=? WHERE artifact_id=?",
+                    (NEUTRAL_QUALITY, row["artifact_id"]))
+            self.db.commit()
+        except sqlite3.Error:
+            pass
 
     def _migrate_recall_agent(self):
         """Add agent column to recall_log if missing."""
@@ -644,15 +689,118 @@ class SqliteStore:
     def log_recall(self, project: str, query_preview: str, hits_count: int,
                    top_score: float, tokens_injected: int, latency_ms: float,
                    status: str, session_id: str = "",
-                   agent: str = "claude", conversation_key: str = "") -> None:
+                   agent: str = "claude", conversation_key: str = "") -> int | None:
         import time as _time
-        self.db.execute(
+        cur = self.db.execute(
             "INSERT INTO recall_log(timestamp,project,query_preview,hits_count,"
             "top_score,tokens_injected,latency_ms,status,session_id,agent,"
             "conversation_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (_time.time(), project, query_preview[:100], hits_count, top_score,
              tokens_injected, latency_ms, status, session_id, agent,
              conversation_key))
+        self.db.commit()
+        return cur.lastrowid
+
+    def record_recall_candidates(self, recall_id: int | None,
+                                 artifact_ids: list[str]) -> None:
+        """Note which artifacts a recall returned, pending a verdict.
+
+        This is the row the old design lacked. Without it, "was this memory
+        used" had to be answered by asking which artifacts were recalled
+        *around the same time*, and ``last_recalled`` is a single mutable
+        column — so on a session running for days the answer was "every
+        artifact in the project". One artifact ended up credited with 2,180
+        uses against 40 recalls.
+
+        Never raises: this sits on the recall hot path.
+        """
+        if not recall_id or not artifact_ids:
+            return
+        import time as _time
+        now = _time.time()
+        try:
+            self.db.executemany(
+                "INSERT OR IGNORE INTO recall_outcomes"
+                "(recall_id, artifact_id, outcome, created_at) VALUES(?,?,'pending',?)",
+                [(recall_id, aid, now) for aid in artifact_ids])
+            self.db.commit()
+        except sqlite3.Error:
+            pass
+
+    def pending_outcomes(self, recall_ids: list[int]) -> list[dict]:
+        """Artifacts awaiting a verdict for the given recalls."""
+        if not recall_ids:
+            return []
+        qmarks = ",".join("?" * len(recall_ids))
+        rows = self.db.execute(
+            f"SELECT recall_id, artifact_id FROM recall_outcomes "
+            f"WHERE outcome='pending' AND recall_id IN ({qmarks})", recall_ids).fetchall()
+        return [{"recall_id": r["recall_id"], "artifact_id": r["artifact_id"]} for r in rows]
+
+    def resolve_outcomes(self, verdicts: list[tuple[int, str, str, str]]) -> int:
+        """Settle pending verdicts as (recall_id, artifact_id, outcome, evidence).
+
+        Only pending rows are touched, so re-analysing a session cannot inflate
+        anything — the idempotence the counter-incrementing design never had.
+        """
+        if not verdicts:
+            return 0
+        import time as _time
+        now = _time.time()
+        try:
+            cur = self.db.executemany(
+                "UPDATE recall_outcomes SET outcome=?, evidence=?, resolved_at=? "
+                "WHERE recall_id=? AND artifact_id=? AND outcome='pending'",
+                [(outcome, evidence, now, rid, aid)
+                 for rid, aid, outcome, evidence in verdicts])
+            self.db.commit()
+        except sqlite3.Error:
+            return 0
+        affected = sorted({aid for _, aid, _, _ in verdicts})
+        self.recompute_quality_from_outcomes(affected)
+        return cur.rowcount if cur.rowcount and cur.rowcount > 0 else len(verdicts)
+
+    def recompute_quality_from_outcomes(self, artifact_ids: list[str]) -> None:
+        """Rebuild the counters as a view over the outcome ledger.
+
+        Deriving rather than incrementing is what makes the invariant hold by
+        construction: an artifact cannot be used more often than it was
+        returned, because both numbers are counted from the same rows.
+        """
+        for aid in artifact_ids:
+            try:
+                row = self.db.execute(
+                    "SELECT COUNT(*) AS returned,"
+                    " SUM(outcome != 'pending') AS judged,"
+                    " SUM(outcome='used') AS used,"
+                    " SUM(outcome='rejected') AS rejected"
+                    " FROM recall_outcomes WHERE artifact_id=?", (aid,)).fetchone()
+            except sqlite3.Error:
+                continue
+            if not row or not row["returned"]:
+                continue
+            recalled = row["returned"]
+            judged = row["judged"] or 0
+            used = row["used"] or 0
+            rejected = row["rejected"] or 0
+            # Score off evidence, not exposure. Dividing by every appearance
+            # would punish a memory for being retrieved before anyone had
+            # looked at whether it helped — an unjudged memory knows nothing
+            # about itself, so it gets the prior rather than a near-zero score.
+            score = (quality_from_counts(judged, used, rejected) if judged
+                     else NEUTRAL_QUALITY)
+            try:
+                self.db.execute(
+                    "INSERT INTO memory_quality(artifact_id, recall_count, use_count,"
+                    " negative_count, quality_score) VALUES(?,?,?,?,?)"
+                    " ON CONFLICT(artifact_id) DO UPDATE SET"
+                    "  recall_count=excluded.recall_count,"
+                    "  use_count=excluded.use_count,"
+                    "  negative_count=excluded.negative_count,"
+                    "  quality_score=excluded.quality_score",
+                    (aid, recalled, used, rejected, round(score, 3)))
+            except sqlite3.Error:
+                continue
         self.db.commit()
 
     def get_recall_stats(self) -> dict:

@@ -1085,6 +1085,12 @@
           && (r.negative_count || 0) <= (r.recall_count || 0);
     });
     if (!trustworthy) { section.style.display = 'none'; return; }
+    // Every memory sits at the neutral prior until the analyzer has judged it.
+    // Fifty rows of 0.5 is not a quality ranking, it is an empty one wearing
+    // a table; say so instead.
+    var judged = data.filter(function(r) { return (r.judged || 0) > 0; });
+    if (!judged.length) { section.style.display = 'none'; return; }
+    data = judged;
     section.style.display = '';
     data.forEach(function(row) {
       var neg = row.negative_count || 0;

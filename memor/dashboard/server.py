@@ -94,16 +94,23 @@ def create_app(db_path: str | None = None) -> FastAPI:
     @app.get("/api/quality")
     def quality():
         store = _store()
+        # Ordered by evidence before score. Most memories sit at the neutral
+        # prior because nothing has judged them yet, so ranking on score alone
+        # returns an arbitrary slice of the undecided and buries the handful
+        # that actually earned a verdict.
         rows = store.db.execute("""
             SELECT q.artifact_id, q.recall_count, q.use_count,
                    COALESCE(q.negative_count, 0) as negative_count,
                    q.quality_score,
+                   (SELECT COUNT(*) FROM recall_outcomes o
+                     WHERE o.artifact_id = q.artifact_id
+                       AND o.outcome != 'pending') as judged,
                    a.project, a.kind, json_extract(a.meta, '$.mem_type') as mem_type,
                    substr(a.text, 1, 100) as preview
             FROM memory_quality q
             JOIN artifacts a ON a.id = q.artifact_id
             WHERE a.active = 1
-            ORDER BY q.quality_score DESC
+            ORDER BY judged DESC, q.quality_score DESC
             LIMIT 50
         """).fetchall()
         return [dict(r) for r in rows]
