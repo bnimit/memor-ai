@@ -78,22 +78,31 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         # Parse request body
         body = await request.json()
 
-        from memor.project import resolve_project
+        # A proxy is handed an HTTP request and nothing else, so the project
+        # has to be read out of the request. The header is honoured when a
+        # client sends one; no agent does today, and asking for it was why
+        # every proxied recall resolved to "unknown" and returned nothing.
+        from memor.proxy.scope import resolve_request_project
         project_hint = (request.headers.get("x-memor-project") or
                        request.headers.get("x-project") or "")
-        project = resolve_project(project_hint) if project_hint else "unknown"
+        project = resolve_request_project(project_hint, body)
+        # Resolved before the pipeline runs so the recall it serves is logged
+        # against the right agent and session rather than after the fact.
+        agent = resolve_agent(
+            request.headers, path=str(request.url.path), protocol="anthropic",
+        )
+        session_id = (request.headers.get("x-session-id")
+                      or request.headers.get("session-id") or "")
         result = prepare_request_body(
             "anthropic", body, store,
             db_path=db_path, embedder=embedder, project=project,
+            agent=agent, session_id=session_id,
         )
 
         upstream_headers = sanitize_request_headers(request.headers)
         
         stream = _wants_stream(body, request.headers)
         
-        agent = resolve_agent(
-            request.headers, path=str(request.url.path), protocol="anthropic",
-        )
         upstream_url = resolve_upstream_url(agent, "anthropic")
         if upstream_url is None:
             return Response(
@@ -206,22 +215,31 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         # Parse request body
         body = await request.json()
 
-        from memor.project import resolve_project
+        # A proxy is handed an HTTP request and nothing else, so the project
+        # has to be read out of the request. The header is honoured when a
+        # client sends one; no agent does today, and asking for it was why
+        # every proxied recall resolved to "unknown" and returned nothing.
+        from memor.proxy.scope import resolve_request_project
         project_hint = (request.headers.get("x-memor-project") or
                        request.headers.get("x-project") or "")
-        project = resolve_project(project_hint) if project_hint else "unknown"
+        project = resolve_request_project(project_hint, body)
+        # Resolved before the pipeline runs so the recall it serves is logged
+        # against the right agent and session rather than after the fact.
+        agent = resolve_agent(
+            request.headers, path=str(request.url.path), protocol="openai",
+        )
+        session_id = (request.headers.get("x-session-id")
+                      or request.headers.get("session-id") or "")
         result = prepare_request_body(
             "openai", body, store,
             db_path=db_path, embedder=embedder, project=project,
+            agent=agent, session_id=session_id,
         )
 
         upstream_headers = sanitize_request_headers(request.headers)
         
         stream = _wants_stream(body, request.headers)
         
-        agent = resolve_agent(
-            request.headers, path=str(request.url.path), protocol="openai",
-        )
         upstream_url = resolve_upstream_url(agent, "openai")
         if upstream_url is None:
             return Response(

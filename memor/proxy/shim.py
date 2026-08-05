@@ -54,6 +54,8 @@ def prepare_request_body(
     db_path: str,
     embedder,
     project: str,
+    agent: str = "unknown",
+    session_id: str = "",
 ) -> ShimResult:
     """Try run_pipeline + inject_memory; on failure use original body (shim)."""
     if not compressor_state.compressor_ready:
@@ -69,6 +71,9 @@ def prepare_request_body(
             project=project,
             db_path=db_path,
             embedder=embedder,
+            store=store,
+            agent=agent,
+            session_id=session_id,
         )
         compressor_state.mode = "compress"
         compressor_state.compressor_ready = True

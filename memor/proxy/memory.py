@@ -33,7 +33,36 @@ def _append_memories(content, memories_text: str):
     return content
 
 
-def inject_memory(provider: str, body: dict, *, project: str, db_path: str, embedder=None) -> dict:
+def _log_recall(store, *, project: str, query: str, result, agent: str,
+                session_id: str) -> None:
+    """Record a proxy-served recall, including one that found nothing.
+
+    The hook has always logged; this path never did, and that is why recall
+    could return empty on 4,056 consecutive requests without a single number
+    moving anywhere. A zero-hit recall is the most informative event the
+    system produces -- it is the only evidence that retrieval was asked a
+    question it could not answer -- and it was the one event being discarded.
+
+    Never raises: a ledger write must not cost a user their response.
+    """
+    if store is None:
+        return
+    try:
+        store.log_recall(
+            project=project, query_preview=query[:100],
+            hits_count=result.hits_count, top_score=result.top_score,
+            tokens_injected=result.tokens_injected,
+            latency_ms=result.latency_ms, status=result.status,
+            session_id=session_id or "", agent=agent)
+        if result.hit_ids:
+            store.record_recall(result.hit_ids)
+    except Exception:
+        pass
+
+
+def inject_memory(provider: str, body: dict, *, project: str, db_path: str,
+                  embedder=None, store=None, agent: str = "unknown",
+                  session_id: str = "") -> dict:
     """Inject recalled memories into the latest user message.
 
     Args:
@@ -42,6 +71,9 @@ def inject_memory(provider: str, body: dict, *, project: str, db_path: str, embe
         project: Project name for memory scoping
         db_path: Path to the memor database
         embedder: Optional embedder instance (auto-discovered if None)
+        store: Open store used to log the recall. Omit to skip logging.
+        agent: Agent label for the ledger row.
+        session_id: Session the request belongs to, when known.
 
     Returns:
         Modified body dict with memories appended to last user message,
@@ -94,6 +126,9 @@ def inject_memory(provider: str, body: dict, *, project: str, db_path: str, embe
     except Exception:
         # If recall fails for any reason, return unchanged
         return body
+
+    _log_recall(store, project=project, query=query, result=result,
+                agent=agent, session_id=session_id)
 
     if result.hits_count == 0:
         return body
