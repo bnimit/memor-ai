@@ -1051,10 +1051,18 @@
       var color = AGENT_COLORS[agent] || 'var(--text-muted)';
       var tile = el('div', { class: 'agent-tile' });
       var pane = agent;
+      // Below the sample floor the totals are real but the ratio is not a
+      // rate, so the headline shows the request count instead of a percentage.
+      var headline = row.low_sample
+        ? '<div class="val" style="color:var(--text-muted)">' + fmt(row.requests) + ' req</div>'
+        : '<div class="val" style="color:var(--ok)">' + row.pct_saved + '%</div>';
+      var sub = row.low_sample
+        ? fmt(row.tokens_before) + ' → ' + fmt(row.tokens_after) + ' · sample too small'
+        : fmt(row.tokens_before) + ' → ' + fmt(row.tokens_after) + ' · ' + fmt(row.requests) + ' req';
       tile.innerHTML =
         '<div class="name" style="color:' + color + '">' + esc(agentLabel(agent)) + '</div>' +
-        '<div class="val" style="color:var(--ok)">' + row.pct_saved + '%</div>' +
-        '<div class="sub">' + fmt(row.tokens_before) + ' → ' + fmt(row.tokens_after) + ' · ' + fmt(row.requests) + ' req</div>';
+        headline +
+        '<div class="sub">' + esc(sub) + '</div>';
       tile.addEventListener('click', function() {
         if (CORE_AGENTS.indexOf(pane) !== -1 || knownAgents.indexOf(pane) !== -1) switchPane(pane);
       });

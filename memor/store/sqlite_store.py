@@ -30,6 +30,10 @@ def read_dim(db_path: str, default: int) -> int:
         pass
     return default
 
+#: Compressed requests an agent needs before its saving rate is reported as a
+#: rate. Below this a single payload is worth several percentage points.
+MIN_AGENT_SAMPLE = 30
+
 #: Score for an artifact with no usable evidence either way. The retriever
 #: defaults missing ids to the same value, so an unknown artifact and an
 #: untrustworthy one are ranked identically — neither rewarded nor punished.
@@ -95,6 +99,7 @@ class SqliteStore:
         self._migrate_quality_decay()
         self._migrate_negative_count()
         self._migrate_quality_range()
+        self._migrate_attribute_unknown_savings()
         self._migrate_recall_agent()
         self._migrate_key_vectors()
 
@@ -245,6 +250,51 @@ class SqliteStore:
             self.db.commit()
         except sqlite3.Error:
             pass
+
+    def _migrate_attribute_unknown_savings(self):
+        """Relabel ledger rows written before the proxy could identify its caller.
+
+        A proxy never observes who dialled it, only what the request carries.
+        Until path prefixes and the x-agent header existed, every row landed
+        under "unknown" -- 534 of them on the development machine, all on the
+        anthropic protocol, inside one two-day window that closes minutes after
+        per-agent routing shipped. Those rows are not a live blind spot, they
+        are a fossil, and they render as an agent tile claiming a 75.9% saving
+        off twenty requests.
+
+        The relabel reuses the proxy's own inference rule rather than a second
+        guess: where the config names exactly one enabled agent on a protocol,
+        the attribution is unambiguous. Where it names none or several,
+        "unknown" is the honest answer and the rows are left alone.
+        """
+        try:
+            providers = [
+                r["provider"] for r in self.db.execute(
+                    "SELECT DISTINCT provider FROM proxy_savings WHERE agent='unknown'"
+                ).fetchall() if r["provider"]
+            ]
+        except sqlite3.Error:
+            return
+        if not providers:
+            return
+        try:
+            from memor.proxy.upstream import infer_agent_from_config
+        except Exception:
+            return
+        for provider in providers:
+            try:
+                agent = infer_agent_from_config(provider)
+            except Exception:
+                continue
+            if not agent or agent == "unknown":
+                continue
+            try:
+                self.db.execute(
+                    "UPDATE proxy_savings SET agent=? WHERE agent='unknown' AND provider=?",
+                    (agent, provider))
+                self.db.commit()
+            except sqlite3.Error:
+                pass
 
     def _migrate_recall_agent(self):
         """Add agent column to recall_log if missing."""
@@ -1186,13 +1236,20 @@ class SqliteStore:
                 pct_saved = (1 - tokens_after / tokens_before) * 100
             else:
                 pct_saved = 0.0
+            requests = row["requests"] or 0
             result.append({
                 "agent": row["agent"],
                 "tokens_before": tokens_before,
                 "tokens_after": tokens_after,
                 "pct_saved": round(pct_saved, 1),
-                "requests": row["requests"] or 0,
+                "requests": requests,
                 "passthrough_requests": row["passthrough_requests"] or 0,
+                # A ratio over a handful of requests is not a rate. One
+                # unusually compressible payload moves it by several points,
+                # which is how twenty requests came to be displayed as a
+                # headline 75.9%. Callers show the totals and withhold the
+                # percentage when this is set.
+                "low_sample": requests < MIN_AGENT_SAMPLE,
             })
         return result
 
