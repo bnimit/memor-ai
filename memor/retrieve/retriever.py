@@ -18,6 +18,22 @@ RECENCY_HALF_LIFE_DAYS = 14
 # Reciprocal Rank Fusion constant. Larger = flatter (rank position matters less).
 RRF_K = 60
 
+#: Fallback for a candidate with no quality row, and the ceiling every quality
+#: value is held to. The blended score below is a convex combination — every
+#: other term is normalized to [0, 1] — so a quality term that escapes that
+#: range stops being a tie-breaker and becomes the ranking. The store clamps on
+#: read; this repeats it at the point of use so a store implementation that
+#: forgets cannot silently un-rank retrieval.
+NEUTRAL_QUALITY = 0.5
+
+
+def _bounded_quality(scores: dict, aid: str) -> float:
+    value = scores.get(aid, NEUTRAL_QUALITY)
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return NEUTRAL_QUALITY
+
 
 def rrf_fuse(ranked_lists: list[list[str]], k: int = RRF_K) -> dict[str, float]:
     """Reciprocal Rank Fusion: combine several ranked id-lists into one score
@@ -103,7 +119,7 @@ class Retriever:
 
             kind_boost = KIND_WEIGHTS.get(a.kind, 1.0) - 1.0
 
-            quality = quality_scores.get(aid, 0.5)
+            quality = _bounded_quality(quality_scores, aid)
 
             score = (self.w_sim * norm_rel + self.w_rec * recency
                      + self.w_kind * kind_boost + self.w_qual * quality)
@@ -171,7 +187,7 @@ class Retriever:
             age_days = (now - a.created_at) / 86400
             recency = math.exp(-0.693 * age_days / RECENCY_HALF_LIFE_DAYS)
             kind_boost = KIND_WEIGHTS.get(a.kind, 1.0) - 1.0
-            q = quality.get(mid, 0.5)
+            q = _bounded_quality(quality, mid)
             score = (self.w_sim * norm_rel + self.w_rec * recency
                      + self.w_kind * kind_boost + self.w_qual * q)
             # "sim" debug field = raw cosine from vec channel (0.0 for lexical-only hits)
