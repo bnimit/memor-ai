@@ -441,6 +441,23 @@
       </div>
     </section>
 
+    <section id="recall-baseline-section" style="display:none;">
+      <div class="chart-panel" id="recall-baseline-panel">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Recall since the baseline</div>
+            <div class="chart-big" id="rb-headline">–</div>
+          </div>
+          <div class="chart-meta" id="rb-meta">measured across a stamped boundary</div>
+        </div>
+        <div class="rw-body">
+          <div class="rw-detail" id="rb-detail"></div>
+          <div class="rw-strata" id="rb-strata"></div>
+          <div class="rw-note" id="rb-note"></div>
+        </div>
+      </div>
+    </section>
+
     <section>
       <div class="chart-panel" id="compression-panel">
         <div class="chart-head">
@@ -1441,6 +1458,63 @@
     on: ['rw-verdict-null', 'on'],
   };
 
+  async function loadRecallBaseline() {
+    var section = document.getElementById('recall-baseline-section');
+    if (!section) return;
+    var d;
+    try { d = await api('/api/recall-baseline'); }
+    catch (e) { section.style.display = 'none'; return; }
+    // Nothing to show until a boundary exists: `memor recall-baseline --stamp`.
+    if (!d || !d.stamped) { section.style.display = 'none'; return; }
+    section.style.display = '';
+
+    var VERDICT_STYLE = {
+      improved: ['var(--ok)', 'improved'],
+      regressed: ['var(--warn)', 'regressed'],
+      no_effect: ['var(--text-muted)', 'no measurable effect'],
+      too_early: ['var(--text-muted)', 'too early to read'],
+      no_data_yet: ['var(--text-muted)', 'no recalls yet'],
+      retrieval_only: ['var(--text-muted)', 'retrieval only']
+    };
+    var style = VERDICT_STYLE[d.verdict] || ['var(--text-muted)', d.verdict];
+    var headline = document.getElementById('rb-headline');
+    headline.textContent = style[1];
+    headline.style.color = style[0];
+    document.getElementById('rb-meta').textContent =
+      d.days_since + 'd since baseline · ' + fmt((d.retrieval.after || {}).recalls || 0) + ' recalls';
+
+    var r = d.retrieval || {}, v = d.verdicts || {};
+    var lines = [];
+    ['before', 'after'].forEach(function (side) {
+      var s = r[side] || {};
+      if (!s.recalls) { lines.push(side + ': no recalls'); return; }
+      lines.push(side + ': ' + fmt(s.recalls) + ' recalls · '
+        + Math.round((s.hit_rate || 0) * 100) + '% hit · score '
+        + (s.median_top_score || 0).toFixed(2)
+        + (s.scored ? '' : ' (small sample)'));
+    });
+    if (v.scored) {
+      lines.push('verdicts: ' + fmt(v.used) + ' used / ' + fmt(v.judged) + ' judged ('
+        + v.used_pct + '%)');
+    } else if (v.served) {
+      lines.push('verdicts: ' + fmt(v.pending || 0) + ' of ' + fmt(v.served)
+        + ' awaiting a verdict');
+    }
+    document.getElementById('rb-detail').textContent = lines.join('  ·  ');
+
+    var strata = document.getElementById('rb-strata');
+    strata.innerHTML = '';
+    ['before', 'after'].forEach(function (side) {
+      var c = (d.episodes || {})[side] || {};
+      var cell = el('div', { class: 'rw-cell' });
+      var value = c.scored ? (c.gap_pct > 0 ? '+' : '') + c.gap_pct + '%' : '–';
+      cell.innerHTML = '<div class="rw-cell-label">' + side + '</div>'
+        + '<div class="rw-cell-value">' + value + '</div>';
+      strata.appendChild(cell);
+    });
+    document.getElementById('rb-note').textContent = d.verdict_text || '';
+  }
+
   async function loadCompression() {
     var headline = document.getElementById('cx-headline');
     if (!headline) return;
@@ -1500,7 +1574,7 @@
       loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(),
       loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(),
       loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(),
-      loadProxySavingsByAgent(), loadRecallWorth(), loadCompression(),
+      loadProxySavingsByAgent(), loadRecallWorth(), loadRecallBaseline(), loadCompression(),
     ]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
   }

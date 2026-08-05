@@ -186,6 +186,34 @@ def create_app(db_path: str | None = None) -> FastAPI:
         app.state._recall_worth = (_time.time(), summary)
         return summary
 
+    @app.get("/api/recall-baseline")
+    def recall_baseline():
+        """Recall read across the stamped boundary — the alternative to a wipe.
+
+        Cached like recall-worth: it parses transcripts, which is too slow to
+        do on every dashboard poll.
+        """
+        import time as _time
+
+        cached = getattr(app.state, "_recall_baseline", None)
+        if cached and _time.time() - cached[0] < 300:
+            return cached[1]
+        try:
+            from memor.episodes import scan_episodes
+            from memor.recall_baseline import VERDICT_TEXT, compare, get_baseline
+
+            boundary = get_baseline()
+            if not boundary:
+                payload = {"stamped": False}
+            else:
+                payload = compare(_store(), scan_episodes(), boundary)
+                payload["stamped"] = True
+                payload["verdict_text"] = VERDICT_TEXT.get(payload["verdict"], "")
+        except Exception as exc:  # never take the dashboard down for a metric
+            payload = {"stamped": False, "error": str(exc)[:200]}
+        app.state._recall_baseline = (_time.time(), payload)
+        return payload
+
     @app.get("/api/compression")
     def compression():
         """Compression state, realized savings, and whether the bill moved.

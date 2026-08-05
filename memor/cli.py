@@ -971,6 +971,144 @@ def cost_compare_cmd(
         typer.echo(line)
 
 
+@app.command("recall-baseline")
+def recall_baseline_cmd(
+    stamp: bool = typer.Option(
+        False, "--stamp", help="Mark now as the start of a new recall baseline."
+    ),
+    clear: bool = typer.Option(False, "--clear", help="Forget the recorded baseline."),
+):
+    """Show or set the instant a recall change went live.
+
+    The alternative to this is deleting the store to 'start clean', which
+    throws away the ledgers — including the counterfactual runs that are the
+    control arm for whatever you are trying to evaluate. Artifacts rebuild from
+    your transcripts; recall history does not rebuild from anything. Stamping a
+    boundary gets the clean comparison without the loss.
+    """
+    import time as _time
+
+    from memor.recall_baseline import clear_baseline, get_baseline, stamp_baseline
+
+    if clear:
+        clear_baseline()
+        typer.echo("Recall baseline cleared.")
+        return
+    if stamp:
+        ts = stamp_baseline()
+        typer.echo(f"Recall baseline stamped at {_time.strftime('%Y-%m-%d %H:%M', _time.localtime(ts))}")
+        typer.echo("Run normally, then: memor recall-compare")
+        return
+    current = get_baseline()
+    if not current:
+        typer.echo("No recall baseline recorded. Set one with `memor recall-baseline --stamp`.")
+        return
+    typer.echo(
+        f"Recall baseline: {_time.strftime('%Y-%m-%d %H:%M', _time.localtime(current))} "
+        f"({round((_time.time() - current) / 86400, 1)}d ago)"
+    )
+
+
+@app.command("recall-compare")
+def recall_compare_cmd(
+    since: str = typer.Option(
+        None, "--since",
+        help="Boundary: 'YYYY-MM-DD', 'YYYY-MM-DDTHH:MM', or 'Nd' for N days ago. "
+        "Defaults to the stamped recall baseline.",
+    ),
+):
+    """Did the recall changes help? Reads across a stamped boundary.
+
+    Three readings, weakest first: whether retrieval finds things, what share of
+    what it served the agent actually used, and whether the with/without gap
+    moved — the last being the only one that controls for the work itself
+    changing over time.
+    """
+    import re
+    import time as _time
+    from datetime import datetime
+    from pathlib import Path
+
+    from memor.episodes import scan_episodes
+    from memor.recall_baseline import (
+        NOISE_FLOOR_PCT, VERDICT_TEXT, compare, get_baseline,
+    )
+    from memor.store.sqlite_store import SqliteStore, read_dim
+
+    boundary = None
+    if since:
+        m = re.fullmatch(r"(\d+)d", since.strip())
+        if m:
+            boundary = _time.time() - int(m.group(1)) * 86400
+        else:
+            try:
+                boundary = datetime.fromisoformat(since).timestamp()
+            except ValueError:
+                typer.echo(f"Could not read --since '{since}'", err=True)
+                raise typer.Exit(2)
+    else:
+        boundary = get_baseline()
+        if not boundary:
+            typer.echo(
+                "No recall baseline recorded. Stamp one with "
+                "`memor recall-baseline --stamp`, or pass --since.",
+                err=True,
+            )
+            raise typer.Exit(2)
+
+    db_path = str(Path.home() / ".memor" / "memor.db")
+    if not Path(db_path).exists():
+        typer.echo("No database yet.", err=True)
+        raise typer.Exit(2)
+    store = SqliteStore(db_path, dim=read_dim(db_path, 256))
+    result = compare(store, scan_episodes(), float(boundary))
+
+    stamp = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(result["boundary"]))
+    typer.echo(f"Recall baseline: {stamp}  ({result['days_since']}d ago)")
+    typer.echo("=" * 58)
+
+    typer.echo("\nRETRIEVAL")
+    for side in ("before", "after"):
+        s = result["retrieval"][side]
+        if not s.get("recalls"):
+            typer.echo(f"  {side:<7} no recalls")
+            continue
+        note = "" if s.get("scored") else "  (small sample)"
+        typer.echo(
+            f"  {side:<7} {s['recalls']:>6,} recalls   hit {s['hit_rate']:.1%}   "
+            f"score {s['median_top_score']:.2f}   {s['median_tokens']:.0f} tok{note}")
+    if "hit_rate_delta_pp" in result["retrieval"]:
+        typer.echo(f"  delta   {result['retrieval']['hit_rate_delta_pp']:+.1f}pp hit rate")
+
+    v = result["verdicts"]
+    typer.echo("\nVERDICTS ON WHAT WAS SERVED")
+    if not v.get("scored"):
+        typer.echo(f"  {v['served']} memories served, {v.get('pending', 0)} awaiting a verdict")
+        typer.echo("  (the daemon settles these as it ingests sessions)")
+    else:
+        typer.echo(f"  {v['judged']:,} judged of {v['served']:,} served")
+        typer.echo(f"  used {v['used']:,} ({v['used_pct']}%)   "
+                   f"rejected {v['rejected']:,} ({v['rejected_pct']}%)")
+
+    typer.echo("\nWORK PER EPISODE (with recall vs without)")
+    for side in ("before", "after"):
+        c = result["episodes"][side]
+        if not c["scored"]:
+            typer.echo(f"  {side:<7} {c['n_with']} with / {c['n_without']} without — too few")
+            continue
+        typer.echo(f"  {side:<7} {c['median_with']:.0f} vs {c['median_without']:.0f} "
+                   f"tool calls  ({c['gap_pct']:+.1f}% gap)")
+    if result["episodes"].get("did_pp") is not None:
+        typer.echo(f"  change  {result['episodes']['did_pp']:+.1f}pp")
+
+    typer.echo("\n" + "=" * 58)
+    typer.echo(f"VERDICT: {result['verdict'].replace('_', ' ').upper()}")
+    typer.echo("  " + VERDICT_TEXT.get(result["verdict"], ""))
+    typer.echo(
+        f"\n  Observational, not randomised. Differences under {NOISE_FLOOR_PCT}pp "
+        f"are not\n  distinguishable from noise on this corpus.")
+
+
 @app.command("compress-older")
 def compress_older_cmd(
     enable: bool = typer.Option(
