@@ -1,11 +1,16 @@
 from __future__ import annotations
 import os
+import threading
+import time as _time
 from pathlib import Path
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 from memor.store.sqlite_store import SqliteStore
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+#: How long a parse of the transcript corpus stays good enough to reuse.
+EPISODE_TTL = 300.0
 
 
 def create_app(db_path: str | None = None) -> FastAPI:
@@ -21,6 +26,26 @@ def create_app(db_path: str | None = None) -> FastAPI:
         if _cached_store is None:
             _cached_store = SqliteStore(_db_path, dim=_get_dim(_db_path))
         return _cached_store
+
+    # Three endpoints need the same parse of ~2,300 transcripts, and the page
+    # loads them at once. Each held its own cache, so a cold dashboard paid for
+    # the scan three times over, concurrently, and the threads contended: a
+    # 1.5s parse became 8-10s per endpoint. One cache behind one lock means the
+    # first caller parses and the rest wait on that same result.
+    _episodes_lock = threading.Lock()
+    _episodes_cache: list = []  # [(stamp, episodes)]
+
+    def _episodes():
+        """Parsed episodes, shared across endpoints and refreshed on a TTL."""
+        with _episodes_lock:
+            if _episodes_cache and _time.time() - _episodes_cache[0][0] < EPISODE_TTL:
+                return _episodes_cache[0][1]
+            from memor.episodes import scan_episodes
+
+            episodes = scan_episodes()
+            _episodes_cache.clear()
+            _episodes_cache.append((_time.time(), episodes))
+            return episodes
 
     @app.get("/", response_class=HTMLResponse)
     def index():
@@ -173,9 +198,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
         if cached and _time.time() - cached[0] < 300:
             return cached[1]
         try:
-            from memor.episodes import scan_episodes, summarize
+            from memor.episodes import summarize
 
-            summary = summarize(scan_episodes())
+            summary = summarize(_episodes())
         except Exception as exc:  # never take the dashboard down for a metric
             summary = {
                 "overall": {"verdict": "insufficient_data", "episodes": 0, "usable": 0},
@@ -199,14 +224,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
         if cached and _time.time() - cached[0] < 300:
             return cached[1]
         try:
-            from memor.episodes import scan_episodes
             from memor.recall_baseline import VERDICT_TEXT, compare, get_baseline
 
             boundary = get_baseline()
             if not boundary:
                 payload = {"stamped": False}
             else:
-                payload = compare(_store(), scan_episodes(), boundary)
+                payload = compare(_store(), _episodes(), boundary)
                 payload["stamped"] = True
                 payload["verdict_text"] = VERDICT_TEXT.get(payload["verdict"], "")
         except Exception as exc:  # never take the dashboard down for a metric
@@ -267,9 +291,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 payload["cost"] = cached[1]
             else:
                 try:
-                    from memor.episodes import compare_at, scan_episodes
+                    from memor.episodes import compare_at
 
-                    cost = compare_at(scan_episodes(), float(started))
+                    cost = compare_at(_episodes(), float(started))
                     payload["cost"] = {
                         k: cost[k]
                         for k in ("verdict", "cost_delta_pct", "n_before", "n_after")
