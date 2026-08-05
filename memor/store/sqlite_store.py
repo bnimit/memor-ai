@@ -30,6 +30,41 @@ def read_dim(db_path: str, default: int) -> int:
         pass
     return default
 
+#: Score for an artifact with no usable evidence either way. The retriever
+#: defaults missing ids to the same value, so an unknown artifact and an
+#: untrustworthy one are ranked identically — neither rewarded nor punished.
+NEUTRAL_QUALITY = 0.5
+
+
+def clamp_quality(score: float | None) -> float:
+    """Force a quality score into [0, 1].
+
+    The retrieval score is a weighted sum whose other terms are all normalized
+    to [0, 1], so quality has to be too. An unbounded value does not merely
+    tilt the ranking, it replaces it: at w_qual=0.10, a score of 5.0 out-weighs
+    a *perfect* relevance match at w_sim=0.50.
+    """
+    if score is None:
+        return NEUTRAL_QUALITY
+    return min(1.0, max(0.0, float(score)))
+
+
+def quality_from_counts(recall_count, use_count, negative_count) -> float:
+    """Laplace-smoothed use rate, or the neutral prior if the counts are unsound.
+
+    An artifact cannot be used, or rejected, more often than it was recalled.
+    When that invariant is violated the counters carry no information about the
+    artifact — only about the bug that wrote them — so the honest answer is the
+    prior rather than a number derived from corrupt input.
+    """
+    rc = int(recall_count or 0)
+    uc = int(use_count or 0)
+    nc = int(negative_count or 0)
+    if rc <= 0 or uc > rc or nc > rc or uc < 0 or nc < 0:
+        return NEUTRAL_QUALITY
+    return clamp_quality((uc - nc + 1) / (rc + 2))
+
+
 def _choose_chunk_size(active_count: int) -> int:
     if active_count < 1000:
         return 64
@@ -54,6 +89,7 @@ class SqliteStore:
         self._migrate_fts()
         self._migrate_quality_decay()
         self._migrate_negative_count()
+        self._migrate_quality_range()
         self._migrate_recall_agent()
         self._migrate_key_vectors()
 
@@ -175,6 +211,35 @@ class SqliteStore:
                 self.db.commit()
             except Exception:
                 pass
+
+    def _migrate_quality_range(self):
+        """Rewrite quality scores that fall outside [0, 1].
+
+        Databases written before the range was enforced hold scores as high as
+        157, because the counters feeding them could exceed the recall count.
+        Recomputing from the counts also restores the neutral prior wherever
+        those counts are self-contradictory. Read-side clamping already keeps
+        such a database safe; this makes the stored values honest as well.
+        """
+        try:
+            rows = self.db.execute(
+                "SELECT artifact_id, recall_count, use_count, negative_count "
+                "FROM memory_quality WHERE quality_score < 0 OR quality_score > 1"
+            ).fetchall()
+        except sqlite3.Error:
+            return
+        if not rows:
+            return
+        try:
+            for row in rows:
+                self.db.execute(
+                    "UPDATE memory_quality SET quality_score=? WHERE artifact_id=?",
+                    (round(quality_from_counts(row["recall_count"], row["use_count"],
+                                               row["negative_count"]), 3),
+                     row["artifact_id"]))
+            self.db.commit()
+        except sqlite3.Error:
+            pass
 
     def _migrate_recall_agent(self):
         """Add agent column to recall_log if missing."""
@@ -667,10 +732,8 @@ class SqliteStore:
                 "SELECT recall_count, use_count, negative_count FROM memory_quality WHERE artifact_id=?",
                 (aid,)).fetchone()
             if row:
-                rc = row["recall_count"] or 1
-                uc = row["use_count"] or 0
-                nc = row["negative_count"] or 0
-                score = max(0.0, (uc - nc + 1) / (rc + 2))
+                score = quality_from_counts(
+                    row["recall_count"], row["use_count"], row["negative_count"])
                 self.db.execute(
                     "UPDATE memory_quality SET quality_score=? WHERE artifact_id=?",
                     (round(score, 3), aid))
@@ -680,12 +743,17 @@ class SqliteStore:
         row = self.db.execute(
             "SELECT quality_score FROM memory_quality WHERE artifact_id=?",
             (artifact_id,)).fetchone()
-        return row["quality_score"] if row else 0.5
+        return clamp_quality(row["quality_score"]) if row else NEUTRAL_QUALITY
 
     def get_quality_scores(self, artifact_ids: list[str]) -> dict[str, float]:
         """Batch form of get_quality_score: one query for the whole candidate
         set (callers default missing ids to 0.5). Keeps the widened retrieval
-        pool off the N+1-query path on the per-prompt hot path."""
+        pool off the N+1-query path on the per-prompt hot path.
+
+        Values are clamped on the way out as well as on the way in: a database
+        written by an older build may hold out-of-range scores, and the ranking
+        term must stay inside its weight budget without waiting for a migration.
+        """
         ids = list(artifact_ids)
         if not ids:
             return {}
@@ -693,7 +761,7 @@ class SqliteStore:
         rows = self.db.execute(
             f"SELECT artifact_id, quality_score FROM memory_quality "
             f"WHERE artifact_id IN ({qmarks})", ids).fetchall()
-        return {r["artifact_id"]: r["quality_score"] for r in rows}
+        return {r["artifact_id"]: clamp_quality(r["quality_score"]) for r in rows}
 
     def get_stale_memories(self, days: int = 30) -> list[str]:
         import time as _time
