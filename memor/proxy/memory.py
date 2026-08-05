@@ -34,7 +34,7 @@ def _append_memories(content, memories_text: str):
 
 
 def _log_recall(store, *, project: str, query: str, result, agent: str,
-                session_id: str) -> None:
+                session_id: str, conversation_key: str = "") -> None:
     """Record a proxy-served recall, including one that found nothing.
 
     The hook has always logged; this path never did, and that is why recall
@@ -53,7 +53,8 @@ def _log_recall(store, *, project: str, query: str, result, agent: str,
             hits_count=result.hits_count, top_score=result.top_score,
             tokens_injected=result.tokens_injected,
             latency_ms=result.latency_ms, status=result.status,
-            session_id=session_id or "", agent=agent)
+            session_id=session_id or "", agent=agent,
+            conversation_key=conversation_key)
         if result.hit_ids:
             store.record_recall(result.hit_ids)
     except Exception:
@@ -127,8 +128,14 @@ def inject_memory(provider: str, body: dict, *, project: str, db_path: str,
         # If recall fails for any reason, return unchanged
         return body
 
+    # Claude Code sends no session header, so the episode meter has nothing to
+    # join a proxy-served recall against. Both sides can derive this from the
+    # conversation's opening message without any client cooperation.
+    from memor.conversation import key_from_body
+
     _log_recall(store, project=project, query=query, result=result,
-                agent=agent, session_id=session_id)
+                agent=agent, session_id=session_id,
+                conversation_key=key_from_body(body))
 
     if result.hits_count == 0:
         return body

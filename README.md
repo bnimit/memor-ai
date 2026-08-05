@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-445%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1032%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -53,7 +53,9 @@ Memory works out of the box via hooks. To also compress tool payloads and track 
 memor install-proxy --agent claude   # or: codex, goose, kimi, cursor, cline, opencode
 ```
 
-This points your agent at a local proxy on `127.0.0.1:8421`, compresses latest-turn tool content before it reaches the provider, and logs savings to the dashboard. For proxied agents, hooks skip inject (memory comes from the proxy path); Cursor and Copilot always use hooks only.
+This points your agent at a local proxy on `127.0.0.1:8421`, compresses tool payloads before they reach the provider, and logs savings to the dashboard. For proxied agents, hooks skip inject and **recall is served by the proxy instead**; Cursor and Copilot always use hooks only.
+
+A proxy is handed an HTTP request and nothing else — no working directory — so it works out which project a request belongs to by reading the request itself: the working directory the agent states in its system prompt, and failing that the git root shared by the absolute file paths its tool calls name. If neither yields a real repository, recall falls back to global memories rather than guessing at a project.
 
 `memor service restart` (e.g. after `pipx upgrade`) keeps the proxy running when it was opted in. If the proxy fails its health check on install, Memor restores your agent’s original API URLs so calls are not left pointing at a dead localhost port. `memor service stop` warns while agents still point at the proxy; `memor service uninstall` restores direct API configs for proxy-enabled agents.
 
@@ -100,11 +102,11 @@ Memor runs two complementary local paths — combine them or use either alone:
               ┌─────────────────────────────┼─────────────────────────────┐
               ▼                             ▼                             ▼
        Path A: Hooks                 Path B: Proxy                 Shared store
-       (memory, all agents)          (savings, opt-in)             SQLite + vec
+       (memory, all agents)          (memory + savings)            SQLite + vec
               │                             │                      + FTS + ledger
-              │ recall inject               │ compress latest-turn
-              │ always on after             │ tool payloads; forward
-              │ install-hook                │ to provider; CCR originals
+              │ recall inject               │ recall inject +
+              │ always on after             │ compress tool payloads;
+              │ install-hook                │ forward; CCR originals
               ▼                             ▼
        Claude · Cursor · Codex         Anthropic / OpenAI
        Copilot · Kimi · Goose          (your existing credentials)
@@ -118,9 +120,11 @@ Memor runs two complementary local paths — combine them or use either alone:
 | Path | Purpose | Default |
 |------|---------|---------|
 | **Hooks** | Shared memory recall across all agents | On after `memor install-hook` |
-| **Proxy** | Compress tool payloads; ledger token savings | Opt-in via `memor install-proxy` |
+| **Proxy** | Recall + compress tool payloads; ledger token savings | Opt-in via `memor install-proxy` |
 
-**Memory is fire-and-forget** — install hooks once, every prompt gets relevant context. **Proxy is opt-in** — for Claude Code, Codex, Goose, and Kimi when you want measurable token savings. Proxied agents skip hook inject (memory comes from the proxy path); Cursor and Copilot always use hooks. The proxy forwards your existing Anthropic/OpenAI credentials; Memor does not require its own API key.
+**Memory is fire-and-forget** — install hooks once, every prompt gets relevant context. **Proxy is opt-in** — for Claude Code, Codex, Goose, and Kimi when you want measurable token savings on top. Proxied agents skip hook inject and are served recall by the proxy instead; Cursor and Copilot always use hooks. The proxy forwards your existing Anthropic/OpenAI credentials; Memor does not require its own API key.
+
+Both paths write to the same recall ledger, including recalls that return nothing — a retrieval that found no match is the only direct evidence that retrieval was asked a question it could not answer, so it is recorded rather than discarded.
 
 ---
 
@@ -187,7 +191,7 @@ A single `memor-hook` binary auto-detects which agent is calling it — no separ
 
 1. **Daemon** — polls local agent session stores (Claude Code `~/.claude/projects/`, Kimi `~/.kimi/sessions/`, Goose `~/.local/share/goose/sessions/sessions.db`), embeds chunks, runs distillation, analyzes feedback (Claude), promotes cross-project patterns to global scope, compacts duplicates, auto-compacts the vector index when bloated, tracks session-level token usage. Model providers are not ingest sources — only the agent that owns the session. All local. Use `memor backfill` for a one-shot ingest of past sessions.
 2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Sub-15ms. Works across Claude Code, Cursor, Codex, Copilot, Kimi, and Goose.
-3. **Proxy** (optional) — intercepts Anthropic/OpenAI API calls on `127.0.0.1:8421`, compresses latest-turn tool payloads, forwards to your provider, and writes a savings ledger. Started automatically by `memor install-proxy`.
+3. **Proxy** (optional) — intercepts Anthropic/OpenAI API calls on `127.0.0.1:8421`, serves recall, compresses tool payloads, forwards to your provider, and writes savings and recall ledgers. Started automatically by `memor install-proxy`.
 
 **No Memor API key required.** Embeddings and compressors run locally. The proxy forwards your existing Anthropic/OpenAI credentials — keys are never stored. Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
 
@@ -213,9 +217,11 @@ Surviving candidates are ranked by four signals:
 | **Semantic similarity** | 50% | Dense + lexical relevance, fused via RRF |
 | **Recency** | 25% | Exponential decay with 14-day half-life — recent decisions rank higher |
 | **Kind weight** | 15% | Distilled memories (1.3x) rank above raw session chunks (1.0x) |
-| **Quality** | 10% | Bayesian score from implicit feedback — memories the agent actually uses rank higher |
+| **Quality** | 10% | Bayesian score from implicit feedback, bounded to `[0, 1]` — memories the agent actually uses rank higher |
 
 This means a relevant decision from yesterday beats a vaguely-related chunk from a month ago — even if the raw embedding similarity is similar.
+
+Every term is normalized to `[0, 1]` and the weights sum to 1.0, so no single signal can outweigh the rest. That matters more than it sounds: quality is derived from counters, and if those counters go wrong an unbounded quality term stops being a tie-breaker and silently becomes the entire ranking. Scores are clamped on write, on read, and again at the point of use, and counts that violate their own invariant — an artifact used more often than it was recalled — fall back to the neutral prior instead of producing a number from corrupt input.
 
 ### Feedback Loop
 
@@ -224,7 +230,9 @@ Memor tracks whether recalled memories actually get used by the agent — and wh
 - **Positive signal** — n-gram overlap or semantic similarity between recalled content and the agent's response. Memories that consistently prove useful get quality boosts.
 - **Negative signal** — user rejection ("no that's wrong", "we switched to X") or assistant contradiction ("however, looking at the current code, we actually use Y"). Memories that get corrected receive a quality penalty, making them less likely to be recalled next time.
 
-The quality formula is Bayesian: `(uses - negatives + 1) / (recalls + 2)`. One correction weighs as much as one positive use, so harmful memories drop fast. Memories never recalled in 30+ days get automatically deactivated. Near-duplicate memories are compacted into one.
+The quality formula is Bayesian: `(uses - negatives + 1) / (recalls + 2)`, clamped to `[0, 1]`. One correction weighs as much as one positive use, so harmful memories drop fast. Memories never recalled in 30+ days get automatically deactivated. Near-duplicate memories are compacted into one.
+
+> **Known limitation.** The analyzer currently over-counts in both directions: it attributes usage by time window rather than per recall, so on a long-running session an artifact can accrue more uses than it had recalls, and one rejection phrase anywhere in a session penalizes every artifact recalled in it. Quality scores derived from such counts fall back to the neutral prior, so ranking is unaffected — but the per-memory `used` / `rejected` figures are not yet trustworthy, and the dashboard hides that table until they are.
 
 ---
 
@@ -360,7 +368,8 @@ memor/
 |   +-- install.py               Wire agent config + backups
 |   +-- mcp_retrieve.py          memor_retrieve MCP tool
 |
-+-- compress/                  Log / search / JSON crushers for tool payloads
++-- compress/                  Structure-preserving crushers: code (AST /
+|                                 tree-sitter), search, log, JSON, text
 |
 +-- retrieve/retriever.py      Hybrid dense + BM25 (RRF) + relevance gate
 +-- store/sqlite_store.py      SQLite + sqlite-vec + FTS5 + proxy_savings
@@ -389,7 +398,7 @@ skill/recall.py                Standalone recall script
 
 - **The proxy binds localhost only** (`127.0.0.1:8421`) and accepts no remote connections.
 - **It makes the outbound call your agent would have made anyway**, to the same provider endpoint, carrying your existing provider API key. Keys are forwarded, never stored or logged.
-- **It rewrites request bodies** — compressing latest-turn tool payloads — so what the provider receives is not byte-identical to what your agent sent. Originals stay local in the CCR store.
+- **It rewrites request bodies** — compressing tool payloads and appending recalled memories to the latest user message — so what the provider receives is not byte-identical to what your agent sent. Originals stay local in the CCR store.
 
 ### Why no Composer interception
 

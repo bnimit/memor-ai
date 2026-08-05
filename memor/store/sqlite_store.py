@@ -101,6 +101,7 @@ class SqliteStore:
         self._migrate_quality_range()
         self._migrate_attribute_unknown_savings()
         self._migrate_recall_agent()
+        self._migrate_recall_conversation()
         self._migrate_key_vectors()
 
     def _init_schema(self):
@@ -294,6 +295,24 @@ class SqliteStore:
                     (agent, provider))
                 self.db.commit()
             except sqlite3.Error:
+                pass
+
+    def _migrate_recall_conversation(self):
+        """Add conversation_key to recall_log if missing.
+
+        The proxy and the episode meter share no session identifier, so recalls
+        served by the proxy could not be attributed to the episodes they
+        belonged to. This column carries a key both sides derive independently.
+        """
+        cols = [r[1] for r in self.db.execute("PRAGMA table_info(recall_log)").fetchall()]
+        if "conversation_key" not in cols:
+            try:
+                self.db.execute("ALTER TABLE recall_log ADD COLUMN conversation_key TEXT")
+                self.db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_recall_conversation "
+                    "ON recall_log(conversation_key)")
+                self.db.commit()
+            except Exception:
                 pass
 
     def _migrate_recall_agent(self):
@@ -625,14 +644,15 @@ class SqliteStore:
     def log_recall(self, project: str, query_preview: str, hits_count: int,
                    top_score: float, tokens_injected: int, latency_ms: float,
                    status: str, session_id: str = "",
-                   agent: str = "claude") -> None:
+                   agent: str = "claude", conversation_key: str = "") -> None:
         import time as _time
         self.db.execute(
             "INSERT INTO recall_log(timestamp,project,query_preview,hits_count,"
-            "top_score,tokens_injected,latency_ms,status,session_id,agent) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "top_score,tokens_injected,latency_ms,status,session_id,agent,"
+            "conversation_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (_time.time(), project, query_preview[:100], hits_count, top_score,
-             tokens_injected, latency_ms, status, session_id, agent))
+             tokens_injected, latency_ms, status, session_id, agent,
+             conversation_key))
         self.db.commit()
 
     def get_recall_stats(self) -> dict:

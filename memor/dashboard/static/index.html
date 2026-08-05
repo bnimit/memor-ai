@@ -401,7 +401,7 @@
         <div class="kpi">
           <div class="kpi-label">Recalls</div>
           <div class="kpi-value" id="m-recalls">–</div>
-          <div class="kpi-sub" id="m-recalls-sub">hook events</div>
+          <div class="kpi-sub" id="m-recalls-sub">hook + proxy</div>
         </div>
         <div class="kpi">
           <div class="kpi-label">Projects</div>
@@ -1075,6 +1075,16 @@
     var tbody = document.getElementById('quality-body');
     tbody.innerHTML = '';
     if (!data || !data.length) { section.style.display = 'none'; return; }
+    // The counters behind these rows are known wrong — the feedback analyzer
+    // credits an artifact with more uses than it had recalls, so "used" and
+    // "rejected" are both inflated and the ranking of this table is
+    // meaningless. Blank beats confidently wrong; restore when the label
+    // channel is repaired.
+    var trustworthy = data.every(function(r) {
+      return (r.use_count || 0) <= (r.recall_count || 0)
+          && (r.negative_count || 0) <= (r.recall_count || 0);
+    });
+    if (!trustworthy) { section.style.display = 'none'; return; }
     section.style.display = '';
     data.forEach(function(row) {
       var neg = row.negative_count || 0;

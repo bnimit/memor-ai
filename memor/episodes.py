@@ -26,6 +26,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from bisect import bisect_right
 from statistics import median
 
 RECALL_MARKER = "## Recalled Memories"
@@ -41,6 +42,7 @@ CONFOUND_NOTE = (
 class Episode:
     session_id: str = ""
     project: str = ""
+    conversation_key: str = ""
     started_at: float = 0.0
     prompt_chars: int = 0
     had_recall: bool = False
@@ -138,11 +140,44 @@ def memor_recall_chars(rec: dict) -> int:
     return len(text)
 
 
+def attach_logged_recalls(episodes: list[Episode],
+                          recalls: list[tuple[float, int]]) -> None:
+    """Mark episodes served by a recall that left no trace in the transcript.
+
+    Hook-injected memories arrive as a transcript attachment, which is what
+    ``memor_recall_chars`` looks for. Proxy-injected memories are spliced into
+    the API request body and never reach the transcript at all, so from the
+    meter's point of view a proxied episode looks untreated. Counting those as
+    controls puts treated episodes in the control arm, which drags any measured
+    effect toward zero -- the failure mode is a false "no effect", the one
+    verdict that looks like an honest null.
+
+    Episodes are consecutive in time, so a recall belongs to the last episode
+    that began before it. Recalls with no episode before them are dropped
+    rather than guessed at.
+    """
+    if not episodes or not recalls:
+        return
+    ordered = sorted(episodes, key=lambda e: e.started_at)
+    starts = [e.started_at for e in ordered]
+    for timestamp, tokens in recalls:
+        idx = bisect_right(starts, timestamp) - 1
+        if idx < 0:
+            continue
+        episode = ordered[idx]
+        episode.had_recall = True
+        # Tokens, not characters: this path only ever knows the token count.
+        # recall_chars stays comparable because it is used as a presence
+        # signal and a rough magnitude, never converted back to characters.
+        episode.recall_chars += max(tokens, 1)
+
+
 def parse_episodes(path: Path, *, project: str = "", session_id: str = "") -> list[Episode]:
     """Split one transcript into episodes."""
     episodes: list[Episode] = []
     current: Episode | None = None
     sid = session_id or path.stem
+    convo_key = ""
 
     for line in path.read_text(errors="replace").splitlines():
         line = line.strip()
@@ -154,11 +189,16 @@ def parse_episodes(path: Path, *, project: str = "", session_id: str = "") -> li
             continue
 
         if is_user_prompt(rec):
+            text = _prompt_text(rec)
+            if not convo_key:
+                from memor.conversation import conversation_key
+                convo_key = conversation_key(text)
             current = Episode(
                 session_id=sid,
                 project=project,
+                conversation_key=convo_key,
                 started_at=_epoch(rec.get("timestamp")),
-                prompt_chars=len(_prompt_text(rec)),
+                prompt_chars=len(text),
             )
             episodes.append(current)
             continue
@@ -214,7 +254,45 @@ def scan_episodes(projects_dir: Path | None = None) -> list[Episode]:
                 out.extend(parse_episodes(transcript, project=project))
             except Exception:
                 continue
+    _attach_proxy_recalls(out)
     return out
+
+
+def _attach_proxy_recalls(episodes: list[Episode]) -> None:
+    """Fold in recalls the proxy served, which no transcript records.
+
+    Best effort by design: the meter must still produce an answer from
+    transcripts alone if the ledger is unavailable, and an episode that was
+    already marked from its transcript is unaffected by a second source.
+    """
+    keyed: dict[str, list[Episode]] = {}
+    for episode in episodes:
+        if episode.conversation_key:
+            keyed.setdefault(episode.conversation_key, []).append(episode)
+    if not keyed:
+        return
+    try:
+        from memor.store.sqlite_store import SqliteStore, read_dim
+
+        db_path = str(Path.home() / ".memor" / "memor.db")
+        if not Path(db_path).exists():
+            return
+        store = SqliteStore(db_path, dim=read_dim(db_path, 256))
+        rows = store.db.execute(
+            "SELECT conversation_key, timestamp, tokens_injected FROM recall_log "
+            "WHERE conversation_key IS NOT NULL AND conversation_key != '' "
+            "AND hits_count > 0"
+        ).fetchall()
+    except Exception:
+        return
+    by_key: dict[str, list[tuple[float, int]]] = {}
+    for row in rows:
+        by_key.setdefault(row["conversation_key"], []).append(
+            (row["timestamp"] or 0.0, row["tokens_injected"] or 0))
+    for key, group in keyed.items():
+        recalls = by_key.get(key)
+        if recalls:
+            attach_logged_recalls(group, recalls)
 
 
 def _stats(episodes: list[Episode]) -> dict:
