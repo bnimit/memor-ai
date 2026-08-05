@@ -18,6 +18,34 @@ KIMI_JSON_PATH = Path.home() / ".kimi" / "kimi.json"
 _WORKDIR_RE = re.compile(r"Working directory:\s*(\S+)", re.I)
 
 
+def _user_input_text(value) -> str:
+    """Flatten a TurnBegin ``user_input`` to text, whatever shape it arrived in.
+
+    Kimi sends a plain string for a typed message, but a list of content blocks
+    when the turn carries an attachment -- a screenshot pasted into the prompt
+    arrives as ``[{"type": "text", ...}, {"type": "image_url", ...}]``. Calling
+    string methods on that list raised, and because the daemon records a file's
+    state only after a successful parse, the two affected sessions were retried
+    on every poll forever, re-running the whole post-ingest pipeline each time.
+
+    Only text blocks are kept: an image carries no text to embed, and its
+    base64 payload would be megabytes of noise.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for block in value:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(p for p in parts if p)
+    return ""
+
+
 def load_work_dir_map(kimi_json_path: Path = KIMI_JSON_PATH) -> dict[str, str]:
     """Map md5(work_dir path) -> absolute work_dir path from kimi.json."""
     if not kimi_json_path.exists():
@@ -66,7 +94,7 @@ def _workdir_from_wire(wire_path: Path) -> str | None:
         msg = rec.get("message") or {}
         if msg.get("type") != "TurnBegin":
             continue
-        user_input = (msg.get("payload") or {}).get("user_input") or ""
+        user_input = _user_input_text((msg.get("payload") or {}).get("user_input"))
         m = _WORKDIR_RE.search(user_input)
         if m:
             return m.group(1).strip()
@@ -106,10 +134,11 @@ def parse_wire(
 
         if msg_type == "TurnBegin":
             role = "user"
-            text = (payload.get("user_input") or "").strip()
+            text = _user_input_text(payload.get("user_input")).strip()
         elif msg_type == "ContentPart" and payload.get("type") == "text":
             role = "assistant"
-            text = (payload.get("text") or "").strip()
+            text = (payload.get("text") or "")
+            text = text.strip() if isinstance(text, str) else ""
         else:
             continue
 

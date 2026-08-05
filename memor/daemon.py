@@ -297,6 +297,12 @@ def run_poll_cycle(
             else:
                 print(f"  {progress_prefix}skipped {label} (0 chunks after filtering)")
         except Exception as e:
+            # Record the file as seen even though it failed. The state key is
+            # what stops a unit being retried, so leaving it unset made a file
+            # that always raises come back on every poll forever, re-running
+            # the whole post-ingest pipeline each time. A retry is only useful
+            # once the file changes, and a changed mtime brings it back anyway.
+            state[unit.state_key] = unit.mtime
             print(f"  {progress_prefix}ERROR ingesting {label}: {e}")
 
     # Auto-distill new sessions (LLM if available, extractive fallback otherwise)

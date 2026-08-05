@@ -187,9 +187,15 @@ def test_poll_cycle_handles_bad_file(tmp_path):
 
     state = {}
     state, _, _ = run_poll_cycle(state, store, embedder, tmp_path / "projects")
-    # Good file should be in state, bad file should not (error -> no state update)
+    # The good file is ingested and recorded as usual.
     assert str(good) in state
-    assert str(bad) not in state
+    # The bad file is recorded too, even though it failed. Leaving it unset
+    # meant a permanently corrupt file was re-read on every 30s poll forever,
+    # and each retry re-ran the whole post-ingest pipeline -- which is what
+    # pinned the daemon at ~90% CPU. A retry only helps once the file changes,
+    # and a changed mtime brings it back on its own.
+    assert str(bad) in state
+    assert state[str(bad)] == bad.stat().st_mtime
 
 
 def test_poll_cycle_missing_goose_db_does_not_crash(tmp_path):

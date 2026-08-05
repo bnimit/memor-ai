@@ -18,6 +18,31 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
+def _similarity_matrix(vecs):
+    """Row-normalized vectors whose dot products are cosines, as one matrix.
+
+    The pairwise scan is O(n^2) in the number of memories, and at 2,441
+    memories that is ~3M pairs. Done as a Python loop it took ~40s -- longer
+    than the 30s poll interval, so the daemon never reached idle and sat at
+    90% CPU indefinitely. As a single matrix product it is milliseconds.
+
+    Returns None when numpy is unavailable, so the caller keeps its original
+    behaviour rather than failing.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    matrix = np.asarray(vecs, dtype=np.float32)
+    if matrix.ndim != 2 or matrix.size == 0:
+        return None
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    # A zero vector has no direction, so it is similar to nothing; dividing by
+    # one leaves its dot products at zero rather than producing a nan.
+    norms[norms == 0.0] = 1.0
+    return matrix / norms
+
+
 def find_promotion_candidates(
     store: SqliteStore, embedder, *,
     min_projects: int = 3, sim_threshold: float = 0.85,
@@ -35,6 +60,7 @@ def find_promotion_candidates(
 
     memories = [store._row_to_artifact(r) for r in rows]
     vecs = embedder.embed([m.text for m in memories])
+    unit = _similarity_matrix(vecs)
 
     clusters: list[dict] = []
     assigned = set()
@@ -44,12 +70,15 @@ def find_promotion_candidates(
             continue
         cluster = {"text": mem.text, "source_ids": [mem.id], "projects": {mem.project}}
         assigned.add(i)
+        # One dot product against every later memory at once, instead of a
+        # Python call per pair.
+        sims = unit[i + 1:] @ unit[i] if unit is not None else None
         for j in range(i + 1, len(memories)):
             if j in assigned:
                 continue
             if memories[j].project in cluster["projects"]:
                 continue
-            sim = _cosine(vecs[i], vecs[j])
+            sim = float(sims[j - i - 1]) if sims is not None else _cosine(vecs[i], vecs[j])
             if sim >= sim_threshold:
                 cluster["source_ids"].append(memories[j].id)
                 cluster["projects"].add(memories[j].project)
