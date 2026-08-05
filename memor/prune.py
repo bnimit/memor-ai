@@ -53,14 +53,22 @@ def find_duplicates(store) -> list[str]:
 
     The earliest is kept rather than the newest so that recall history already
     pointing at an id stays pointing at a live artifact.
+
+    Deduplication is *within a kind*, never across. A distilled ``memory`` is
+    derived from the ``session_chunk`` it was distilled from, so the two often
+    carry identical text while being entirely different objects: one is raw
+    transcript, the other is the curated artifact recall is supposed to serve.
+    Comparing them together retired 2,442 of 2,457 distilled memories on a real
+    store -- every one of them losing to the raw chunk that merely happened to
+    be older -- which silently downgraded recall to ``extractive_only``.
     """
     rows = store.db.execute(
-        "SELECT id, project, text, created_at FROM artifacts "
+        "SELECT id, kind, project, text, created_at FROM artifacts "
         "WHERE active=1 ORDER BY created_at ASC, id ASC").fetchall()
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     losers: list[str] = []
     for row in rows:
-        key = (row["project"] or "", content_key(row["text"]))
+        key = (row["kind"] or "", row["project"] or "", content_key(row["text"]))
         if key in seen:
             losers.append(row["id"])
         else:
