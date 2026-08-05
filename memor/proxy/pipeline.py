@@ -1,9 +1,15 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from uuid import uuid4
+from hashlib import blake2b
 import time
 from memor.compress import compress_text
-from memor.proxy.adapters import extract_latest_tool_payloads, apply_payload_text
+from memor.compress.code import compress_code, compressible_language
+from memor.compress.types import CompressResult
+from memor.proxy.adapters import (
+    apply_payload_text,
+    extract_all_tool_payloads,
+    extract_latest_tool_payloads,
+)
 from memor.store.sqlite_store import SqliteStore
 from memor.tokencount import count_tokens
 
@@ -23,6 +29,66 @@ def _maybe_evict(store: SqliteStore) -> None:
         store.ccr_evict(ccr_ttl_seconds(), ccr_max_bytes())
     except Exception:
         pass
+
+#: Marker id length, matching the previous uuid4().hex so marker width — and
+#: therefore token count — is unchanged.
+_CCR_ID_LEN = 32
+
+
+def ccr_id_for(text: str) -> str:
+    """Content-addressed id for a payload.
+
+    Previously ``uuid4().hex``, which meant compressing identical content twice
+    produced different marker text. Any strategy that rewrites a payload
+    appearing in more than one request — notably compressing older turns — would
+    then change the prompt prefix on every call and miss the cache every time,
+    costing far more than the compression saves. Hashing the content makes the
+    rewrite stable, so the cache re-forms once on the shorter prefix.
+    """
+    return blake2b(text.encode("utf-8", "replace"), digest_size=16).hexdigest()[
+        :_CCR_ID_LEN
+    ]
+
+
+#: Prefix stamped on a payload this pipeline has already rewritten.
+CCR_MARKER_PREFIX = "[memor:ccr:"
+
+
+def already_compressed(text: str) -> bool:
+    """True when this payload is one we rewrote in an earlier request.
+
+    Once older turns are in scope, a payload compressed in request N reappears
+    in request N+1 carrying its marker. Re-measuring it double-counts: the
+    already-shrunk text lands in ``tokens_before`` and yields nothing, so the
+    realized-savings rate falls the more successfully the compressor works.
+    """
+    return text.lstrip().startswith(CCR_MARKER_PREFIX)
+
+
+def _compress_payload(payload, *, skeleton_ok: bool) -> CompressResult:
+    """Compress one payload, skeletonizing code the agent has moved past.
+
+    The newest read of a file is left byte-exact: it is the one an agent is
+    most likely about to edit, and editing against elided lines is the failure
+    this whole design exists to avoid. Older reads are fair game — the agent has
+    moved on, and they are what the trajectory resends on every subsequent step.
+    """
+    if skeleton_ok and not payload.is_latest_for_file:
+        language = compressible_language(payload.file_path)
+        if language:
+            skeleton = compress_code(
+                payload.text, language=language, file_path=payload.file_path
+            )
+            if skeleton != payload.text:
+                return CompressResult(
+                    text=skeleton,
+                    content_type=f"code:{language}",
+                    tokens_before=count_tokens(payload.text),
+                    tokens_after=count_tokens(skeleton),
+                    passthrough=False,
+                )
+    return compress_text(payload.text, file_path=payload.file_path)
+
 
 @dataclass
 class PipelineResult:
@@ -47,10 +113,19 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
     than the original.
     """
     _maybe_evict(store)
-    
-    # Extract latest tool payloads
-    payloads = extract_latest_tool_payloads(provider, body)
-    
+
+    # Older payloads are where the tokens are: the whole trajectory is resent on
+    # every step, so a file dumped early is re-read on each one. Opt-in until
+    # measured, because it changes what the model sees.
+    from memor.config import is_compress_older_turns
+
+    skeleton_ok = is_compress_older_turns()
+    payloads = (
+        extract_all_tool_payloads(provider, body)
+        if skeleton_ok
+        else extract_latest_tool_payloads(provider, body)
+    )
+
     if not payloads:
         # No payloads to compress
         return PipelineResult(
@@ -71,8 +146,13 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
     success_count = 0
     
     for payload in payloads:
-        result = compress_text(payload.text)
-        
+        # Our own earlier output. Leave it alone and keep it out of the
+        # denominator, or the rate drops the better the compressor does.
+        if already_compressed(payload.text):
+            continue
+
+        result = _compress_payload(payload, skeleton_ok=skeleton_ok)
+
         total_tokens_before += result.tokens_before
         
         # Compression failed or was a no-op: nothing to reference, nothing to save.
@@ -81,7 +161,7 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
             total_tokens_after += result.tokens_before
             continue
         
-        ccr_id = uuid4().hex
+        ccr_id = ccr_id_for(payload.text)
         marked_text = f"[memor:ccr:{ccr_id}]\n{result.text}"
         marked_tokens = count_tokens(marked_text)
         
@@ -91,8 +171,19 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
             total_tokens_after += result.tokens_before
             continue
         
+        # The marker is a promise that the original can be fetched back through
+        # the retrieve MCP tool. If the blob cannot be stored, do not make the
+        # promise — leave the payload verbatim rather than hand out a reference
+        # to nothing. Never fatal: a storage problem must not discard the whole
+        # request's compression.
+        try:
+            store.ccr_put(ccr_id, payload.text, result.content_type, time.time())
+        except Exception:
+            compressed_payloads.append((payload.path, payload.text, None))
+            total_tokens_after += result.tokens_before
+            continue
+
         success_count += 1
-        store.ccr_put(ccr_id, payload.text, result.content_type, time.time())
         ccr_ids.append(ccr_id)
         compressed_payloads.append((payload.path, marked_text, result.content_type))
         total_tokens_after += marked_tokens

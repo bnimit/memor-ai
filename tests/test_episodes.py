@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from memor.episodes import (
     Episode,
+    compare_at,
     is_user_prompt,
     memor_recall_chars,
     parse_episodes,
@@ -201,3 +204,65 @@ def test_verdict_requires_two_scored_strata():
 def test_summary_always_carries_the_confound_note():
     s = summarize([])
     assert "Observational" in s["confound"]
+
+
+# --- did it lower the bill? --------------------------------------------------
+
+
+def _cost_ep(ts, *, tools, cache_read=0, out=0, cache_create=0, inp=0):
+    return Episode(
+        project="p", started_at=ts, tool_calls=tools, assistant_steps=1,
+        input_tokens=inp, cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_create, output_tokens=out,
+    )
+
+
+def test_cost_units_weight_by_what_each_token_actually_costs():
+    """Raw totals are dominated by cache reads, the cheapest thing in a request."""
+    e = _cost_ep(0, tools=1, inp=100, cache_read=1000, cache_create=200, out=50)
+    assert e.cost_units == pytest.approx(100 + 200 * 1.25 + 1000 * 0.10 + 50 * 5.0)
+
+
+def test_cache_re_formation_is_counted_at_full_weight():
+    """The cost memor's own ledger cannot see must show up here."""
+    cheap = _cost_ep(0, tools=1, cache_read=10_000)
+    dear = _cost_ep(0, tools=1, cache_create=10_000)
+    assert dear.cost_units > cheap.cost_units
+
+
+def test_consistent_reduction_reads_as_cheaper():
+    before = [_cost_ep(10, tools=t, out=200) for t in (0, 2, 6, 20) for _ in range(20)]
+    after = [_cost_ep(200, tools=t, out=100) for t in (0, 2, 6, 20) for _ in range(20)]
+    r = compare_at(before + after, 100)
+    assert r["verdict"] == "cheaper"
+    assert r["cost_delta_pct"] > 0
+
+
+def test_consistent_increase_reads_as_dearer():
+    before = [_cost_ep(10, tools=t, out=100) for t in (0, 2, 6, 20) for _ in range(20)]
+    after = [_cost_ep(200, tools=t, out=250) for t in (0, 2, 6, 20) for _ in range(20)]
+    assert compare_at(before + after, 100)["verdict"] == "dearer"
+
+
+def test_sign_flip_across_complexity_bands_is_no_effect():
+    """A busier week must not be reported as a regression."""
+    before = ([_cost_ep(10, tools=0, out=100) for _ in range(20)]
+              + [_cost_ep(10, tools=20, out=400) for _ in range(20)])
+    after = ([_cost_ep(200, tools=0, out=300) for _ in range(20)]
+             + [_cost_ep(200, tools=20, out=100) for _ in range(20)])
+    assert compare_at(before + after, 100)["verdict"] == "no_effect"
+
+
+def test_one_sided_data_is_insufficient():
+    before = [_cost_ep(10, tools=2, out=100) for _ in range(50)]
+    assert compare_at(before, 100)["verdict"] == "insufficient_data"
+
+
+def test_boundary_splits_on_the_timestamp():
+    eps = [_cost_ep(50, tools=1), _cost_ep(150, tools=1)]
+    r = compare_at(eps, 100)
+    assert (r["n_before"], r["n_after"]) == (1, 1)
+
+
+def test_comparison_always_states_the_confound():
+    assert "Observational" in compare_at([], 100)["confound"]

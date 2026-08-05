@@ -12,6 +12,9 @@ _DEFAULTS = {
     "proxy_port": 8421,
     "ccr_ttl_seconds": 7 * 86400,
     "ccr_max_bytes": 2 * 1024**3,
+    # Compress tool payloads the agent has moved past, not just the newest one.
+    # Off until measured on real traffic — it changes what the model sees.
+    "compress_older_turns": False,
 }
 
 def load_config() -> dict:
@@ -75,6 +78,39 @@ def clear_proxy_upstream(agent: str) -> None:
     upstreams = dict(cfg.get("proxy_upstreams", {}))
     upstreams.pop(agent, None)
     cfg["proxy_upstreams"] = upstreams
+    save_config(cfg)
+
+
+def is_compress_older_turns() -> bool:
+    """Whether to compress payloads the agent has already moved past.
+
+    ``MEMOR_COMPRESS_OLDER`` overrides config so a run can be flipped without
+    editing state — useful for A/B measurement.
+    """
+    env = os.environ.get("MEMOR_COMPRESS_OLDER")
+    if env is not None and env.strip():
+        return env.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(load_config().get("compress_older_turns", False))
+
+
+def set_compress_older_turns(enabled: bool) -> None:
+    """Flip the flag and stamp when, so the change has a measurable boundary.
+
+    Without a recorded instant there is nothing to compare before and after
+    against, and the whole point of shipping this off-by-default is that it has
+    to earn its default from data.
+    """
+    import time
+
+    cfg = load_config()
+    cfg["compress_older_turns"] = bool(enabled)
+    if enabled:
+        # Always re-stamp. Keeping an older value would date the boundary to a
+        # run that has since ended — and a cost comparison split at a moment
+        # when the current build was not yet deployed is confidently wrong.
+        cfg["compress_started_at"] = time.time()
+    else:
+        cfg.pop("compress_started_at", None)
     save_config(cfg)
 
 

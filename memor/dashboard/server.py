@@ -179,6 +179,71 @@ def create_app(db_path: str | None = None) -> FastAPI:
         app.state._recall_worth = (_time.time(), summary)
         return summary
 
+    @app.get("/api/compression")
+    def compression():
+        """Compression state, realized savings, and whether the bill moved.
+
+        Deliberately leads with whether the experiment is actually live: a stale
+        install or a missed service restart otherwise costs a week of silence
+        before anyone notices nothing was being measured.
+        """
+        import time as _time
+
+        from memor.compression_worth import (
+            liveness,
+            load_savings_rows,
+            summarize_savings,
+        )
+        from memor.config import is_compress_older_turns, load_config
+
+        cfg = load_config()
+        started = cfg.get("compress_started_at")
+        enabled = is_compress_older_turns()
+        summary = summarize_savings(load_savings_rows(_db_path, days=30))
+        since_summary = (
+            summarize_savings(load_savings_rows(_db_path, since=float(started)))
+            if started
+            else None
+        )
+
+        by_type = summary.by_type
+        payload = {
+            "enabled": enabled,
+            "started_at": started,
+            "liveness": liveness(enabled, started, since_summary),
+            "realized": {
+                "requests": summary.requests,
+                "passthrough_pct": round(summary.passthrough_pct, 1),
+                "tokens_before": summary.tokens_before,
+                "tokens_after": summary.tokens_after,
+                "saved": summary.saved,
+                "saved_pct": round(summary.realized_pct, 1),
+                "scored": summary.scored,
+                "by_type": by_type,
+                # Proof the code path is firing at all, not just the log crusher.
+                "code_payloads": sum(v for k, v in by_type.items() if k.startswith("code")),
+            },
+            "cost": None,
+        }
+
+        if started:
+            cached = getattr(app.state, "_cost_compare", None)
+            if cached and _time.time() - cached[0] < 300:
+                payload["cost"] = cached[1]
+            else:
+                try:
+                    from memor.episodes import compare_at, scan_episodes
+
+                    cost = compare_at(scan_episodes(), float(started))
+                    payload["cost"] = {
+                        k: cost[k]
+                        for k in ("verdict", "cost_delta_pct", "n_before", "n_after")
+                    }
+                except Exception as exc:
+                    payload["cost"] = {"verdict": "insufficient_data", "error": str(exc)[:120]}
+                app.state._cost_compare = (_time.time(), payload["cost"])
+        return payload
+
     @app.get("/api/agent-desk")
     def agent_desk(agent: str = Query(..., min_length=1)):
         """Per-agent pane payload: stats + trends + recent recalls."""

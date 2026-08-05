@@ -25,6 +25,41 @@ _TEST_RESULT = re.compile(
     r"|^\s*[✓✗√×]\s"                      # jest / mocha / vitest
 )
 
+#: Extension -> content type. When a payload came from a file we know the type
+#: for certain, and guessing from bytes is strictly worse: `var(--warn)` in a
+#: stylesheet is enough to make a heuristic call it a log and crush it. The
+#: filename is already in the agent's tool call; consult it before the content.
+_EXT_CONTENT_TYPE = {
+    # Never crushed — bodies are elided by the code path, never by line rules.
+    **{e: "source" for e in (
+        ".py", ".pyi", ".go", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+        ".rs", ".java", ".kt", ".kts", ".swift", ".c", ".h", ".cc", ".cpp",
+        ".hpp", ".cs", ".rb", ".php", ".scala", ".sh", ".bash", ".zsh",
+        ".sql", ".proto", ".graphql", ".vue", ".svelte", ".css", ".scss",
+        ".html", ".htm", ".xml", ".toml", ".ini", ".tf",
+    )},
+    # Prose: nothing safely separable, so passed through.
+    **{e: "text" for e in (".md", ".mdx", ".rst", ".txt", ".adoc")},
+    # Genuinely crushable structured output.
+    ".json": "json",
+    ".jsonl": "json",
+    ".log": "log",
+    ".yaml": "text",
+    ".yml": "text",
+}
+
+
+def content_type_for_path(file_path: str | None) -> str | None:
+    """Content type implied by a filename, or None when unknown."""
+    if not file_path:
+        return None
+    lowered = file_path.lower().split("?", 1)[0]
+    for ext, kind in _EXT_CONTENT_TYPE.items():
+        if lowered.endswith(ext):
+            return kind
+    return None
+
+
 _SHEBANG = re.compile(r"^#!\s*/")
 # A closing brace or semicolon ending a line is a strong structural code signal.
 _CODE_LINE_END = re.compile(r"[;{}\)]\s*$")
@@ -65,13 +100,20 @@ def looks_like_source(text: str) -> bool:
     return False
 
 
-def detect_content_type(text: str) -> str:
+def detect_content_type(text: str, file_path: str | None = None) -> str:
     """Detect content type: json | search | source | log | text.
 
     ``source`` is a refusal, not a compressor: it marks content that must be
     passed through untouched. Checked after ``search`` so that grep output over
     a codebase still compresses.
+
+    When ``file_path`` is known it decides, because a filename is evidence and
+    the content heuristics are only a guess. Sniffing is for payloads with no
+    file behind them — shell output, grep results, API responses.
     """
+    known = content_type_for_path(file_path)
+    if known is not None:
+        return known
 
     # Try JSON first
     try:

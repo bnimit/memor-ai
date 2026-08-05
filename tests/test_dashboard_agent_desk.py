@@ -121,3 +121,21 @@ def test_dashboard_html_has_recall_worth_panel(tmp_path):
     assert "Does recall reduce work?" in html
     # A null must be presentable, not hidden.
     assert "no measurable effect" in html
+
+
+def test_compression_endpoint(tmp_path):
+    app, _ = _seed(tmp_path)
+    d = TestClient(app).get("/api/compression").json()
+    assert "enabled" in d and "realized" in d
+    assert d["liveness"]["state"] in {
+        "off", "on", "pending", "live", "not_taking_effect",
+    }
+
+
+def test_dashboard_html_has_compression_panel(tmp_path):
+    app, _ = _seed(tmp_path)
+    html = TestClient(app).get("/").text
+    assert "compression-panel" in html
+    assert "cx-live" in html
+    # The liveness warning must be presentable, not buried in a log.
+    assert "NOT taking effect" in html

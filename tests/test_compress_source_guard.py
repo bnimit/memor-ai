@@ -129,8 +129,16 @@ def test_real_repo_files_round_trip_unchanged(path):
 
 
 def test_grep_output_over_code_still_compresses():
-    """Search results contain code fragments; they must stay compressible."""
-    text = "\n".join(f"memor/mod{i}.py:{i}:    return value_{i}" for i in range(200))
+    """Search results contain code fragments; they must stay compressible.
+
+    Shaped like real grep output — a handful of files with many hits each —
+    rather than 200 files with one hit apiece, which has nothing to fold.
+    """
+    text = "\n".join(
+        f"memor/mod{f}.py:{n}:    return value_{n}"
+        for f in range(5)
+        for n in range(40)
+    )
     assert detect_content_type(text) == "search"
     result = compress_text(text)
     assert result.tokens_after < result.tokens_before
