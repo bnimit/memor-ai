@@ -84,6 +84,7 @@ _session_injected: dict[str, set[str]] = {}
 _MAX_TRACKED_SESSIONS = 50
 
 from memor.session_context import SessionContextWindow
+from memor.trajectory import enrich_from_transcript
 _session_ctx = SessionContextWindow(max_queries=5, max_sessions=_MAX_TRACKED_SESSIONS)
 
 _UNSET = object()  # sentinel for "auto-discover embedder"
@@ -167,6 +168,11 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
     except (ValueError, TypeError):
         min_similarity = 0.0
     retrieval_query = _session_ctx.enrich(query, session_id) if session_id else query
+    # The prompt is a thin query; what the agent just read and just broke is a
+    # thicker one. No-op unless MEMOR_TRAJECTORY_QUERY is set, and it swallows
+    # its own failures -- a transcript we cannot read means no signal, which is
+    # the behaviour that preceded it.
+    retrieval_query = enrich_from_transcript(retrieval_query, req.get("transcript_path"))
     already_injected = _session_injected.get(session_id, set()) if session_id else set()
     result = recall(retrieval_query, project, db_path, embedder=embedder, k=tier.k,
                     threshold=0.15, max_tokens=max_tokens, min_similarity=min_similarity,
