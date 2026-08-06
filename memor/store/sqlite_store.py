@@ -399,6 +399,13 @@ class SqliteStore:
     def add_artifacts(self, artifacts: list[Artifact], vectors: list[list[float]]) -> None:
         cur = self.db.cursor()
         for a, v in zip(artifacts, vectors):
+            # INSERT OR REPLACE deletes the old row and inserts a new one, which
+            # assigns a *new* rowid. The vec index is keyed by rowid with no
+            # foreign key, so the previous embedding was orphaned and left
+            # behind: re-ingesting the same session grew vec_artifacts without
+            # bound, and a reused rowid then collided with a stale vector and
+            # failed the primary key, losing the whole batch. Clearing the old
+            # rowid's vector before the write keeps the two tables in step.
             old = cur.execute("SELECT rowid FROM artifacts WHERE id=?", (a.id,)).fetchone()
             if old:
                 cur.execute("DELETE FROM vec_artifacts WHERE rowid=?", (old[0],))
@@ -407,6 +414,10 @@ class SqliteStore:
               " VALUES(?,?,?,?,?,?,?,?,1,NULL)",
               (a.id, a.kind, a.project, a.source, a.text, a.token_count, a.created_at, json.dumps(a.meta)))
             rowid = cur.execute("SELECT rowid FROM artifacts WHERE id=?", (a.id,)).fetchone()[0]
+            # A rowid freed by an earlier delete can be handed to this artifact
+            # while a stale embedding still occupies it, so clear by the rowid
+            # actually being written rather than trusting the lookup above.
+            cur.execute("DELETE FROM vec_artifacts WHERE rowid=?", (rowid,))
             cur.execute("INSERT INTO vec_artifacts(rowid, embedding) VALUES(?,?)",
                         (rowid, _serialize(v)))
             cur.execute("DELETE FROM fts_artifacts WHERE id=?", (a.id,))

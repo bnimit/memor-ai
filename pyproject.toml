@@ -67,6 +67,7 @@ Issues = "https://github.com/bnimit/memor-ai/issues"
 [project.scripts]
 memor = "memor.cli:app"
 memor-hook = "memor.hook_cli:main"
+memor-jcode-hook = "memor.jcode_hook:main"
 memor-retrieve-mcp = "memor.proxy.mcp_retrieve:main"
 memor-cursor-compress-hook = "memor.cursor_compress_hook:hook_main"
 memor-compress-exec = "memor.cursor_compress_hook:compress_exec_entry"

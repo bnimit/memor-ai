@@ -303,6 +303,7 @@ def run_poll_cycle(
     kimi_sessions_dir: Path | None = None,
     kimi_json_path: Path | None = None,
     goose_db_path: Path | None = None,
+    jcode_sessions_dir: Path | None = None,
 ) -> tuple[dict[str, float], set[str], dict[str, int]]:
     """Run one poll cycle: ingest new units, then distill new sessions.
 
@@ -321,6 +322,7 @@ def run_poll_cycle(
         kimi_sessions_dir=kimi_sessions_dir,
         kimi_json_path=kimi_json_path,
         goose_db_path=goose_db_path,
+        jcode_sessions_dir=jcode_sessions_dir,
     )
 
     pending = [
@@ -457,6 +459,7 @@ def run_backfill(
     kimi_sessions_dir: Path | None = None,
     kimi_json_path: Path | None = None,
     goose_db_path: Path | None = None,
+    jcode_sessions_dir: Path | None = None,
     llm=None,
 ) -> dict[str, int]:
     """One-shot ingest across local agent sources. Returns chunk counts by agent."""
@@ -481,6 +484,10 @@ def run_backfill(
         goose_db_path=(
             goose_db_path if goose_db_path is not None
             else paths["goose_db_path"]
+        ),
+        jcode_sessions_dir=(
+            jcode_sessions_dir if jcode_sessions_dir is not None
+            else paths["jcode_sessions_dir"]
         ),
     )
     save_state(state)
@@ -543,6 +550,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     kimi_dir = paths["kimi_sessions_dir"]
     kimi_json = paths["kimi_json_path"]
     goose_db = paths["goose_db_path"]
+    jcode_dir = paths["jcode_sessions_dir"]
 
     llm = _make_llm()
 
@@ -556,6 +564,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     print(f"  watching:      {projects_dir}")
     print(f"                 {kimi_dir}")
     print(f"                 {goose_db}")
+    print(f"                 {jcode_dir}")
     print(f"  db:            {DEFAULT_DB}")
     print(f"  embeddings:    local model2vec (dim={embedder.dim})")
     print(f"  poll interval: {poll_interval}s")
@@ -571,6 +580,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
                 kimi_sessions_dir=kimi_dir,
                 kimi_json_path=kimi_json,
                 goose_db_path=goose_db,
+                jcode_sessions_dir=jcode_dir,
             )
             save_state(state)
             save_distilled_state(distilled)

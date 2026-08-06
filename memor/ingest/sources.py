@@ -1,4 +1,4 @@
-"""Multi-agent ingest source registry — Claude, Kimi, Goose."""
+"""Multi-agent ingest source registry — Claude, Kimi, Goose, jcode."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +11,11 @@ from memor.ingest.goose import (
     goose_state_key,
     parse_session as parse_goose_session,
     scan_goose_sessions,
+)
+from memor.ingest.jcode import (
+    JCODE_SESSIONS_DIR,
+    parse_session as parse_jcode_session,
+    scan_jcode_sessions,
 )
 from memor.ingest.kimi import (
     KIMI_JSON_PATH,
@@ -109,17 +114,53 @@ def scan_goose_units(db_path: Path) -> list[IngestUnit]:
     return units
 
 
+def scan_jcode_units(sessions_dir: Path) -> list[IngestUnit]:
+    """One unit per jcode session.
+
+    The journal sidecar is deliberately not a unit of its own: it is read
+    through its session, so a live session is ingested once rather than twice.
+    Its mtime still counts, because that is what marks a session as changed
+    while it is being written.
+    """
+    units: list[IngestUnit] = []
+    for path, project, session_id in scan_jcode_sessions(sessions_dir):
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        journal = path.parent / (path.stem + ".journal.jsonl")
+        try:
+            mtime = max(mtime, journal.stat().st_mtime)
+        except OSError:
+            pass
+
+        def _parse(p=path, proj=project, sid=session_id) -> list[Artifact]:
+            return parse_jcode_session(p, project=proj, filter_noise=True,
+                                       session_id=sid)
+
+        units.append(IngestUnit(
+            state_key=str(path),
+            mtime=mtime,
+            project=project,
+            agent="jcode",
+            parse=_parse,
+            path=path,
+        ))
+    return units
+
+
 def scan_all_sources(
     *,
     claude_projects_dir: Path | None = None,
     kimi_sessions_dir: Path | None = None,
     kimi_json_path: Path | None = None,
     goose_db_path: Path | None = None,
+    jcode_sessions_dir: Path | None = None,
 ) -> list[IngestUnit]:
     """Scan enabled sources. Pass None to skip a source (except Claude when dir given).
 
     Claude is scanned when ``claude_projects_dir`` is not None.
-    Kimi/Goose are scanned only when their paths are not None.
+    Kimi/Goose/jcode are scanned only when their paths are not None.
     """
     units: list[IngestUnit] = []
     if claude_projects_dir is not None:
@@ -131,6 +172,8 @@ def scan_all_sources(
         ))
     if goose_db_path is not None:
         units.extend(scan_goose_units(goose_db_path))
+    if jcode_sessions_dir is not None:
+        units.extend(scan_jcode_units(jcode_sessions_dir))
     return units
 
 
@@ -141,4 +184,5 @@ def default_local_source_paths() -> dict[str, Path]:
         "kimi_sessions_dir": KIMI_SESSIONS_DIR,
         "kimi_json_path": KIMI_JSON_PATH,
         "goose_db_path": GOOSE_DB_PATH,
+        "jcode_sessions_dir": JCODE_SESSIONS_DIR,
     }

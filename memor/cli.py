@@ -750,12 +750,62 @@ def _install_hook_logic_goose(plugin_dir: Path, hook_command: str) -> None:
     (hooks_dir / "hooks.json").write_text(json.dumps(data, indent=2) + "\n")
 
 
+def _install_hook_logic_jcode(config_path: Path, hook_command: str) -> None:
+    """Point jcode's turn_end/session_end hooks at memor's ingest trigger.
+
+    jcode's hooks are observers: detached, fire-and-forget, and their stdout is
+    discarded. That rules out recall, which needs to return context into the
+    prompt, but makes them an ideal *ingest* trigger -- a slow ingest cannot
+    delay a turn. ``turn_end`` also carries the session's cwd, which is how a
+    jcode session gets scoped to the right project.
+
+    Written as plain keys inside the existing ``[hooks]`` table, and any prior
+    memor entries are dropped first so reinstalling is idempotent.
+    """
+    import re
+
+    stamped = _stamp_hook_command("jcode", hook_command)
+    text = config_path.read_text() if config_path.exists() else ""
+
+    if "[hooks]" not in text:
+        text = (text.rstrip() + "\n\n[hooks]\n") if text.strip() else "[hooks]\n"
+
+    out: list[str] = []
+    in_hooks = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            if in_hooks and stripped != "[hooks]":
+                # Leaving the table: append our keys before the next section.
+                out.append(f'turn_end = "{stamped}"')
+                out.append(f'session_end = "{stamped}"')
+                out.append("")
+                in_hooks = False
+            if stripped == "[hooks]":
+                in_hooks = True
+            out.append(line)
+            continue
+        # Drop any previous memor hook lines so this is idempotent.
+        if in_hooks and re.match(r"^\s*(turn_end|session_end|turn_start)\s*=", line) \
+                and "memor" in line:
+            continue
+        out.append(line)
+
+    if in_hooks:
+        out.append(f'turn_end = "{stamped}"')
+        out.append(f'session_end = "{stamped}"')
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("\n".join(out).rstrip() + "\n")
+
+
 AGENT_CHOICES = [
     ("claude", "~/.claude/settings.json", "Claude Code"),
     ("codex", "~/.codex/hooks/hooks.json", "Codex CLI"),
     ("copilot", "~/.copilot/hooks/memor.json", "Copilot CLI"),
     ("kimi", "~/.kimi/config.toml", "Kimi CLI"),
     ("goose", "~/.agents/plugins/memor/", "Goose"),
+    ("jcode", "~/.jcode/config.toml", "Jcode"),
 ]
 
 
@@ -779,7 +829,7 @@ def _prompt_agent() -> str:
 @app.command("install-hook")
 def install_hook(agent: str | None = typer.Option(
         None,
-        help="Agent: claude, codex, copilot, kimi, goose (interactive if omitted)")):
+        help="Agent: claude, codex, copilot, kimi, goose, jcode (interactive if omitted)")):
     """Install the recall hook for a supported coding agent."""
     import shutil
     agent_keys = {key for key, _, _ in AGENT_CHOICES}
@@ -818,9 +868,24 @@ def install_hook(agent: str | None = typer.Option(
         _install_hook_logic_kimi(config_path, hook_bin)
     elif agent == "goose":
         _install_hook_logic_goose(config_path, hook_bin)
+    elif agent == "jcode":
+        # jcode's hooks cannot inject context, so they drive ingest instead of
+        # recall, and that needs a different binary.
+        jcode_bin = shutil.which("memor-jcode-hook")
+        if not jcode_bin:
+            typer.echo("Error: 'memor-jcode-hook' not found on PATH.", err=True)
+            typer.echo("  Reinstall memor to pick up the new entry point.", err=True)
+            raise typer.Exit(1)
+        _install_hook_logic_jcode(config_path, jcode_bin)
+        hook_bin = jcode_bin
 
     typer.echo(f"\nHook installed for {agent_name}: {hook_bin}")
     typer.echo(f"Config updated: {config_path}")
+    if agent == "jcode":
+        typer.echo()
+        typer.echo("Note: jcode hooks are observers, so this ingests jcode's work")
+        typer.echo("into memor on every turn. jcode itself is not served recall")
+        typer.echo("through hooks -- its hook stdout is discarded by design.")
     typer.echo()
     typer.echo("Pre-downloading embedding model...")
     try:

@@ -34,7 +34,7 @@
     --font: 'DM Sans', system-ui, sans-serif;
     --mono: 'IBM Plex Mono', ui-monospace, monospace;
     --claude: #e89320; --codex: #2fd67b; --copilot: #64a0ff;
-    --cursor: #c084fc; --kimi: #ff8c5a; --goose: #50c8b4;
+    --cursor: #c084fc; --kimi: #ff8c5a; --goose: #50c8b4; --jcode: #f2b705;
   }
 
   body {
@@ -287,6 +287,7 @@
   .badge-cursor { background: rgba(192,132,252,0.12); color: var(--cursor); }
   .badge-kimi { background: rgba(255,140,90,0.12); color: var(--kimi); }
   .badge-goose { background: rgba(80,200,180,0.12); color: var(--goose); }
+  .badge-jcode { background: rgba(242,183,5,0.12); color: var(--jcode); }
 
   .quality-bar { display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: var(--surface3); min-width: 60px; }
   .quality-fill { height: 100%; border-radius: 3px; }
@@ -672,11 +673,12 @@
 (function () {
   'use strict';
 
-  var CORE_AGENTS = ['claude', 'cursor', 'codex', 'copilot', 'kimi', 'goose'];
+  var CORE_AGENTS = ['claude', 'cursor', 'codex', 'copilot', 'kimi', 'goose', 'jcode'];
   var AGENT_COLORS = {
     claude: 'var(--claude)', codex: 'var(--codex)', copilot: 'var(--copilot)',
     cursor: 'var(--cursor)',
-    kimi: 'var(--kimi)', goose: 'var(--goose)', cline: '#64a0ff', opencode: '#14b8a6',
+    kimi: 'var(--kimi)', goose: 'var(--goose)', jcode: 'var(--jcode)',
+    cline: '#64a0ff', opencode: '#14b8a6',
   };
 
   var projectFilter = null;
@@ -744,7 +746,7 @@
     var labels = {
       claude: 'Claude', codex: 'Codex', copilot: 'Copilot',
       cursor: 'Cursor',
-      kimi: 'Kimi', goose: 'Goose', cline: 'Cline', opencode: 'OpenCode',
+      kimi: 'Kimi', goose: 'Goose', jcode: 'Jcode', cline: 'Cline', opencode: 'OpenCode',
     };
     if (labels[agent]) return labels[agent];
     if (!agent) return 'Claude';
@@ -759,6 +761,7 @@
       cursor: ['badge-cursor', 'Cursor'],
       kimi: ['badge-kimi', 'Kimi'],
       goose: ['badge-goose', 'Goose'],
+      jcode: ['badge-jcode', 'Jcode'],
     };
     var m = map[agent || 'claude'] || ['badge-claude', agentLabel(agent)];
     return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';

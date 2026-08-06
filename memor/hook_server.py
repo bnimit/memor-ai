@@ -17,7 +17,7 @@ def detect_agent(req: dict) -> str:
     # Install stamps MEMOR_HOOK_AGENT into the hook command; hook_cli forwards it
     # as `_memor_agent` so Kimi (Claude-shaped payload) and Goose stay distinct.
     stamped = req.get("_memor_agent")
-    if stamped in ("claude", "codex", "copilot", "cursor", "kimi", "goose"):
+    if stamped in ("claude", "codex", "copilot", "cursor", "kimi", "goose", "jcode"):
         return stamped
     # Goose uses `event` (not `hook_event_name`) and puts the prompt in `message`.
     if req.get("event") == "UserPromptSubmit" or (
