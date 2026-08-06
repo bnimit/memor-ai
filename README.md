@@ -13,7 +13,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
-**Automatic background memory for Claude Code, Cursor, Codex, Copilot, Kimi, and Goose — plus optional local token savings for Claude Code and Codex.** Memory is fire-and-forget; proxy is opt-in. No Memor API key required.
+**Automatic background memory for Claude Code, Cursor, Codex, Copilot, Kimi, Goose, and Jcode — plus optional local token savings for Claude Code and Codex.** Memory is fire-and-forget; proxy is opt-in. No Memor API key required.
 
 Memor watches your coding sessions, extracts decisions and patterns, and recalls relevant context on every prompt. Optionally, a local proxy compresses tool payloads before they reach the provider and tracks measurable token savings on the dashboard.
 
@@ -27,7 +27,7 @@ pipx install memor-cli
 
 # Install the hook + download embedding model (~60MB)
 memor install-hook                  # interactive — pick an agent
-memor install-hook --agent kimi     # or pass directly (claude, codex, copilot, kimi, goose)
+memor install-hook --agent kimi     # or pass directly (claude, codex, copilot, kimi, goose, jcode)
 
 # Start as a background service (macOS/Linux)
 memor service install
@@ -110,11 +110,13 @@ Memor runs two complementary local paths — combine them or use either alone:
               ▼                             ▼
        Claude · Cursor · Codex         Anthropic / OpenAI
        Copilot · Kimi · Goose          (your existing credentials)
+       Jcode (ingest + MCP)
               ▲
               │
        Daemon ingests sessions ── Claude ~/.claude/projects/
                                   Kimi   ~/.kimi/sessions/
                                   Goose  ~/.local/share/goose/...
+                                  Jcode  ~/.jcode/sessions/
 ```
 
 | Path | Purpose | Default |
@@ -132,7 +134,7 @@ Both paths write to the same recall ledger, including recalls that return nothin
 
 ```
   You type a prompt
-  (Claude · Cursor · Codex · Copilot · Kimi · Goose)
+  (Claude · Cursor · Codex · Copilot · Kimi · Goose · Jcode)
       |
       v
   Hook fires — auto-detects which agent
@@ -167,6 +169,7 @@ Both paths write to the same recall ledger, including recalls that return nothin
 | **Copilot CLI** | Yes | No — hooks only |
 | **Kimi CLI** | Yes | Yes — `memor install-proxy --agent kimi` |
 | **Goose** | Yes | Yes — `memor install-proxy --agent goose` (auto-detects common Desktop custom providers like `custom_deepseek`; use `--upstream-url` if yours is custom) |
+| **Jcode** | Ingest via hooks; recall via MCP — `memor install-hook --agent jcode` then `memor install-mcp --agent jcode` | No — hooks + MCP only |
 | **Cline** | No | Yes — `memor install-proxy --agent cline` |
 | **OpenCode** | No | Yes — `memor install-proxy --agent opencode` |
 
@@ -180,10 +183,20 @@ Both paths write to the same recall ledger, including recalls that return nothin
 | **Cursor** | `beforeSubmitPrompt` + `additionalContext` | `~/.claude/settings.json` (loaded as Claude user hooks) | automatic — covered by the Claude install |
 | **Kimi CLI** | `UserPromptSubmit` + plain-text context | `~/.kimi/config.toml` | `memor install-hook --agent kimi` |
 | **Goose** | `UserPromptSubmit` + `additionalContext` | `~/.agents/plugins/memor/` | `memor install-hook --agent goose` |
+| **Jcode** | `turn_end` / `session_end` (ingest only — jcode hooks are observers and cannot inject) | `~/.jcode/config.toml` | `memor install-hook --agent jcode` |
 
 A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Kimi and Goose installs stamp `MEMOR_HOOK_AGENT` so Claude-shaped payloads stay correctly labeled. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. When an agent is proxied, its hook skips inject and memory comes from the proxy path; Cursor and Copilot always inject via hooks. The dashboard tracks recalls per agent so you can see usage across all your environments.
 
 > **Goose note:** Memory inject needs a Goose build with advise-tier `additionalContext` support. DeepSeek (or any other provider) is configured inside Goose — Memor talks to Goose's hooks, not to the model provider.
+
+> **Jcode note:** Jcode is the one agent whose read and write paths are split, because every jcode hook except `pre_tool` is a detached observer: it fires and forgets, and its stdout is discarded. That makes hooks an excellent *ingest* trigger — `turn_end` carries the session id and cwd, and a slow ingest can never delay your turn — but it leaves no channel to inject memories into a prompt. Recall is therefore served by MCP, as a `memor_recall` tool the model calls for itself:
+>
+> ```bash
+> memor install-hook --agent jcode   # writes: jcode work becomes memory
+> memor install-mcp  --agent jcode   # reads: memor_recall tool
+> ```
+>
+> Restart jcode afterwards so it loads the MCP server. Pass `project=` explicitly when calling `memor_recall`: the MCP server's working directory is whatever launched the agent, so the default is often not the project you are in. A miss names the projects that do have memories.
 
 > **Note:** Cloud-hosted agents (Codex cloud, Copilot cloud agent) run in remote sandboxes and cannot reach local hooks. MCP server support for sandboxed agents is planned ([#26](https://github.com/bnimit/memor-ai/issues/26)).
 
