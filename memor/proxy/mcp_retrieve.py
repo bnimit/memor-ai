@@ -1,4 +1,14 @@
-"""Minimal MCP server exposing memor_retrieve tool for CCR blob access."""
+"""MCP server exposing memor's memory to agents that cannot use a recall hook.
+
+Two tools:
+
+* ``memor_retrieve`` -- fetch a CCR blob by id, for the compression path.
+* ``memor_recall`` -- search memory. This is the only way into agents whose
+  hooks cannot inject context. jcode's hooks, for instance, are observers:
+  detached, fire-and-forget, stdout discarded, so they can drive ingest but can
+  never hand memories back to the prompt. A tool the model calls itself is the
+  channel that remains.
+"""
 import json
 import os
 import sys
@@ -25,10 +35,73 @@ def retrieve(blob_id: str, store: SqliteStore) -> str:
     return text
 
 
+def recall_memories(query: str, *, project: str = "", k: int = 5,
+                    db_path: str | None = None) -> str:
+    """Search memory and render the hits as text for the model.
+
+    Failures are returned as prose rather than raised: a broken memory lookup
+    should read as "no memories" to the agent, never break its tool call.
+    """
+    try:
+        from memor.cli import _embedder
+        from memor.recall import recall
+
+        resolved = str(Path(db_path or default_db_path()).expanduser())
+        if not Path(resolved).exists():
+            return "memor: no memory store yet."
+
+        if not project:
+            from memor.project import resolve_project
+            project = resolve_project(os.getcwd())
+
+        result = recall(query, project, resolved, embedder=_embedder(False), k=k)
+        if not result.formatted_context:
+            return f'memor: no relevant memories for "{query}" in {project}.'
+        return result.formatted_context
+    except Exception as exc:  # never fail the agent's tool call
+        return f"memor: recall unavailable ({type(exc).__name__})."
+
+
+def handle_initialize() -> dict:
+    """MCP handshake. Without this a client refuses to list tools at all."""
+    return {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {"tools": {}},
+        "serverInfo": {"name": "memor", "version": "1"},
+    }
+
+
 def handle_tools_list() -> dict:
     """Return list of available tools."""
     return {
         "tools": [
+            {
+                "name": "memor_recall",
+                "description": (
+                    "Search your own past sessions for relevant memories: prior "
+                    "decisions, lessons, bug fixes and conventions from this and "
+                    "other projects. Use it before solving a problem that may have "
+                    "been solved before, or when the user refers to earlier work."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "What to remember about, in natural language",
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Project to search; defaults to the working directory",
+                        },
+                        "k": {
+                            "type": "integer",
+                            "description": "How many memories to return (default 5)",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
             {
                 "name": "memor_retrieve",
                 "description": "Retrieve the full original content for a CCR blob by ID",
@@ -49,6 +122,20 @@ def handle_tools_list() -> dict:
 
 def handle_tools_call(name: str, arguments: dict, store: SqliteStore) -> dict:
     """Execute tool call."""
+    if name == "memor_recall":
+        query = (arguments or {}).get("query") or ""
+        if not query.strip():
+            return {
+                "content": [{"type": "text", "text": "Missing required parameter: query"}],
+                "isError": True,
+            }
+        text = recall_memories(
+            query,
+            project=(arguments.get("project") or ""),
+            k=int(arguments.get("k") or 5),
+        )
+        return {"content": [{"type": "text", "text": text}]}
+
     if name != "memor_retrieve":
         return {
             "content": [
@@ -95,12 +182,17 @@ def main():
             params = request.get("params", {})
             req_id = request.get("id")
             
-            if method == "tools/list":
+            if method == "initialize":
+                result = handle_initialize()
+            elif method == "tools/list":
                 result = handle_tools_list()
             elif method == "tools/call":
                 name = params.get("name")
                 arguments = params.get("arguments", {})
                 result = handle_tools_call(name, arguments, store)
+            elif method in ("notifications/initialized", "initialized"):
+                # A notification carries no id and expects no reply.
+                continue
             else:
                 result = {"error": f"Unknown method: {method}"}
             

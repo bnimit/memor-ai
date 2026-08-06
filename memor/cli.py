@@ -826,6 +826,62 @@ def _prompt_agent() -> str:
         typer.echo(f"Invalid choice. Enter 1-{n}.")
 
 
+def install_mcp_jcode(mcp_path: Path, server_bin: str) -> bool:
+    """Register memor's MCP server in jcode's mcp.json. True if changed.
+
+    jcode's hooks are observers and cannot inject context, so a tool the model
+    calls itself is the only way memories reach a jcode turn. Other servers in
+    the file are left untouched, and re-running only rewrites memor's entry.
+    """
+    data: dict = {}
+    if mcp_path.exists():
+        try:
+            data = json.loads(mcp_path.read_text() or "{}")
+        except json.JSONDecodeError:
+            # Never destroy a config we cannot parse.
+            return False
+    servers = data.setdefault("servers", {})
+    entry = {"command": server_bin, "args": [], "env": {}}
+    if servers.get("memor") == entry:
+        return False
+    servers["memor"] = entry
+    mcp_path.parent.mkdir(parents=True, exist_ok=True)
+    mcp_path.write_text(json.dumps(data, indent=2) + "\n")
+    return True
+
+
+@app.command("install-mcp")
+def install_mcp(agent: str = typer.Option(
+        "jcode", help="Agent to register memor's MCP server with (jcode)")):
+    """Give an agent a memor_recall tool, for agents whose hooks cannot inject.
+
+    jcode's hooks are fire-and-forget observers: they can trigger ingest but
+    their stdout is discarded, so they can never hand memories back to a
+    prompt. Registering memor as an MCP server gives the model a tool it can
+    call for itself, which is the remaining channel.
+    """
+    import shutil
+
+    if agent.lower() != "jcode":
+        typer.echo(f"Unsupported agent '{agent}'. Supported: jcode", err=True)
+        raise typer.Exit(1)
+
+    server_bin = shutil.which("memor-retrieve-mcp")
+    if not server_bin:
+        typer.echo("Error: 'memor-retrieve-mcp' not found on PATH.", err=True)
+        raise typer.Exit(1)
+
+    mcp_path = Path.home() / ".jcode" / "mcp.json"
+    changed = install_mcp_jcode(mcp_path, server_bin)
+    if changed:
+        typer.echo(f"Registered memor MCP server: {server_bin}")
+        typer.echo(f"Config updated: {mcp_path}")
+    else:
+        typer.echo(f"Already registered in {mcp_path}")
+    typer.echo()
+    typer.echo("Restart jcode, then the model can call `memor_recall`.")
+
+
 @app.command("install-hook")
 def install_hook(agent: str | None = typer.Option(
         None,
