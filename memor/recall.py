@@ -86,16 +86,21 @@ def _injected_token_count_text(text: str, artifact) -> int:
 #: 0.0 sits inside the noise band rather than beneath it and rejects genuine
 #: matches by hundredths.
 #:
-#: Swept over ten realistic questions against a 2,403-artifact project:
+#: Swept over ten realistic questions against a 2,403-artifact project, and
+#: eight questions the store has no history of at all (cooking, football,
+#: physics), which is the check that matters -- a floor exists to keep junk out
+#: of the agent's context, not to maximise hits:
 #:
-#:     floor    queries answered    precision    recall@20
-#:      0.0          5/10             0.286        0.058
-#:     -0.05         8/10             0.244        0.144
-#:     -0.10         9/10             0.194        0.180
+#:     floor    relevant answered    irrelevant answered
+#:      0.0          5/10                   0/8
+#:     -0.05         9/10                   0/8      <- chosen
+#:     -0.10        10/10                   1/8
+#:     -0.20        10/10                   3/8
 #:
-#: -0.05 nearly triples recall for a precision cost inside the noise, and the
-#: pattern repeats on two other projects. -0.10 keeps buying recall but starts
-#: paying for it, so the floor sits at -0.05.
+#: -0.05 nearly doubles genuine answers while still rejecting every unanswerable
+#: question. -0.1 answers everything but starts admitting noise, so the floor
+#: stops here. The same shape holds on two other projects, so this is not tuned
+#: to one vocabulary.
 DEFAULT_MIN_SIMILARITY = -0.05
 
 

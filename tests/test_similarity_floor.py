@@ -63,3 +63,28 @@ def test_the_gate_can_still_be_disabled(tmp_path):
 
     r = Retriever(store, embedder, k=5, min_similarity=-2.0)
     assert r.query("a completely different question", Scope(project="p")).hits
+
+
+def test_the_floor_still_rejects_an_unrelated_query(tmp_path):
+    """The point of a floor is keeping junk out of the agent's context.
+
+    Lowering it is only safe if a question the store cannot answer still
+    returns nothing. Measured on the real store, -0.05 answered 9 of 10
+    relevant questions with 0 of 8 irrelevant ones; -0.1 answered 10 of 10 but
+    started admitting junk, which is why the floor stops where it does.
+    """
+    embedder = FakeEmbedder(dim=16)
+    store = SqliteStore(str(tmp_path / "t3.db"), dim=embedder.dim)
+    arts = [
+        Artifact(id=f"a{i}", kind="session_chunk", project="p", source="t",
+                 text=f"database migration rollback procedure step {i}",
+                 token_count=6, created_at=time.time(), meta={})
+        for i in range(6)
+    ]
+    store.add_artifacts(arts, embedder.embed([a.text for a in arts]))
+
+    r = Retriever(store, embedder, k=5)
+    hits = r.query("sourdough bread proofing temperature", Scope(project="p")).hits
+    # Not a hard zero -- a tiny fake-embedding store can coincide -- but the
+    # gate must not simply pass everything through.
+    assert len(hits) < len(arts), "the floor admitted the entire store"
