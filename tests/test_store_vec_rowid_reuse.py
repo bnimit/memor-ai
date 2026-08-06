@@ -69,3 +69,25 @@ def test_vec_rows_do_not_outnumber_artifacts(tmp_path):
     n_vec = store.db.execute("SELECT COUNT(*) FROM vec_artifacts").fetchone()[0]
     assert n_art == 4
     assert n_vec == n_art
+
+
+def test_vectors_still_match_their_artifacts_after_rewrites(tmp_path):
+    """Stable counts are not enough: the surviving vectors must be the right ones.
+
+    A fix that keeps the counts flat while leaving embeddings bound to the
+    wrong rows would pass a counting test and silently degrade recall, which is
+    the harder failure to notice.
+    """
+    from memor.types import Scope
+
+    store, embedder = _store(tmp_path)
+    arts = [_artifact(f"a{i}", f"a distinct memory about topic number {i}")
+            for i in range(6)]
+    for _ in range(3):
+        store.add_artifacts(arts, embedder.embed([a.text for a in arts]))
+
+    for a in arts:
+        hits = store.search(embedder.embed([a.text])[0],
+                            Scope(project="p", kinds=["session_chunk"]), k=3)
+        assert any(h[0].id == a.id for h in hits), \
+            f"{a.id} is no longer retrievable by its own text"
