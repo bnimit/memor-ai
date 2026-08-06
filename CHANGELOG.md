@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-06
+
 ### Added
 - **Jcode support** — jcode is now a first-class agent, though uniquely split across two channels because every jcode hook except `pre_tool` is a detached observer whose stdout is discarded. Hooks therefore drive ingest (`turn_end`, `session_end`, via `memor install-hook --agent jcode`) and MCP serves recall (`memor_recall`, via `memor install-mcp --agent jcode`). A jcode session's working directory is read from its journal sidecar when the session JSON leaves it null, which is what keeps its memories from being filed under "unknown" and leaking across projects. The daemon also scans `~/.jcode/sessions` as a safety net for sessions the hook missed.
 - **`memor_recall` MCP tool** — memory search for any agent whose hooks cannot inject context. A miss names the projects that do hold memories rather than dead-ending, because an MCP server's working directory is whatever launched the agent and the default project is routinely wrong.
@@ -25,7 +27,9 @@ All notable changes to this project will be documented in this file.
 - `memor prune` retires harness noise and cross-session duplicates. Rows are deactivated rather than deleted, so the pass is reversible and ids referenced by recall history stay valid.
 - `memor recall-baseline` compares recall across a stamped boundary instead of requiring the store to be wiped.
 
-## [0.12.0] - 2026-08-04
+### Compression work from earlier in the cycle (2026-08-02 to 08-04)
+
+This was stamped 0.12.0 on 4 August but never published, so it reaches users here.
 
 ### Fixed
 - **Source code was being silently destroyed.** `detect_content_type` classified source as `log`, and the log crusher deletes lines it judges repetitive. Reading `memor/service.py` through the compressor returned 580 of 3,977 tokens with 399 lines gone; `index.html` lost 1,303 lines (97%). The trigger is cheap — `var(--warn)` in CSS matches `\bWARN\b`, and three such lines classify a whole file. This was live in the proxy path, so an agent could receive a mutilated file and edit against content that was never in it. Source is now its own content type and passes through untouched, and truncation markers report the real number of omitted lines instead of claiming "dropped repetitive INFO/DEBUG lines" over a Python file.
@@ -47,7 +51,7 @@ All notable changes to this project will be documented in this file.
 - **Cursor subscription wire MITM** — the mitmproxy addon, `cursor-wire-*` commands, `ai.memor.cursor-wire` service unit, `cursor_wire` config keys, and the dashboard Cursor Wire chip are gone. Measurement showed Cursor's Composer traffic never reaches a local proxy (both the Node and Chromium network stacks were covered; only control-plane RPCs appeared), and the exchange that is actually billed — Cursor's servers to the model — never touches the user's machine, so no local savings figure could be verified. Compression for Cursor now runs entirely through the Shell compress hooks, which crush tool output before Cursor ingests it.
 - `memor uninstall-proxy --agent cursor` and `memor service uninstall` clean up any leftover wire settings, service unit, and config keys. The wire was built and removed within this same unreleased cycle, so this only affects installs built from source — nothing on PyPI ever shipped it.
 
-### Also in this release (developed earlier in the cycle)
+#### Also from that cycle
 - **Cursor install automation** — `memor install-proxy --agent cursor` enables memory hooks, Shell compress hooks, and the BYOK proxy on `:8421`. Flag: `--yes`.
 - **Agent desk dashboard** — Overview plus per-agent panes (Claude, Cursor, Codex, …) with cumulative savings equity curves, recall volume charts, and `/api/agent-desk`.
 - Dashboard layout de-densified: status chips + portfolio KPIs on Overview; each agent desk shows focused KPIs and filtered recalls.
