@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Jcode support** — jcode is now a first-class agent, though uniquely split across two channels because every jcode hook except `pre_tool` is a detached observer whose stdout is discarded. Hooks therefore drive ingest (`turn_end`, `session_end`, via `memor install-hook --agent jcode`) and MCP serves recall (`memor_recall`, via `memor install-mcp --agent jcode`). A jcode session's working directory is read from its journal sidecar when the session JSON leaves it null, which is what keeps its memories from being filed under "unknown" and leaking across projects. The daemon also scans `~/.jcode/sessions` as a safety net for sessions the hook missed.
+- **`memor_recall` MCP tool** — memory search for any agent whose hooks cannot inject context. A miss names the projects that do hold memories rather than dead-ending, because an MCP server's working directory is whatever launched the agent and the default project is routinely wrong.
+
+### Fixed
+- **Recall was silently returning nothing for half of all queries.** The dense channel gated candidates at raw cosine 0.0, on the reasoning that relevant content scores above zero and noise below. These static embeddings have no such margin — a *good* match scores about 0.05, not 0.6 — so the floor sat inside the noise band. Measured against ten realistic questions and eight the store has no history of: 0.0 answered 5/10 relevant and 0/8 irrelevant; -0.05 answers 9/10 and still 0/8; -0.1 answers everything but starts admitting junk. The floor is now -0.05. One query with eleven matching artifacts in the store had been returning none of them.
+- **A git worktree was a separate project.** Project resolution stopped at the first `.git` and used that directory's name, but in a linked worktree `.git` is a file pointing back at the repository. Work done in `repo-feature-x` never surfaced while working in `repo`, and sibling worktrees could not see each other, so one repository splintered into as many memory buckets as it had checkouts. Worktrees now resolve to their repository.
+- **Re-ingesting a session corrupted the vector index.** `add_artifacts` used `INSERT OR REPLACE`, which deletes and re-inserts and therefore assigns a *new* rowid; the vec index is keyed by rowid with no foreign key, so each rewrite orphaned the previous embedding. Three writes of four artifacts left twelve vec rows, and a later reused rowid collided with a stale vector, failed the primary key and lost the entire batch. Affected every agent.
+- **`memor prune` retired 99.4% of distilled memories.** Deduplication keyed on (project, text) across kinds, but a `memory` is distilled *from* a `session_chunk` and the two carry identical text. The chunk is always older and the pass keeps the earliest copy, so the memory lost every time — 2,442 of 2,457 on a real store, silently downgrading recall from `ok` to `extractive_only`. Deduplication is now within a kind.
+- **The daemon burned 90% CPU indefinitely.** Two Kimi sessions carrying attachments could not be parsed (`user_input` arrives as a list of content blocks, not a string), and because a file's state was recorded only after a successful parse they were retried on every 30s poll forever. Each retry re-ran the whole post-ingest pipeline, including a cross-project promotion scan that is O(n²) over every distilled memory and took 35s at this store's size. The parser handles both shapes, failures are recorded so a file is not retried until it changes, the similarity scan is vectorized (35.34s → 0.86s), and the whole-store sweeps run hourly rather than on every cycle that ingested anything.
+- **The dashboard took 8–10 seconds to load.** Three endpoints each independently parsed the full transcript corpus — about a gigabyte — and the page requests all three at once, so a cold load did the same work three times concurrently. They now share one cache. Separately, the launchd units filed the dashboard and proxy under `ProcessType=Background`, which caps CPU and throttles disk I/O; both are now `Interactive`. Combined: 8–10s → 2.0s cold.
+- **Recalls served over MCP were invisible.** Every per-agent dashboard view reads `recall_log`, and only the hook and proxy paths wrote to it, so an agent served purely over MCP did real work and appeared to do nothing.
+- **The dashboard showed the raw `_global` scope name** in both recall tables and the project filter pill. It now renders as a "Global" badge everywhere, as the projects and quality tables already did.
+- Quality scores are derived from a verdict ledger rather than incremented counters, which had credited one artifact with 2,180 uses against 40 recalls.
+
+### Changed
+- Retrieval diversifies its top-k with Maximal Marginal Relevance, so near-identical chunks no longer stack and spend the budget on one thing said five ways.
+- Ingestion filters harness noise (interrupt markers, tool-rejection notices, subagent prompt headers) that a live store had accumulated 615 copies of.
+- `memor prune` retires harness noise and cross-session duplicates. Rows are deactivated rather than deleted, so the pass is reversible and ids referenced by recall history stay valid.
+- `memor recall-baseline` compares recall across a stamped boundary instead of requiring the store to be wiped.
+
 ## [0.12.0] - 2026-08-04
 
 ### Fixed
