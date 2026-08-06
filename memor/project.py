@@ -7,8 +7,42 @@ def resolve_project(cwd: str) -> str:
     p = Path(cwd).resolve()
     git_root = _find_git_root(p)
     if git_root:
-        return git_root.name
+        return _main_repo_root(git_root).name
     return p.name
+
+
+def _main_repo_root(git_root: Path) -> Path:
+    """Follow a linked worktree back to the repository it belongs to.
+
+    In a linked worktree ``.git`` is a file reading ``gitdir: <path>``, pointing
+    at ``<main>/.git/worktrees/<name>``. Taking the worktree's own directory
+    name filed its memories under a separate project, so work done in
+    ``repo-feature-x`` never surfaced while working in ``repo``, and sibling
+    worktrees could not see each other. One repository would splinter into as
+    many memory buckets as it had checkouts.
+
+    Anything unexpected falls back to the directory we were given, since a
+    wrong-but-stable project name is better than an exception on the recall
+    path.
+    """
+    marker = git_root / ".git"
+    if marker.is_dir():
+        return git_root
+    try:
+        text = marker.read_text(errors="replace").strip()
+    except OSError:
+        return git_root
+    if not text.startswith("gitdir:"):
+        return git_root
+    gitdir = Path(text.split(":", 1)[1].strip())
+    # .../<main>/.git/worktrees/<name>  ->  <main>
+    parts = gitdir.parts
+    if "worktrees" in parts:
+        idx = len(parts) - 1 - parts[::-1].index("worktrees")
+        candidate = Path(*parts[:idx])          # .../<main>/.git
+        if candidate.name == ".git":
+            return candidate.parent
+    return git_root
 
 
 def _find_git_root(path: Path) -> Path | None:
