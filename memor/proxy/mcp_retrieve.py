@@ -55,11 +55,37 @@ def recall_memories(query: str, *, project: str = "", k: int = 5,
             project = resolve_project(os.getcwd())
 
         result = recall(query, project, resolved, embedder=_embedder(False), k=k)
-        if not result.formatted_context:
-            return f'memor: no relevant memories for "{query}" in {project}.'
+        # A miss still returns formatted text (memor's own status line), so the
+        # hit count is what actually distinguishes "found nothing" from "found
+        # something". Keying on the text would silently never fire.
+        if not result.hits_count:
+            # A bare "no memories" is indistinguishable from "wrong project",
+            # and the MCP server's cwd is whatever launched the agent, not the
+            # directory the work is in. Naming the projects that do hold
+            # memories turns a dead end into a retry the model can make.
+            return (f'memor: no memories for "{query}" in project "{project}". '
+                    + _other_projects_hint(resolved, project))
         return result.formatted_context
     except Exception as exc:  # never fail the agent's tool call
         return f"memor: recall unavailable ({type(exc).__name__})."
+
+
+def _other_projects_hint(db_path: str, tried: str, limit: int = 6) -> str:
+    """Name the projects that actually hold memories, biggest first."""
+    try:
+        from memor.store.sqlite_store import SqliteStore, read_dim
+
+        store = SqliteStore(db_path, dim=read_dim(db_path, 256))
+        rows = store.db.execute(
+            "SELECT project, COUNT(*) c FROM artifacts WHERE active=1 "
+            "AND project != ? GROUP BY project ORDER BY c DESC LIMIT ?",
+            (tried, limit)).fetchall()
+        names = [r["project"] for r in rows if r["project"]]
+        if not names:
+            return ""
+        return "Try project= one of: " + ", ".join(names) + "."
+    except Exception:
+        return ""
 
 
 def handle_initialize() -> dict:
@@ -92,7 +118,12 @@ def handle_tools_list() -> dict:
                         },
                         "project": {
                             "type": "string",
-                            "description": "Project to search; defaults to the working directory",
+                            "description": (
+                                "Project to search, usually the basename of the "
+                                "repository you are working in. Pass it explicitly: "
+                                "the default is this server's working directory, "
+                                "which is often not the project directory."
+                            ),
                         },
                         "k": {
                             "type": "integer",

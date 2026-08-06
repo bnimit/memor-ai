@@ -46,6 +46,28 @@ def test_recall_failure_reads_as_no_memories(monkeypatch, tmp_path):
     assert "Traceback" not in text
 
 
+def test_a_miss_names_projects_that_do_have_memories(monkeypatch):
+    """A bare "no memories" cannot be told apart from "wrong project".
+
+    The server's cwd is whatever launched the agent, so the default project is
+    routinely wrong. Naming the real projects turns a dead end into a retry.
+    """
+    monkeypatch.setattr(mcp, "_other_projects_hint",
+                        lambda db, tried, limit=6: "Try project= one of: Alpha, Beta.")
+
+    class _Empty:
+        formatted_context = ""
+        hits_count = 0
+
+    monkeypatch.setattr("memor.recall.recall", lambda *a, **k: _Empty())
+    monkeypatch.setattr("memor.cli._embedder", lambda fake: object())
+    monkeypatch.setattr(mcp.Path, "exists", lambda self: True)
+
+    text = mcp.recall_memories("something absent", project="Wrong")
+    assert "Wrong" in text
+    assert "Alpha" in text, "a miss should point at projects that do have memories"
+
+
 def test_unknown_tool_is_reported():
     out = mcp.handle_tools_call("not_a_tool", {}, store=None)
     assert out.get("isError") is True
