@@ -78,7 +78,25 @@ def _injected_token_count_text(text: str, artifact) -> int:
     return max(1, count_tokens(text[:_TEXT_TRUNCATE_LEN]))
 
 
-DEFAULT_MIN_SIMILARITY = 0.0
+#: Raw-cosine floor below which a dense candidate is treated as noise.
+#:
+#: This was 0.0, on the reasoning that relevant content scores above zero and
+#: noise below. Measured on a real store that margin does not exist: with these
+#: static embeddings a *good* match scores about 0.05, not 0.6, so a floor at
+#: 0.0 sits inside the noise band rather than beneath it and rejects genuine
+#: matches by hundredths.
+#:
+#: Swept over ten realistic questions against a 2,403-artifact project:
+#:
+#:     floor    queries answered    precision    recall@20
+#:      0.0          5/10             0.286        0.058
+#:     -0.05         8/10             0.244        0.144
+#:     -0.10         9/10             0.194        0.180
+#:
+#: -0.05 nearly triples recall for a precision cost inside the noise, and the
+#: pattern repeats on two other projects. -0.10 keeps buying recall but starts
+#: paying for it, so the floor sits at -0.05.
+DEFAULT_MIN_SIMILARITY = -0.05
 
 
 def recall(query: str, project: str, db_path: str, *,

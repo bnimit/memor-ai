@@ -16,6 +16,14 @@ KIND_WEIGHTS = {
 RECENCY_HALF_LIFE_DAYS = 14
 
 # Reciprocal Rank Fusion constant. Larger = flatter (rank position matters less).
+#: Raw-cosine floor for the dense channel. Kept in step with
+#: memor.recall.DEFAULT_MIN_SIMILARITY: a Retriever built directly, as the eval
+#: harness and CLI do, must not silently use a stricter gate than recall().
+#: Measured on a real store, 0.0 rejected genuine matches by hundredths --
+#: these static embeddings score a good match near 0.05, so a zero floor sits
+#: inside the noise band. See DEFAULT_MIN_SIMILARITY for the sweep.
+MIN_SIMILARITY_FLOOR = -0.05
+
 RRF_K = 60
 
 #: Fallback for a candidate with no quality row, and the ceiling every quality
@@ -117,7 +125,7 @@ class Retriever:
     def __init__(self, store: MemoryStore, embedder: Embedder, *,
                  k: int = 8, recency_weight: float = 0.25,
                  kind_weight: float = 0.15, quality_weight: float = 0.10,
-                 min_similarity: float = 0.0, edge_expand: bool = True,
+                 min_similarity: float = MIN_SIMILARITY_FLOOR, edge_expand: bool = True,
                  use_keys: bool = False):
         self.store, self.embedder = store, embedder
         self.k, self.edge_expand = k, edge_expand
