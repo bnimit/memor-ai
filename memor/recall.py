@@ -97,10 +97,15 @@ def _injected_token_count_text(text: str, artifact) -> int:
 #:     -0.10        10/10                   1/8
 #:     -0.20        10/10                   3/8
 #:
-#: -0.05 nearly doubles genuine answers while still rejecting every unanswerable
-#: question. -0.1 answers everything but starts admitting noise, so the floor
-#: stops here. The same shape holds on two other projects, so this is not tuned
-#: to one vocabulary.
+#: Those ten were written by hand and turned out to be unrepresentative: they
+#: median 31 characters and a top cosine of -0.037, where 3,800 real logged
+#: queries median 100 characters and +0.223. Short invented questions sit far
+#: closer to the floor than anything a session actually asks.
+#:
+#: Replaying 150 real historical queries is the honest measure, and the effect
+#: is real but much smaller: zero-hit 11/150 -> 9/150, and 353 -> 373 memories
+#: surfaced (+5.7%). Two queries rescued from returning nothing, no junk
+#: admitted. -0.1 is still where noise starts, so the floor stays here.
 DEFAULT_MIN_SIMILARITY = -0.05
 
 

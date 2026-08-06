@@ -18,7 +18,16 @@ from memor.types import Artifact, Scope
 
 
 def test_floor_is_below_zero():
-    """A zero floor discards matches that these embeddings score just under."""
+    """A zero floor discards matches that these embeddings score just under.
+
+    Sizing note, recorded because the first justification for this value was
+    measured on hand-written queries that turned out to be unrepresentative:
+    invented questions median 31 characters and a top cosine of -0.037, while
+    3,800 real logged queries median 100 characters and +0.223. Replaying 150
+    real queries, -0.05 takes zero-hit results from 11 to 9 and surfaces 373
+    memories instead of 353. Real but modest -- the earlier "half of all
+    queries" figure was an artifact of the sample, not of the store.
+    """
     assert DEFAULT_MIN_SIMILARITY < 0.0
     assert DEFAULT_MIN_SIMILARITY >= -0.1, \
         "below -0.1 the measured precision cost stops being noise"
