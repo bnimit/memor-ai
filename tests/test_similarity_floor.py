@@ -23,10 +23,13 @@ def test_floor_is_below_zero():
     Sizing note, recorded because the first justification for this value was
     measured on hand-written queries that turned out to be unrepresentative:
     invented questions median 31 characters and a top cosine of -0.037, while
-    3,800 real logged queries median 100 characters and +0.223. Replaying 150
-    real queries, -0.05 takes zero-hit results from 11 to 9 and surfaces 373
-    memories instead of 353. Real but modest -- the earlier "half of all
-    queries" figure was an artifact of the sample, not of the store.
+    real logged queries median 100 characters and +0.223.
+
+    Replaying the full population of 3,390 distinct real queries -- no
+    sampling -- -0.05 takes queries returning nothing from 247 to 202 and
+    surfaces 7,469 memories instead of 7,223 (+3.4%). Real but modest; the
+    earlier "half of all queries" figure was an artifact of the sample, and an
+    intermediate 150-query estimate of +5.7% was sampling noise around +3%.
     """
     assert DEFAULT_MIN_SIMILARITY < 0.0
     assert DEFAULT_MIN_SIMILARITY >= -0.1, \

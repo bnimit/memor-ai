@@ -98,14 +98,21 @@ def _injected_token_count_text(text: str, artifact) -> int:
 #:     -0.20        10/10                   3/8
 #:
 #: Those ten were written by hand and turned out to be unrepresentative: they
-#: median 31 characters and a top cosine of -0.037, where 3,800 real logged
-#: queries median 100 characters and +0.223. Short invented questions sit far
-#: closer to the floor than anything a session actually asks.
+#: median 31 characters and a top cosine of -0.037, where real logged queries
+#: median 100 characters and +0.223. Short invented questions sit far closer to
+#: the floor than anything a session actually asks, so a test set made of them
+#: exaggerates any change to it.
 #:
-#: Replaying 150 real historical queries is the honest measure, and the effect
-#: is real but much smaller: zero-hit 11/150 -> 9/150, and 353 -> 373 memories
-#: surfaced (+5.7%). Two queries rescued from returning nothing, no junk
-#: admitted. -0.1 is still where noise starts, so the floor stays here.
+#: The honest measure is the whole population -- every one of the 3,390 distinct
+#: real queries this store has logged, replayed at both floors, no sampling:
+#:
+#:     floor    queries returning nothing    memories surfaced
+#:      0.0          247/3390  (7.3%)              7,223
+#:     -0.05         202/3390  (6.0%)              7,469  (+3.4%)
+#:
+#: 45 queries rescued from returning nothing, 246 extra memories, and still
+#: nothing admitted for eight subjects the store has no history of. Real but
+#: modest; -0.1 remains where noise starts, so the floor stays here.
 DEFAULT_MIN_SIMILARITY = -0.05
 
 
