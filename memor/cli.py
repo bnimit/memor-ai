@@ -841,7 +841,9 @@ def install_mcp_jcode(mcp_path: Path, server_bin: str) -> bool:
             # Never destroy a config we cannot parse.
             return False
     servers = data.setdefault("servers", {})
-    entry = {"command": server_bin, "args": [], "env": {}}
+    # Stamp who is calling, so recalls served over MCP are attributed to this
+    # agent in the dashboard rather than to a default.
+    entry = {"command": server_bin, "args": [], "env": {"MEMOR_HOOK_AGENT": "jcode"}}
     if servers.get("memor") == entry:
         return False
     servers["memor"] = entry

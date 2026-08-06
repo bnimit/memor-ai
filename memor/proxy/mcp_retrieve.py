@@ -36,12 +36,15 @@ def retrieve(blob_id: str, store: SqliteStore) -> str:
 
 
 def recall_memories(query: str, *, project: str = "", k: int = 5,
-                    db_path: str | None = None) -> str:
+                    db_path: str | None = None, agent: str = "jcode") -> str:
     """Search memory and render the hits as text for the model.
 
     Failures are returned as prose rather than raised: a broken memory lookup
     should read as "no memories" to the agent, never break its tool call.
     """
+    import time as _time
+
+    started = _time.perf_counter()
     try:
         from memor.cli import _embedder
         from memor.recall import recall
@@ -55,6 +58,8 @@ def recall_memories(query: str, *, project: str = "", k: int = 5,
             project = resolve_project(os.getcwd())
 
         result = recall(query, project, resolved, embedder=_embedder(False), k=k)
+        _log(resolved, project, query, result, agent,
+             (_time.perf_counter() - started) * 1000)
         # A miss still returns formatted text (memor's own status line), so the
         # hit count is what actually distinguishes "found nothing" from "found
         # something". Keying on the text would silently never fire.
@@ -68,6 +73,27 @@ def recall_memories(query: str, *, project: str = "", k: int = 5,
         return result.formatted_context
     except Exception as exc:  # never fail the agent's tool call
         return f"memor: recall unavailable ({type(exc).__name__})."
+
+
+def _log(db_path: str, project: str, query: str, result, agent: str,
+         latency_ms: float) -> None:
+    """Record the recall, so MCP-served agents are visible like the others.
+
+    The hook and proxy paths both log, and every per-agent view in the
+    dashboard reads recall_log. Without this an agent served purely over MCP
+    does real work and shows as permanently absent, which reads as "memor does
+    nothing here" rather than "memor is not measured here".
+    """
+    try:
+        from memor.store.sqlite_store import SqliteStore, read_dim
+
+        store = SqliteStore(db_path, dim=read_dim(db_path, 256))
+        store.log_recall(
+            project, query, result.hits_count, result.top_score,
+            result.tokens_injected, latency_ms, result.status, agent=agent)
+    except Exception:
+        # Measurement must never break the tool call it is measuring.
+        pass
 
 
 def _other_projects_hint(db_path: str, tried: str, limit: int = 6) -> str:
@@ -164,6 +190,10 @@ def handle_tools_call(name: str, arguments: dict, store: SqliteStore) -> dict:
             query,
             project=(arguments.get("project") or ""),
             k=int(arguments.get("k") or 5),
+            # The server is installed per agent, so the installer stamps who is
+            # calling. Defaults to jcode because that is the agent that needs
+            # MCP for recall at all.
+            agent=os.environ.get("MEMOR_HOOK_AGENT", "jcode"),
         )
         return {"content": [{"type": "text", "text": text}]}
 
