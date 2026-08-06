@@ -1199,12 +1199,22 @@
     });
   }
 
+  // "_global" is an internal scope name, not something to show a person. The
+  // projects and quality tables already badge it; this keeps every surface
+  // consistent so the raw underscore never leaks into the UI.
+  function projectCell(project, cls) {
+    if (project === '_global') {
+      return '<td><span class="badge badge-global">Global</span></td>';
+    }
+    return '<td class="' + cls + '" title="' + esc(project) + '">' + esc(project) + '</td>';
+  }
+
   function renderRecalls(data) {
     var bar = document.getElementById('filter-bar');
     bar.innerHTML = '';
     if (projectFilter) {
       var pill = el('div', { class: 'filter-pill' },
-        esc(projectFilter) + ' <button title="Clear">×</button>');
+        esc(projectFilter === '_global' ? 'Global' : projectFilter) + ' <button title="Clear">×</button>');
       pill.querySelector('button').addEventListener('click', function() {
         projectFilter = null; loadRecalls(); renderProjects(projectsData);
       });
@@ -1221,7 +1231,7 @@
       tr.innerHTML =
         '<td class="mono" style="color:var(--text-muted);white-space:nowrap">' + relativeTime(row.timestamp) + '</td>' +
         '<td>' + agentBadge(row.agent) + '</td>' +
-        '<td class="truncate mono" style="max-width:120px">' + esc(row.project) + '</td>' +
+        projectCell(row.project, 'truncate mono') +
         '<td class="truncate" style="max-width:220px" title="' + esc(row.query_preview) + '">' + esc(row.query_preview) + '</td>' +
         '<td>' + (row.hits_count || 0) + '</td>' +
         '<td>' + fmtScore(row.top_score) + '</td>' +
@@ -1350,7 +1360,7 @@
           var tr = el('tr', {});
           tr.innerHTML =
             '<td class="mono" style="color:var(--text-muted);white-space:nowrap">' + relativeTime(row.timestamp) + '</td>' +
-            '<td class="truncate mono" style="max-width:120px">' + esc(row.project) + '</td>' +
+            projectCell(row.project, 'truncate mono') +
             '<td class="truncate" style="max-width:240px">' + esc(row.query_preview) + '</td>' +
             '<td>' + (row.hits_count || 0) + '</td>' +
             '<td>' + fmtScore(row.top_score) + '</td>' +
