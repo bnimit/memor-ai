@@ -26,7 +26,8 @@ Compression is easy to verify and therefore easy to falsify, so these are measur
 
 | Measurement | Result | Measured on |
 |---|---|---|
-| Tool-output compression | **38.6%** saved | 569 real Bash results from live Claude Code sessions |
+| Tool-output compression, when it fires | **61.8%** saved | 33 of 173 real Bash results from live sessions |
+| Tool-output compression, across all Bash output | **17.1%** saved | the same 173 results |
 | A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,278-test suite |
 | Proxy, on compressible payloads | **7.3%** | 5,414 real proxied requests |
 | Proxy, blended over all traffic | **0.8%** | the same 5,414 requests |
@@ -36,10 +37,15 @@ compressor deliberately refuses to rewrite, so the blended figure measures
 coverage rather than compressor quality. Both are shown on the dashboard, side
 by side, because a single number hides which one you are looking at.
 
-**Coverage is capped by safety, on purpose.** Of the large tool payloads left
-untouched in that sample, 78% were held back by the source guard: they were file
-reads, and an agent editing against a mutilated read is a worse outcome than any
-token saving is worth. Pushing coverage higher means weakening that guard.
+**Coverage is capped by safety, on purpose.** The hook fires on 19.1% of large
+Bash results. Nearly all of the rest is held back by the source guard — output
+that is source code, most often a heredoc or a `cat`, and an agent editing
+against a mutilated read is a worse outcome than any token saving is worth.
+Pushing coverage higher means weakening that guard.
+
+Read, Grep and Glob results are never touched at all and are excluded from
+these figures rather than counted as missed coverage: they feed edits directly,
+so the hook declines them by design rather than by failure.
 
 **Savings are reported net of the provider's prompt cache.** Rewriting a payload
 that was being served from cache turns cheap cache reads into full-price cache
