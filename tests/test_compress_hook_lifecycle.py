@@ -153,7 +153,24 @@ def test_lifecycle_leaves_the_real_home_untouched(sandbox_home):
     # ledger grew; this asserts the write went where it was supposed to.
 
 
-@pytest.mark.skipif(shutil.which("memor-posttool-compress") is None,
+def _console_script() -> str | None:
+    """Locate memor-posttool-compress, including inside the active venv.
+
+    ``shutil.which`` searches only the ambient PATH, which does not contain the
+    virtualenv's bin directory unless the venv was activated in the shell. Under
+    ``.venv/bin/python -m pytest`` -- how CI and most contributors run the suite
+    -- the script is installed and working, and the test skipped anyway. A skip
+    that fires when the thing under test is present is worse than no test: it
+    reports coverage that never ran.
+    """
+    found = shutil.which("memor-posttool-compress")
+    if found:
+        return found
+    candidate = Path(sys.executable).parent / "memor-posttool-compress"
+    return str(candidate) if candidate.exists() else None
+
+
+@pytest.mark.skipif(_console_script() is None,
                     reason="entry point not installed in this environment")
 def test_installed_console_script_is_wired(sandbox_home):
     """The console script the installer points at must actually exist and run.
@@ -165,7 +182,7 @@ def test_installed_console_script_is_wired(sandbox_home):
     env = dict(os.environ)
     env["HOME"] = str(sandbox_home)
     proc = subprocess.run(
-        [shutil.which("memor-posttool-compress")],
+        [_console_script()],
         input=json.dumps({
             "tool_name": "Bash",
             "tool_response": {"stdout": _noisy_build_log(), "stderr": "",
