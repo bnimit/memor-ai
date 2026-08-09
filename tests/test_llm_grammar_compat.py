@@ -1,4 +1,6 @@
 """Test that cloud LLM backends accept and ignore grammar kwarg."""
+import sys
+import types
 
 
 def test_openai_compat_accepts_and_ignores_grammar(monkeypatch):
@@ -18,11 +20,30 @@ def test_openai_compat_accepts_and_ignores_grammar(monkeypatch):
     assert result == "ok"  # no TypeError
 
 
-def test_anthropic_accepts_and_ignores_grammar():
+def test_anthropic_accepts_and_ignores_grammar(monkeypatch):
     """AnthropicLLM should accept grammar kwarg and ignore it."""
     from memor.llm.anthropic import AnthropicLLM
 
-    # Skip __init__ to avoid needing the anthropic package
+    # Skip __init__ to avoid needing the anthropic package -- but `complete`
+    # imports it too, for the exception types it retries on. Without the
+    # optional `anthropic` extra installed this test failed with
+    # ModuleNotFoundError rather than skipping, so it passed for anyone whose
+    # environment happened to carry the extra and broke a clean checkout.
+    if "anthropic" not in sys.modules:
+        stub = types.ModuleType("anthropic")
+
+        class _APIError(Exception):
+            pass
+
+        stub.APIError = _APIError
+        stub.APIStatusError = _APIError
+        stub.APIConnectionError = _APIError
+        stub.RateLimitError = _APIError
+        stub.APITimeoutError = _APIError
+        stub.InternalServerError = _APIError
+        stub.Anthropic = object
+        monkeypatch.setitem(sys.modules, "anthropic", stub)
+
     llm = object.__new__(AnthropicLLM)
     llm.model = "m"
     llm.max_retries = 0
