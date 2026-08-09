@@ -31,7 +31,23 @@ _TEST_RESULT = re.compile(
 #: passed through whole. The percentage suffix is what makes it unambiguous:
 #: the line must end in a bracketed percentage and carry a run of status
 #: characters before it, which prose and source do not do.
-_TEST_PROGRESS = re.compile(r"^\S+\s+[.sFExX✓✗]+\s*\[\s*\d{1,3}%\]\s*$")
+#: Two shapes: verbose ("tests/test_x.py ....  [ 12%]") and quiet, where
+#: pytest -q emits a bare run of status characters with no filename at all
+#: ("........  [  5%]"). Requiring a leading token missed the quiet form
+#: entirely, which is the shape CI logs and `-q` runs actually produce.
+_TEST_PROGRESS = re.compile(
+    r"^(?:\S+\s+)?[.sFExX✓✗]{2,}\s*\[\s*\d{1,3}%\]\s*$"
+)
+
+#: Fraction of lines that must be pytest progress before the payload is
+#: treated as test output.
+#:
+#: A bare count is not enough, and the failure is not hypothetical: an
+#: implementation report in this repo quotes four pytest lines among 145 lines
+#: of prose. On a count-of-three rule it was reclassified from prose to log and
+#: the crusher deleted 86 lines of explanation. Genuine test output is
+#: *dominated* by these lines; a document that merely quotes some is not.
+_TEST_PROGRESS_MIN_RATIO = 0.15
 
 #: Extension -> content type. When a payload came from a file we know the type
 #: for certain, and guessing from bytes is strictly worse: `var(--warn)` in a
@@ -144,11 +160,13 @@ def detect_content_type(text: str, file_path: str | None = None) -> str:
 
     # Test-runner output before the source guard: `--- PASS: TestX (0.00s)` is
     # unambiguous, but its trailing `)` reads as code to the structural check.
-    test_lines = sum(
-        1 for line in lines
-        if _TEST_RESULT.search(line) or _TEST_PROGRESS.match(line)
-    )
-    if test_lines >= 3:
+    if sum(1 for line in lines if _TEST_RESULT.search(line)) >= 3:
+        return "log"
+    # Progress lines additionally require density, because unlike an explicit
+    # "FAILED test_x" marker they appear verbatim inside prose that discusses
+    # a test run.
+    progress = sum(1 for line in lines if _TEST_PROGRESS.match(line))
+    if progress >= 3 and progress / len(lines) >= _TEST_PROGRESS_MIN_RATIO:
         return "log"
 
     # Guard source code before the log heuristic. Code trips it constantly:

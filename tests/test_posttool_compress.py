@@ -353,3 +353,39 @@ def test_declining_does_not_load_the_tokenizer():
         cwd=str(Path(__file__).resolve().parent.parent),
     )
     assert proc.stdout.strip() == "False", proc.stderr
+
+
+def test_failing_test_run_keeps_every_diagnostic():
+    """The verdict is not always in the last few lines.
+
+    The log crusher keeps a positional tail, and pytest often prints a
+    warnings epilogue after the summary. Failure detail must survive on
+    content, not on position.
+    """
+    body = "\n".join("." * 72 + f" [{i * 4:3d}%]" for i in range(25))
+    tail = "\n".join([
+        "=================================== FAILURES ===================================",
+        "    def test_broken():",
+        ">       assert add(2, 2) == 5",
+        "E       assert 4 == 5",
+        "tests/test_math.py:12: AssertionError",
+        "=========================== short test summary info ============================",
+        "FAILED tests/test_math.py::test_broken - assert 4 == 5",
+        "========================= 1 failed, 1227 passed in 6.1s ========================",
+        "=============================== warnings summary ===============================",
+        "  StarletteDeprecationWarning: httpx with starlette.testclient is deprecated",
+        "    from starlette.testclient import TestClient as TestClient  # noqa",
+        "-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html",
+    ])
+
+    from memor.compress import compress_text
+
+    result = compress_text(body + "\n" + tail)
+    assert result.tokens_after < result.tokens_before
+    for needle in (
+        "1 failed, 1227 passed",
+        "FAILED tests/test_math.py::test_broken",
+        "assert 4 == 5",
+        "tests/test_math.py:12",
+    ):
+        assert needle in result.text, needle

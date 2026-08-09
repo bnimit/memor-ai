@@ -63,3 +63,51 @@ def test_source_code_still_wins_over_test_progress():
         f"def check_{i}(value):\n    return transform(value, {i});" for i in range(20)
     )
     assert detect_content_type(src) == "source"
+
+
+def test_prose_quoting_a_few_pytest_lines_is_not_treated_as_test_output():
+    """A count-based rule silently destroyed real documents.
+
+    An implementation report in this repo quotes four pytest progress lines
+    among 145 lines of prose. Under a bare count-of-three rule it was
+    reclassified from prose to log and the crusher deleted 86 lines of
+    explanation. Genuine test output is dominated by progress lines; a
+    document that merely quotes some is not.
+    """
+    from memor.compress.detect import detect_content_type
+
+    doc = "\n".join(
+        ["# Implementation report", "", "## Summary", ""]
+        + [f"This section explains decision {i} and why it was made that way."
+           for i in range(60)]
+        + ["", "Test output was:", "",
+           "tests/test_alpha.py ....                                       [ 25%]",
+           "tests/test_beta.py .....                                       [ 60%]",
+           "tests/test_gamma.py ..                                         [100%]",
+           "", "Everything passed, so the change was accepted."]
+    )
+    assert detect_content_type(doc) != "log"
+
+
+def test_quiet_pytest_progress_without_filenames_is_detected():
+    """`pytest -q` emits bare status runs with no filename prefix.
+
+    Requiring a leading token matched only the verbose form and missed the
+    shape that CI logs and -q runs actually produce.
+    """
+    from memor.compress.detect import detect_content_type
+
+    out = "\n".join(["." * 72 + f" [{i * 5:3d}%]" for i in range(18)])
+    assert detect_content_type(out) == "log"
+
+
+def test_dense_test_output_still_detected_with_some_prose():
+    from memor.compress.detect import detect_content_type
+
+    out = "\n".join(
+        ["============================= test session starts ============================="]
+        + [f"tests/test_mod{i}.py ......                                    [{i * 5:3d}%]"
+           for i in range(18)]
+        + ["========================= 1188 passed in 6.02s ========================="]
+    )
+    assert detect_content_type(out) == "log"
