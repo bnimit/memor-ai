@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1290%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1291%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -28,7 +28,7 @@ Compression is easy to verify and therefore easy to falsify, so these are measur
 |---|---|---|
 | Tool-output compression, when it fires | **51.9%** saved | 259 of 1,219 real Bash results from live sessions |
 | Tool-output compression, across all Bash output | **13.2%** saved | the same 1,219 results |
-| A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,290-test suite |
+| A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,291-test suite |
 | Proxy, on compressible payloads | **7.3%** | 5,414 real proxied requests |
 | Proxy, blended over all traffic | **0.8%** | the same 5,414 requests |
 
@@ -406,6 +406,13 @@ memor install-compress-hook          Compress Bash output before it enters the
                                      transcript (Claude Code); no proxy needed
 memor uninstall-compress-hook        Remove it
 memor compression-worth              Realized savings, coverage, and net of cache
+memor hook-worth                     What tool-output compression saved on your
+                                     own Bash output, with its denominator
+  --sessions N                       How many recent sessions to scan (default 60)
+memor recall-worth                   Whether recall is earning its context budget
+memor compress-older                 Show or set whether payloads the agent has
+                                     moved past get compressed by the proxy
+memor cost-compare                   Did a change actually lower the bill?
 memor daemon                         Auto-ingest + distill (Claude, Kimi, Goose)
 memor backfill                       One-shot ingest of past local agent sessions
 memor dashboard                      Web dashboard on localhost:8420
@@ -421,6 +428,8 @@ memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything
 memor reingest --project <name>      Re-ingest only one project
 memor forget-stale                   Deactivate memories unused for 30+ days
+memor prune                          Retire harness noise and duplicates from the
+                                     retrieval pool (deactivates, never deletes)
 memor compact                        Rebuild vector index, reclaim wasted space
 memor scan                           Audit DB for leaked secrets
 memor scan --purge                   Redact secrets in place

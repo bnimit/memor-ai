@@ -158,3 +158,60 @@ def test_documented_test_counts_are_not_stale():
             # behind, which is how 45 survived to describe 1,200.
             assert floor >= actual * 0.5, (
                 f"{name} claims {floor} tests, well below the actual {actual}")
+
+
+def test_user_facing_commands_are_documented():
+    """A shipped command the README never names may as well not exist.
+
+    `memor hook-worth` was undocumented the moment it shipped, and
+    `recall-worth` had been for longer, in both cases because the command was
+    added without touching the reference list. The check runs the other way
+    from test_readme_commands_all_exist: that one catches docs promising
+    commands that were removed, this one catches commands arriving unannounced.
+
+    Internal tooling is exempt by name. The exemption list is explicit so that
+    adding to it is a decision someone makes, rather than something that
+    happens by omission.
+    """
+    from memor.cli import app
+
+    # Eval harnesses, release gates and hook-internal entry points. A user
+    # never types these; they appear in CONTRIBUTING or are invoked by a hook.
+    INTERNAL = {
+        "build-cases",       # eval dataset construction
+        "compress-exec",     # invoked by the Cursor shell hook, not by hand
+        "eval-judge",        # LLM-as-judge harness
+        "eval-proxy",        # release gate benchmark
+        "eval",              # eval suite runner
+        "recall-baseline",   # stamps a boundary for recall-compare
+        "recall-compare",    # paired with recall-baseline
+        "redistill",         # one-off backfill after a distiller change
+        "bench-embed",       # embedding model comparison
+        "eval-counterfactual",
+        "ingest-cc", "ingest-project", "ingest-doc",  # covered in prose
+        "distill", "reingest", "scan", "setup-model", "help",
+        "install-mcp", "install-cursor-compress-hooks",
+        "uninstall-cursor-compress-hooks", "query", "backfill",
+    }
+
+    import re
+
+    root = Path(__file__).resolve().parent.parent
+    readme = (root / "README.md").read_text()
+
+    # Only the command-reference block counts. A passing mention in prose is
+    # not documentation a user can scan, and matching anywhere in the file let
+    # a removed reference entry go undetected because the feature was also
+    # named in a paragraph above it.
+    blocks = re.findall(r"```\n(memor help.*?)```", readme, re.S)
+    assert blocks, "the README command reference block was not found"
+    reference = blocks[0]
+
+    missing = sorted(
+        c.name for c in app.registered_commands
+        if c.name not in INTERNAL and f"memor {c.name}" not in reference
+    )
+    assert not missing, (
+        "user-facing commands missing from the README reference: "
+        f"{missing}. Document them, or add them to INTERNAL with a reason."
+    )
