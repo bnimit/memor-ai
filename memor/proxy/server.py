@@ -13,6 +13,11 @@ from memor.proxy.forward import (
 )
 from memor.proxy.shim import compressor_state, prepare_request_body
 from memor.proxy.upstream import resolve_agent, resolve_upstream_url
+from memor.proxy.usage import (
+    UsageSniffer,
+    usage_from_anthropic,
+    usage_from_openai,
+)
 from memor.embed.local import LocalEmbedder
 
 
@@ -113,9 +118,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         upstream_content = json.dumps(result.body).encode("utf-8")
 
         # Parse usage from response for non-streaming
-        upstream_input_tokens = None
-        upstream_cache_read_tokens = None
-        upstream_output_tokens = None
+        upstream_usage = None
 
         if not stream:
             # Non-streaming: get response with buffered content
@@ -131,18 +134,14 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             response_content = await upstream_response.aread()
             if upstream_response.status_code == 200:
                 try:
-                    response_json = json.loads(response_content)
-                    usage = response_json.get("usage", {})
-                    upstream_input_tokens = usage.get("input_tokens")
-                    upstream_cache_read_tokens = usage.get("cache_read_input_tokens")
-                    upstream_output_tokens = usage.get("output_tokens")
+                    upstream_usage = usage_from_anthropic(json.loads(response_content))
                 except (json.JSONDecodeError, KeyError):
                     pass
 
             # Record savings to database
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
 
-            store.record_proxy_savings({
+            row = {
                 "timestamp": time.time(),
                 "agent": agent,
                 "provider": "anthropic",
@@ -151,10 +150,9 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
                 "passthrough": int(result.passthrough),
-                "upstream_input_tokens": upstream_input_tokens,
-                "upstream_cache_read_tokens": upstream_cache_read_tokens,
-                "upstream_output_tokens": upstream_output_tokens,
-            })
+            }
+            row.update((upstream_usage or UsageSniffer("anthropic").usage).as_row())
+            store.record_proxy_savings(row)
             
             # Return non-streaming response
             return Response(
@@ -175,10 +173,13 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             # Enter context to get metadata
             resp = await streaming_ctx.__aenter__()
             
-            # Record savings immediately (before streaming starts)
+            # The savings row is written before the first byte is forwarded so
+            # that a dropped stream still records that compression happened.
+            # Usage arrives in the stream itself and completes the row at the
+            # end -- see memor/proxy/usage.py.
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            
-            store.record_proxy_savings({
+
+            row_id = store.record_proxy_savings({
                 "timestamp": time.time(),
                 "agent": agent,
                 "provider": "anthropic",
@@ -187,17 +188,19 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
                 "passthrough": int(result.passthrough),
-                "upstream_input_tokens": None,  # Not available for streaming
-                "upstream_cache_read_tokens": None,
-                "upstream_output_tokens": None,
             })
-            
+
             # Return streaming response - context will be managed by the generator
+            sniffer = UsageSniffer("anthropic")
+
             async def stream_with_context():
                 try:
                     async for chunk in resp.aiter_bytes():
+                        sniffer.feed(chunk)
                         yield chunk
                 finally:
+                    sniffer.close()
+                    store.update_proxy_usage(row_id, sniffer.usage.as_row())
                     await streaming_ctx.__aexit__(None, None, None)
             
             return StreamingResponse(
@@ -250,8 +253,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
         upstream_content = json.dumps(result.body).encode("utf-8")
         
         # Parse usage from response for non-streaming
-        upstream_prompt_tokens = None
-        upstream_completion_tokens = None
+        upstream_usage = None
         
         if not stream:
             # Non-streaming: get response with buffered content
@@ -267,17 +269,14 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             response_content = await upstream_response.aread()
             if upstream_response.status_code == 200:
                 try:
-                    response_json = json.loads(response_content)
-                    usage = response_json.get("usage", {})
-                    upstream_prompt_tokens = usage.get("prompt_tokens")
-                    upstream_completion_tokens = usage.get("completion_tokens")
+                    upstream_usage = usage_from_openai(json.loads(response_content))
                 except (json.JSONDecodeError, KeyError):
                     pass
             
             # Record savings to database
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
             
-            store.record_proxy_savings({
+            row = {
                 "timestamp": time.time(),
                 "agent": agent,
                 "provider": "openai",
@@ -286,10 +285,9 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
                 "passthrough": int(result.passthrough),
-                "upstream_input_tokens": upstream_prompt_tokens,
-                "upstream_cache_read_tokens": None,
-                "upstream_output_tokens": upstream_completion_tokens,
-            })
+            }
+            row.update((upstream_usage or UsageSniffer("openai").usage).as_row())
+            store.record_proxy_savings(row)
             
             # Return non-streaming response
             return Response(
@@ -310,10 +308,12 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             # Enter context to get metadata
             resp = await streaming_ctx.__aenter__()
             
-            # Record savings immediately (before streaming starts)
+            # Written before forwarding; completed from the stream's own usage
+            # frame once it ends. OpenAI only emits that frame when the client
+            # asked for it via stream_options, so it may legitimately be absent.
             session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
             
-            store.record_proxy_savings({
+            row_id = store.record_proxy_savings({
                 "timestamp": time.time(),
                 "agent": agent,
                 "provider": "openai",
@@ -322,17 +322,19 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
                 "passthrough": int(result.passthrough),
-                "upstream_input_tokens": None,  # Not available for streaming
-                "upstream_cache_read_tokens": None,
-                "upstream_output_tokens": None,
             })
             
             # Return streaming response - context will be managed by the generator
+            sniffer = UsageSniffer("openai")
+
             async def stream_with_context():
                 try:
                     async for chunk in resp.aiter_bytes():
+                        sniffer.feed(chunk)
                         yield chunk
                 finally:
+                    sniffer.close()
+                    store.update_proxy_usage(row_id, sniffer.usage.as_row())
                     await streaming_ctx.__aexit__(None, None, None)
             
             return StreamingResponse(

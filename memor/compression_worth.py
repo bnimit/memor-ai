@@ -24,6 +24,14 @@ from dataclasses import dataclass, field
 #: Below this many requests the realized rate is too noisy to report.
 MIN_REQUESTS = 25
 
+#: Provider list-price multipliers on a base input token. Anthropic bills a
+#: cache write at 1.25x and a cache read at 0.1x; OpenAI discounts cached input
+#: to roughly 0.1x and charges nothing extra to create it. Anthropic's is used
+#: as the conservative default because it is the only one that can make
+#: compression *lose* money, which is the case worth being able to detect.
+CACHE_WRITE_MULTIPLIER = 1.25
+CACHE_READ_MULTIPLIER = 0.1
+
 
 @dataclass
 class TypeStats:
@@ -39,6 +47,19 @@ class CompressionSummary:
     tokens_after: int = 0
     by_type: dict[str, int] = field(default_factory=dict)
     by_agent: dict[str, dict] = field(default_factory=dict)
+    #: Requests where the provider actually reported usage back to us.
+    usage_requests: int = 0
+    upstream_input: int = 0
+    cache_read: int = 0
+    cache_creation: int = 0
+    #: Requests that reported a cache-*write* figure specifically. A row
+    #: written before the column existed reports reads but not writes, and
+    #: counting its NULL as zero would price the one cost compression can
+    #: actually add at nothing.
+    cache_write_observations: int = 0
+    #: Tokens on the subset of requests that carried something compressible.
+    compressible_before: int = 0
+    compressible_after: int = 0
 
     @property
     def saved(self) -> int:
@@ -49,6 +70,78 @@ class CompressionSummary:
         if self.tokens_before <= 0:
             return 0.0
         return self.saved / self.tokens_before * 100
+
+    @property
+    def compressible_saved(self) -> int:
+        return max(0, self.compressible_before - self.compressible_after)
+
+    @property
+    def compressible_pct(self) -> float:
+        """Savings rate on requests that had anything to compress.
+
+        The blended rate answers "what fraction of all proxied tokens did we
+        remove", which is dominated by conversation history the compressor
+        deliberately refuses to touch. This answers the different and more
+        actionable question: when there *was* something to compress, how much
+        came off. Coverage is reported separately rather than folded in, so a
+        low number cannot be hidden inside a high one.
+        """
+        if self.compressible_before <= 0:
+            return 0.0
+        return self.compressible_saved / self.compressible_before * 100
+
+    @property
+    def has_usage(self) -> bool:
+        return self.usage_requests > 0
+
+    @property
+    def cache_writes_observed(self) -> bool:
+        return self.cache_write_observations > 0
+
+    @property
+    def cache_hit_pct(self) -> float:
+        """Share of billed prompt tokens the provider served from cache."""
+        total = self.upstream_input + self.cache_read + self.cache_creation
+        if total <= 0:
+            return 0.0
+        return self.cache_read / total * 100
+
+    @property
+    def billed_input_units(self) -> float:
+        """Prompt cost in base-input-token equivalents, as billed.
+
+        A raw token count cannot answer whether compression saved money once
+        caching is involved: 1,000 tokens read from cache cost a tenth of 1,000
+        fresh ones, and 1,000 written to cache cost more. Weighting each class
+        by its price is the only way the ledger can express that.
+        """
+        return (
+            self.upstream_input
+            + self.cache_read * CACHE_READ_MULTIPLIER
+            + self.cache_creation * CACHE_WRITE_MULTIPLIER
+        )
+
+    @property
+    def cache_overhead_units(self) -> float:
+        """Extra cost of cache writes over reading the same tokens from cache.
+
+        This is the quantity that compression can inflate. Rewriting a prefix
+        that was being read from cache turns reads into writes, and if that
+        overhead exceeds the tokens removed, compression is losing money even
+        though gross savings look positive.
+        """
+        return self.cache_creation * (CACHE_WRITE_MULTIPLIER - CACHE_READ_MULTIPLIER)
+
+    @property
+    def net_saved_units(self) -> float:
+        """Tokens removed, less the cache-write overhead they may have caused.
+
+        Deliberately pessimistic: it charges compression for *every* cache
+        write observed, including writes that would have happened anyway on a
+        first request or after a provider-side eviction. A positive number here
+        is therefore a floor on the true saving, not an estimate of it.
+        """
+        return self.saved - self.cache_overhead_units
 
     @property
     def passthrough_pct(self) -> float:
@@ -72,6 +165,24 @@ def summarize_savings(rows: list[dict]) -> CompressionSummary:
         after = int(row.get("tokens_after") or 0)
         s.tokens_before += before
         s.tokens_after += after
+        if not row.get("passthrough"):
+            s.compressible_before += before
+            s.compressible_after += after
+
+        # Usage is absent on rows written before streaming usage was captured,
+        # and on providers that only report it when the client opts in. Those
+        # rows must not be counted as "observed zero cache", which would make
+        # caching look absent rather than unmeasured.
+        upstream_in = row.get("upstream_input_tokens")
+        cache_read = row.get("upstream_cache_read_tokens")
+        cache_creation = row.get("upstream_cache_creation_tokens")
+        if any(v is not None for v in (upstream_in, cache_read, cache_creation)):
+            s.usage_requests += 1
+            s.upstream_input += int(upstream_in or 0)
+            s.cache_read += int(cache_read or 0)
+            s.cache_creation += int(cache_creation or 0)
+            if cache_creation is not None:
+                s.cache_write_observations += 1
 
         agent = row.get("agent") or "unknown"
         bucket = s.by_agent.setdefault(
@@ -111,9 +222,23 @@ def load_savings_rows(
     try:
         db = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
         db.row_factory = sqlite3.Row
+        # Opened read-only, so a ledger predating the cache columns cannot be
+        # migrated here; select them only when present rather than failing and
+        # reporting nothing at all.
+        have = {r["name"] for r in db.execute("PRAGMA table_info(proxy_savings)")}
+        optional = [
+            c for c in (
+                "upstream_input_tokens",
+                "upstream_cache_read_tokens",
+                "upstream_cache_creation_tokens",
+            ) if c in have
+        ]
+        columns = ", ".join(
+            ["agent", "tokens_before", "tokens_after", "content_types", "passthrough"]
+            + optional
+        )
         rows = db.execute(
-            "SELECT agent, tokens_before, tokens_after, content_types, passthrough "
-            "FROM proxy_savings WHERE timestamp >= ?",
+            f"SELECT {columns} FROM proxy_savings WHERE timestamp >= ?",
             (cutoff,),
         ).fetchall()
         db.close()
@@ -219,9 +344,61 @@ def format_report(summary: CompressionSummary, *, days: int = 30) -> list[str]:
     )
     lines.append("  not compressor quality, is what caps this number.")
     lines.append("")
-    lines.append("  Gross, not net: compressing a payload that recurs across requests")
-    lines.append("  re-forms the provider's prompt cache once, and that cost is not")
-    lines.append("  observable from here. Says nothing about answer quality.")
+    lines.append(
+        f"ON COMPRESSIBLE REQUESTS: {summary.compressible_pct:.1f}% "
+        f"({summary.compressible_before:,} -> {summary.compressible_after:,})"
+    )
+    lines.append(
+        f"  coverage {100 - summary.passthrough_pct:.0f}% of requests. "
+        "Raising coverage, not the rate,"
+    )
+    lines.append("  is the larger lever.")
+    lines.append("")
+    lines.extend(_cache_lines(summary))
+    lines.append("")
+    lines.append("  Says nothing about answer quality.")
+    return lines
+
+
+def _cache_lines(summary: CompressionSummary) -> list[str]:
+    """The net-of-cache verdict, or an honest statement that it is unknown."""
+    if not summary.has_usage:
+        return [
+            "NET OF CACHE: unmeasured — the provider reported no usage on any",
+            "  request in this window. Gross savings above may overstate the",
+            "  real figure, because rewriting a cached prefix forces the",
+            "  provider to re-cache it at a higher per-token price.",
+        ]
+    coverage = summary.usage_requests / summary.requests * 100 if summary.requests else 0.0
+    net = summary.net_saved_units
+    lines = [
+        f"NET OF CACHE: {net:,.0f} base-token equivalents saved "
+        f"({summary.usage_requests:,} of {summary.requests:,} "
+        f"requests reported usage, {coverage:.0f}%)",
+        f"  cache reads {summary.cache_read:,} ({summary.cache_hit_pct:.0f}% of billed prompt)"
+        f"  writes {summary.cache_creation:,}",
+        f"  cache-write overhead charged against savings: "
+        f"{summary.cache_overhead_units:,.0f}",
+    ]
+    if not summary.cache_writes_observed:
+        lines.append(
+            "  Cache writes were never reported on these rows, so the overhead"
+        )
+        lines.append(
+            "  above is a floor of zero rather than a measurement. Treat the"
+        )
+        lines.append("  net figure as provisional until fresh traffic accumulates.")
+    if net <= 0:
+        lines.append(
+            "  VERDICT: compression is not paying for itself once cache"
+        )
+        lines.append(
+            "  re-formation is priced in. Every cache write in the window is"
+        )
+        lines.append(
+            "  charged here, including ones compression did not cause, so this"
+        )
+        lines.append("  is a lower bound — but it is not a number to advertise.")
     return lines
 
 

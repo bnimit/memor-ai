@@ -31,7 +31,12 @@ def _upstream_app() -> FastAPI:
         raw = await request.body()
         payload = {
             "content": [{"type": "text", "text": "ok"}],
-            "usage": {"input_tokens": 10, "output_tokens": 2},
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "cache_read_input_tokens": 500,
+                "cache_creation_input_tokens": 40,
+            },
             "echo": {
                 "content_length": request.headers.get("content-length"),
                 "actual_length": len(raw),
@@ -162,6 +167,75 @@ def test_gzipped_upstream_response_is_decoded_and_reframed(proxy_client):
     assert "content-encoding" not in {k.lower() for k in r.headers}
     assert r.json()["usage"]["input_tokens"] == 10
     assert int(r.headers["content-length"]) == len(r.content)
+
+
+def _ledger_usage(db_path: str) -> dict:
+    import sqlite3
+
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    row = db.execute(
+        "SELECT upstream_input_tokens AS i, upstream_cache_read_tokens AS r, "
+        "upstream_cache_creation_tokens AS c, upstream_output_tokens AS o "
+        "FROM proxy_savings ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    db.close()
+    return dict(row)
+
+
+def test_streaming_request_records_upstream_usage(proxy_client):
+    """The regression that left every usage column NULL on real traffic.
+
+    Agents stream, and the streaming branch wrote its ledger row before the
+    first byte was forwarded, so usage -- which the provider only reports
+    inside the stream -- was hardcoded to None. Without these numbers there is
+    no way to tell whether compression saved money or merely converted cheap
+    cache reads into expensive cache writes.
+    """
+    client, db_path = proxy_client
+    body = _compressible_body()
+    body["stream"] = True
+    r = client.post(
+        "/v1/messages",
+        json=body,
+        headers={"x-api-key": "test-key", "x-test-stream": "1", "x-agent": "claude"},
+    )
+    assert r.status_code == 200
+    assert b"message_start" in r.content
+
+    usage = _ledger_usage(db_path)
+    assert usage["i"] == 10
+    assert usage["r"] == 500
+    assert usage["c"] == 40
+    assert usage["o"] == 2
+
+
+def test_non_streaming_request_records_cache_counters(proxy_client):
+    client, db_path = proxy_client
+    r = client.post(
+        "/v1/messages",
+        json=_compressible_body(),
+        headers={"x-api-key": "test-key", "x-agent": "claude"},
+    )
+    assert r.status_code == 200
+    usage = _ledger_usage(db_path)
+    assert (usage["i"], usage["r"], usage["c"]) == (10, 500, 40)
+
+
+def test_streamed_bytes_reach_the_client_unaltered(proxy_client):
+    """Sniffing usage must not disturb the stream it observes."""
+    client, _ = proxy_client
+    body = _compressible_body()
+    body["stream"] = True
+    r = client.post(
+        "/v1/messages",
+        json=body,
+        headers={"x-api-key": "test-key", "x-test-stream": "1", "x-agent": "claude"},
+    )
+    text = r.content.decode()
+    assert text.startswith("event: message_start\ndata: ")
+    assert text.count("data: ") == 2
+    assert text.endswith("\n\n")
 
 
 def test_streaming_response_drops_hop_by_hop_headers(proxy_client):

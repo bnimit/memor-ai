@@ -94,8 +94,11 @@ def test_scored_report_states_the_rate_and_its_limits():
     rows = [_row() for _ in range(MIN_REQUESTS + 5)]
     text = "\n".join(format_report(summarize_savings(rows)))
     assert "REALIZED SAVINGS" in text
-    # The two things a savings number must never be quoted without.
-    assert "Gross, not net" in text
+    # The two things a savings number must never be quoted without. The cache
+    # caveat used to be a fixed disclaimer ("Gross, not net"); it is now a
+    # measured section, which states "unmeasured" only when the provider
+    # reported no usage. Either way it must appear.
+    assert "NET OF CACHE" in text
     assert "quality" in text
 
 

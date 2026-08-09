@@ -282,6 +282,27 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 # Proof the code path is firing at all, not just the log crusher.
                 "code_payloads": sum(v for k, v in by_type.items() if k.startswith("code")),
             },
+            # The blended rate is dominated by history the compressor refuses
+            # to touch, so it reads as compressor failure when it is actually
+            # coverage. Both are published, separately, rather than one.
+            "compressible": {
+                "tokens_before": summary.compressible_before,
+                "tokens_after": summary.compressible_after,
+                "saved": summary.compressible_saved,
+                "saved_pct": round(summary.compressible_pct, 1),
+                "coverage_pct": round(100 - summary.passthrough_pct, 1),
+            },
+            # Null when the provider never reported usage: "unmeasured" and
+            # "measured as zero" must not render identically.
+            "cache": {
+                "usage_requests": summary.usage_requests,
+                "reads": summary.cache_read,
+                "writes": summary.cache_creation,
+                "writes_observed": summary.cache_writes_observed,
+                "hit_pct": round(summary.cache_hit_pct, 1),
+                "overhead_units": round(summary.cache_overhead_units),
+                "net_saved_units": round(summary.net_saved_units),
+            } if summary.has_usage else None,
             "cost": None,
         }
 

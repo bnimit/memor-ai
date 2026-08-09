@@ -1,3 +1,5 @@
+import time
+
 from memor.store.sqlite_store import SqliteStore
 from memor.embed.fake import FakeEmbedder
 from memor.types import Artifact
@@ -253,3 +255,53 @@ def test_proxy_savings_by_agent_empty_db(tmp_path):
     r = client.get("/api/proxy-savings-by-agent?days=30")
     assert r.status_code == 200
     assert r.json() == {"agents": []}
+
+
+def test_compression_endpoint_separates_coverage_from_rate(tmp_path):
+    """The dashboard must not quote the blended rate alone.
+
+    The blended figure counts conversation history the compressor is designed
+    never to touch, so it understates the compressor and hides that coverage
+    is the real constraint.
+    """
+    from fastapi.testclient import TestClient
+
+    app, _ = _make_app_with_proxy_savings(tmp_path)
+    d = TestClient(app).get("/api/compression").json()
+
+    assert "compressible" in d
+    # Seeded rows: 3500 -> 2700 across three non-passthrough requests.
+    assert d["compressible"]["tokens_before"] == 3500
+    assert d["compressible"]["saved"] == 800
+    assert d["compressible"]["coverage_pct"] == 100.0
+
+
+def test_compression_endpoint_reports_cache_when_usage_known(tmp_path):
+    from fastapi.testclient import TestClient
+
+    app, _ = _make_app_with_proxy_savings(tmp_path)
+    d = TestClient(app).get("/api/compression").json()
+
+    assert d["cache"] is not None
+    assert d["cache"]["usage_requests"] == 3
+    assert d["cache"]["reads"] == 0
+    # Seeded rows report cache_read but never cache_creation.
+    assert d["cache"]["writes_observed"] is False
+
+
+def test_compression_endpoint_reports_null_cache_without_usage(tmp_path):
+    """Unmeasured must be distinguishable from measured-as-zero."""
+    from fastapi.testclient import TestClient
+
+    from memor.dashboard.server import create_app
+    from memor.store.sqlite_store import SqliteStore
+
+    db_path = str(tmp_path / "n.db")
+    s = SqliteStore(db_path, dim=16)
+    s.record_proxy_savings({
+        "timestamp": time.time(), "agent": "claude", "provider": "anthropic",
+        "session_id": None, "tokens_before": 100, "tokens_after": 80,
+        "content_types": {"log": 1}, "passthrough": 0,
+    })
+    d = TestClient(create_app(db_path)).get("/api/compression").json()
+    assert d["cache"] is None
