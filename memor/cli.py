@@ -1050,6 +1050,8 @@ def install_compress_hook_cmd(
         typer.echo(f"Error: unsupported agent '{agent}' (claude only)", err=True)
         raise typer.Exit(1)
 
+    import shutil
+
     hook_bin = shutil.which("memor-posttool-compress")
     if not hook_bin:
         typer.echo(
