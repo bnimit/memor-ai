@@ -109,9 +109,18 @@ def test_report_names_coverage_as_the_cap():
 
 
 def test_empty_ledger_points_at_the_opt_in():
+    """An empty report must name every way to make it non-empty.
+
+    It previously named only the proxy, so a user who had just run
+    `memor install-compress-hook` was told to install something else.
+    """
     text = "\n".join(format_report(summarize_savings([])))
-    assert "No proxied requests recorded" in text
+    assert "No compression recorded yet" in text
     assert "install-proxy" in text
+    assert "install-compress-hook" in text
+    # The most common reason for an empty report is a hook installed but not
+    # yet loaded, which no amount of further installing will fix.
+    assert "restarted" in text
 
 
 # --- loading -----------------------------------------------------------------

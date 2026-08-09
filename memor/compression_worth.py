@@ -344,9 +344,19 @@ def liveness(
 def format_report(summary: CompressionSummary, *, days: int = 30) -> list[str]:
     lines = [f"memor compression — realized savings ({days}d)", "=" * 58]
     if summary.requests == 0:
-        lines.append("No proxied requests recorded.")
+        lines.append("No compression recorded yet.")
         lines.append("")
-        lines.append("The proxy is opt-in: memor install-proxy --agent <name>")
+        lines.append("Two paths, both opt-in:")
+        lines.append("  memor install-compress-hook          "
+                     "crush tool output before it enters")
+        lines.append("                                       "
+                     "the transcript (Claude Code)")
+        lines.append("  memor install-proxy --agent <name>   "
+                     "compress whole requests in flight")
+        lines.append("")
+        lines.append("Already installed one? Nothing is recorded until the agent")
+        lines.append("runs a command whose output is large enough to compress,")
+        lines.append("and Claude Code must be restarted after installing a hook.")
         return lines
 
     lines.append(
