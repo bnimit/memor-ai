@@ -874,10 +874,28 @@ class SqliteStore:
             FROM recall_log
         """).fetchone()
         total = r["total"] or 0
+        # A mean is the wrong summary for latency: one 135-second outlier in
+        # this store drags the average to 1,254 ms while the median recall
+        # takes 176 ms. Percentiles describe what a user actually waits for.
+        latencies = [
+            row["latency_ms"] for row in self.db.execute(
+                "SELECT latency_ms FROM recall_log "
+                "WHERE latency_ms IS NOT NULL AND status='ok' "
+                "ORDER BY latency_ms")
+        ]
+
+        def _pct(fraction: float) -> float:
+            if not latencies:
+                return 0.0
+            index = min(len(latencies) - 1, int(len(latencies) * fraction))
+            return round(latencies[index], 1)
+
         return {
             "total_recalls": total,
             "total_tokens": r["tokens"] or 0,
             "avg_latency_ms": round(r["avg_latency"] or 0, 1),
+            "p50_latency_ms": _pct(0.50),
+            "p90_latency_ms": _pct(0.90),
             "hit_rate": round((r["with_hits"] or 0) / total, 3) if total > 0 else 0,
         }
 

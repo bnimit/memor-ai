@@ -916,9 +916,12 @@
     document.getElementById('m-recalls').textContent = fmt(d.total_recalls);
     if (d.total_recalls > 0) {
       document.getElementById('m-recalls-sub').textContent =
-        fmtPct(d.hit_rate * 100) + ' hit · ' + fmtMs(d.avg_latency_ms);
+        fmtPct(d.hit_rate * 100) + ' hit · ' + fmtMs(d.p50_latency_ms) + ' median';
     }
-    document.getElementById('e-latency').textContent = d.total_recalls > 0 ? fmtMs(d.avg_latency_ms) : '–';
+    // Median, not mean: a single multi-second outlier moves the average by
+    // hundreds of milliseconds and describes nobody's actual wait.
+    document.getElementById('e-latency').textContent =
+      d.total_recalls > 0 ? fmtMs(d.p50_latency_ms) : '–';
   }
 
   function renderSavingsHero(data) {

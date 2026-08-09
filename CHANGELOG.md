@@ -20,6 +20,9 @@ All notable changes to this project will be documented in this file.
 - **`memor compression-worth` on an empty ledger told users to install the proxy**, with no mention of the hook path they may have just installed, and no hint that the likely cause was Claude Code not yet restarted.
 
 ### Changed
+- **The README claimed recall was "Sub-15ms"; it is not.** Measured over 2,285 real recalls that returned hits on a live store: median 176 ms, 90th percentile 3.1 s. The ~2 ms figure for the embedding step is accurate and was never the problem — the time is retrieval and ranking over 26,734 active memories. The claim is now the measured distribution.
+- **Recall latency is reported as percentiles rather than a mean.** One 135-second outlier dragged the average to 1,254 ms while the median recall took 176 ms, so the dashboard's headline number described nobody's actual wait. Misses are excluded: they return early and would flatter the figure for the wrong reason.
+
 - **The dashboard leads with the rate on compressible payloads, not the blended one.** The blended figure is dominated by conversation history the compressor is designed never to touch, so it reads as compressor failure when what it measures is coverage. Both are shown, side by side, along with coverage itself. On a real ledger that is 7.3% versus 0.8%.
 - **Net of cache renders in three distinguishable states** — unmeasured, a floor, or a measurement — because "the provider never told us" and "there were no cache writes" are different claims and only one of them is supportable.
 - **The README leads with what was measured rather than what was built**, including that the hook fires on 21.2% of large Bash output with nearly all of the remainder held back by the source guard on purpose. Coverage is capped by safety, which is a property to state rather than a shortfall to hide. Every published figure must now name the population it was measured on, enforced by a test.
