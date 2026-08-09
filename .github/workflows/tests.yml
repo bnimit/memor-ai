@@ -34,10 +34,15 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # The `code` extra is not optional for CI's purposes: without
+          # tree-sitter, 28 tests covering Go/TypeScript/TSX/JS/Rust
+          # skeletonization skip silently, and the multi-language compressor
+          # would go unexercised on every run while the suite still reported
+          # green.
+          pip install -e ".[dev,code]"
 
       - name: Tests
-        run: pytest -q
+        run: pytest -q -rs
 
       - name: No undefined names
         # Redundant with the test that wraps it, and kept separate so the
