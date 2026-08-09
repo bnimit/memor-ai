@@ -116,6 +116,32 @@ class CompressionSummary:
         return self.cache_write_observations > 0
 
     @property
+    def usage_coverage_pct(self) -> float:
+        """Share of requests on which the provider reported usage at all."""
+        if self.requests <= 0:
+            return 0.0
+        return self.usage_requests / self.requests * 100
+
+    #: Below this, the cache overhead is drawn from too small a slice of
+    #: traffic to be subtracted from savings measured across all of it.
+    USAGE_COVERAGE_MIN_PCT = 80.0
+
+    @property
+    def net_is_reliable(self) -> bool:
+        """Whether the net figure rests on comparable populations.
+
+        ``net_saved_units`` subtracts cache overhead from gross savings, but
+        the two are measured over different request sets whenever usage is
+        reported on only some requests: overhead from that subset, savings
+        from all of them. Understating the subtrahend inflates the net, so a
+        figure built that way is labelled rather than quietly presented.
+        """
+        return (
+            self.cache_writes_observed
+            and self.usage_coverage_pct >= self.USAGE_COVERAGE_MIN_PCT
+        )
+
+    @property
     def cache_hit_pct(self) -> float:
         """Share of billed prompt tokens the provider served from cache."""
         total = self.upstream_input + self.cache_read + self.cache_creation
@@ -425,6 +451,15 @@ def _cache_lines(summary: CompressionSummary) -> list[str]:
             "  above is a floor of zero rather than a measurement. Treat the"
         )
         lines.append("  net figure as provisional until fresh traffic accumulates.")
+    elif not summary.net_is_reliable:
+        lines.append(
+            f"  Usage was reported on only {summary.usage_coverage_pct:.0f}% of"
+            " requests, so the overhead"
+        )
+        lines.append(
+            "  subtracted here comes from a smaller population than the savings"
+        )
+        lines.append("  it is subtracted from. The net figure is an upper bound.")
     if net <= 0:
         lines.append(
             "  VERDICT: compression is not paying for itself once cache"

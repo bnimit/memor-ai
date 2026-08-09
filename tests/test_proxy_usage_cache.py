@@ -356,3 +356,38 @@ def test_observed_zero_cache_writes_is_a_real_measurement():
     s = summarize_savings(rows)
     assert s.cache_writes_observed
     assert "floor of zero" not in "\n".join(format_report(s))
+
+
+def test_net_is_unreliable_when_usage_covers_few_requests():
+    """Gross savings and cache overhead must come from the same population.
+
+    Overhead is only visible on requests where the provider reported usage,
+    but gross savings are summed over all of them. Subtracting the first from
+    the second understates the cost and inflates the net, so the figure is
+    labelled an upper bound rather than presented as a measurement.
+    """
+    rows = [
+        _row(tokens_before=1000, tokens_after=500,
+             upstream_input_tokens=10, upstream_cache_read_tokens=100,
+             upstream_cache_creation_tokens=5)
+        for _ in range(10)
+    ]
+    rows += [_row(tokens_before=1000, tokens_after=500) for _ in range(90)]
+
+    s = summarize_savings(rows)
+    assert s.cache_writes_observed
+    assert round(s.usage_coverage_pct) == 10
+    assert s.net_is_reliable is False
+    assert "upper bound" in "\n".join(format_report(s))
+
+
+def test_net_is_reliable_when_usage_covers_nearly_everything():
+    rows = [
+        _row(tokens_before=1000, tokens_after=500,
+             upstream_input_tokens=10, upstream_cache_read_tokens=100,
+             upstream_cache_creation_tokens=5)
+        for _ in range(100)
+    ]
+    s = summarize_savings(rows)
+    assert s.net_is_reliable is True
+    assert "upper bound" not in "\n".join(format_report(s))

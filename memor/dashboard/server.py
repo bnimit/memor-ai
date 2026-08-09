@@ -299,10 +299,21 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 "reads": summary.cache_read,
                 "writes": summary.cache_creation,
                 "writes_observed": summary.cache_writes_observed,
+                "usage_coverage_pct": round(summary.usage_coverage_pct, 1),
+                "net_is_reliable": summary.net_is_reliable,
                 "hit_pct": round(summary.cache_hit_pct, 1),
                 "overhead_units": round(summary.cache_overhead_units),
                 "net_saved_units": round(summary.net_saved_units),
             } if summary.has_usage else None,
+            # Null when no tool-output hook savings exist yet, so the panel can
+            # stay silent rather than render a row of zeroes.
+            "hook": {
+                "requests": summary.hook_requests,
+                "tokens_before": summary.hook_before,
+                "tokens_after": summary.hook_after,
+                "saved": summary.hook_saved,
+                "saved_pct": round(summary.hook_pct, 1),
+            } if summary.hook_requests else None,
             "cost": None,
         }
 

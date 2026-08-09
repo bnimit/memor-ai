@@ -305,3 +305,56 @@ def test_compression_endpoint_reports_null_cache_without_usage(tmp_path):
     })
     d = TestClient(create_app(db_path)).get("/api/compression").json()
     assert d["cache"] is None
+
+
+def test_compression_endpoint_exposes_hook_savings(tmp_path):
+    """Hook-path savings must reach the dashboard, not just the CLI report."""
+    from fastapi.testclient import TestClient
+
+    from memor.dashboard.server import create_app
+    from memor.store.sqlite_store import SqliteStore
+
+    db_path = str(tmp_path / "h.db")
+    s = SqliteStore(db_path, dim=16)
+    s.record_proxy_savings({
+        "timestamp": time.time(), "agent": "claude", "provider": "hook",
+        "session_id": "s1", "tokens_before": 1000, "tokens_after": 100,
+        "content_types": {"log": 1}, "passthrough": 0,
+    })
+    d = TestClient(create_app(db_path)).get("/api/compression").json()
+    assert d["hook"]["requests"] == 1
+    assert d["hook"]["saved_pct"] == 90.0
+
+
+def test_compression_endpoint_reports_null_hook_without_hook_traffic(tmp_path):
+    from fastapi.testclient import TestClient
+
+    app, _ = _make_app_with_proxy_savings(tmp_path)
+    assert TestClient(app).get("/api/compression").json()["hook"] is None
+
+
+def test_compression_endpoint_flags_unreliable_net(tmp_path):
+    """Low usage coverage must be visible to the UI, not silently absorbed."""
+    from fastapi.testclient import TestClient
+
+    from memor.dashboard.server import create_app
+    from memor.store.sqlite_store import SqliteStore
+
+    db_path = str(tmp_path / "u.db")
+    s = SqliteStore(db_path, dim=16)
+    s.record_proxy_savings({
+        "timestamp": time.time(), "agent": "claude", "provider": "anthropic",
+        "session_id": None, "tokens_before": 1000, "tokens_after": 500,
+        "content_types": {"log": 1}, "passthrough": 0,
+        "upstream_input_tokens": 10, "upstream_cache_read_tokens": 100,
+        "upstream_cache_creation_tokens": 5,
+    })
+    for _ in range(9):
+        s.record_proxy_savings({
+            "timestamp": time.time(), "agent": "claude", "provider": "anthropic",
+            "session_id": None, "tokens_before": 1000, "tokens_after": 500,
+            "content_types": {"log": 1}, "passthrough": 0,
+        })
+    cache = TestClient(create_app(db_path)).get("/api/compression").json()["cache"]
+    assert cache["net_is_reliable"] is False
+    assert round(cache["usage_coverage_pct"]) == 10

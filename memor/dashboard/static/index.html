@@ -470,6 +470,8 @@
         </div>
         <div class="rw-body">
           <div class="rw-detail" id="cx-live"></div>
+          <div class="rw-detail" id="cx-cache"></div>
+          <div class="rw-detail" id="cx-hook"></div>
           <div class="rw-strata" id="cx-types"></div>
           <div class="rw-note" id="cx-note"></div>
         </div>
@@ -1261,7 +1263,7 @@
     document.getElementById('roi-tools-with').textContent = data.avg_tools_with_recall;
     document.getElementById('roi-tools-without').textContent = data.avg_tools_without_recall;
     var totalTurns = data.turns_with_recall + data.turns_without_recall;
-    document.getElementById('roi-turns').textContent = totalTurns.toLocaleString();
+    document.getElementById('roi-turns').textContent = totalTurns.toLocaleString('en-US');
     if (data.tool_call_reduction_pct > 0 && data.turns_with_recall >= 5 && data.turns_without_recall >= 5) {
       document.getElementById('roi-value').textContent = data.tool_call_reduction_pct + '% fewer';
       document.getElementById('roi-desc').textContent = 'fewer tool calls when Memor injects context';
@@ -1419,7 +1421,7 @@
     var withoutN = (o.without_recall && o.without_recall.n) || 0;
 
     document.getElementById('rw-meta').textContent =
-      (o.usable || 0).toLocaleString() + ' episodes · tool calls per task';
+      (o.usable || 0).toLocaleString('en-US') + ' episodes · tool calls per task';
 
     if (o.verdict === 'saves' || o.verdict === 'costs') {
       var d = o.tool_call_delta_pct;
@@ -1532,6 +1534,8 @@
     var headline = document.getElementById('cx-headline');
     if (!headline) return;
     var liveEl = document.getElementById('cx-live');
+    var cacheEl = document.getElementById('cx-cache');
+    var hookEl = document.getElementById('cx-hook');
     var typesEl = document.getElementById('cx-types');
     var noteEl = document.getElementById('cx-note');
 
@@ -1540,22 +1544,65 @@
     catch (e) { headline.textContent = '–'; liveEl.textContent = 'unavailable'; return; }
 
     var r = d.realized || {};
+    var cmp = d.compressible || {};
     var live = d.liveness || {state: 'off', detail: ''};
     var style = RW_LIVE_STYLE[live.state] || RW_LIVE_STYLE.off;
 
+    // Lead with the rate on requests that actually carried something. The
+    // blended figure is dominated by conversation history the compressor is
+    // designed never to touch, so it reads as compressor failure when what it
+    // really measures is coverage. Coverage is shown beside it, not folded in.
     if (r.scored) {
-      headline.textContent = (r.saved_pct || 0).toFixed(1) + '% saved';
+      headline.textContent = (cmp.saved_pct || 0).toFixed(1) + '% saved';
       headline.className = 'chart-big';
     } else {
       headline.textContent = 'not enough requests yet';
       headline.className = 'chart-big rw-verdict-null';
     }
     document.getElementById('cx-meta').textContent =
-      (r.requests || 0).toLocaleString() + ' requests · ' +
-      (r.passthrough_pct || 0).toFixed(0) + '% carried nothing compressible';
+      'on compressible payloads · ' + (cmp.coverage_pct || 0).toFixed(0)
+      + '% of ' + (r.requests || 0).toLocaleString('en-US') + ' requests carried any'
+      + ' (' + (r.saved_pct || 0).toFixed(1) + '% blended)';
 
     liveEl.innerHTML = '<span class="' + style[0] + '"><strong>' + style[1]
       + '</strong></span> — ' + (live.detail || '');
+
+    // Net of cache. Compressing a prefix the provider was serving from cache
+    // turns cheap cache reads into full-price writes, so a gross saving can be
+    // a net loss. Unmeasured and measured-as-zero must not look the same.
+    var cache = d.cache;
+    if (!cache) {
+      cacheEl.innerHTML = '<span class="rw-verdict-null">Net of cache: '
+        + 'unmeasured</span> — the provider reported no usage yet.';
+    } else {
+      var net = cache.net_saved_units || 0;
+      var cls = net > 0 ? 'pos' : 'rw-verdict-null';
+      var txt = '<span class="' + cls + '"><strong>Net of cache: '
+        + net.toLocaleString('en-US') + ' tokens</strong></span> — '
+        + (cache.hit_pct || 0).toFixed(0) + '% of billed prompt served from cache, '
+        + (cache.writes || 0).toLocaleString('en-US') + ' written';
+      if (!cache.writes_observed) {
+        txt += '. Cache writes were never reported on these rows, so this is a'
+             + ' floor rather than a measurement.';
+      } else if (!cache.net_is_reliable) {
+        txt += '. Usage came from only ' + (cache.usage_coverage_pct || 0).toFixed(0)
+             + '% of requests, so this is an upper bound.';
+      } else if (net <= 0) {
+        txt += '. Compression is not paying for itself once cache re-formation'
+             + ' is priced in.';
+      }
+      cacheEl.innerHTML = txt;
+    }
+
+    // Hook-path savings carry no cache caveat: the payload is shrunk on its
+    // way into the transcript, so no cached prefix is rewritten.
+    var hook = d.hook;
+    hookEl.innerHTML = hook
+      ? '<span class="pos"><strong>Tool output: ' + (hook.saved_pct || 0).toFixed(1)
+        + '% saved</strong></span> — ' + (hook.saved || 0).toLocaleString('en-US')
+        + ' tokens across ' + (hook.requests || 0).toLocaleString('en-US')
+        + ' tool results, crushed before entering the transcript (no cache risk).'
+      : 'Tool output compression not installed — <code>memor install-compress-hook</code>';
 
     typesEl.innerHTML = '';
     var types = r.by_type || {};
@@ -1564,7 +1611,7 @@
         var el = document.createElement('div');
         el.className = 'rw-cell' + (k.indexOf('code') === 0 ? ' pos' : '');
         el.innerHTML = '<span class="k">' + k + '</span><span class="v">'
-          + types[k].toLocaleString() + '</span>';
+          + types[k].toLocaleString('en-US') + '</span>';
         typesEl.appendChild(el);
       });
 
@@ -1578,7 +1625,7 @@
     } else if (cost) {
       noteEl.textContent = 'Bill: not enough episodes on both sides of the change yet.';
     } else {
-      noteEl.textContent = 'Savings are gross — provider cache re-formation is not visible here.';
+      noteEl.textContent = 'Token savings say nothing about answer quality.';
     }
   }
 

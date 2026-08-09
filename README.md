@@ -9,13 +9,43 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1168%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1247%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
-**Automatic background memory for Claude Code, Cursor, Codex, Copilot, Kimi, Goose, and Jcode — plus optional local token savings for Claude Code and Codex.** Memory is fire-and-forget; proxy is opt-in. No Memor API key required.
+**Token compression and automatic memory for coding agents, both measured on your own traffic.** Everything runs locally. No Memor API key required.
 
-Memor watches your coding sessions, extracts decisions and patterns, and recalls relevant context on every prompt. Optionally, a local proxy compresses tool payloads before they reach the provider and tracks measurable token savings on the dashboard.
+Two things, in one install:
+
+1. **Compression** — crush noisy tool output before it reaches the model, without losing what you need from it.
+2. **Memory** — recall past decisions and bugfixes so you stop re-explaining your own codebase.
+
+### What the numbers actually are
+
+Compression is easy to verify and therefore easy to falsify, so these are measured on real traffic rather than favourable fixtures:
+
+| Measurement | Result | Measured on |
+|---|---|---|
+| Tool-output compression | **38.6%** saved | 569 real Bash results from live Claude Code sessions |
+| A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | this repo's own test suite |
+| Proxy, on compressible payloads | **7.8%** | 5,447 real proxied requests |
+| Proxy, blended over all traffic | **0.8%** | the same 5,447 requests |
+
+That last pair is the honest part. Most of a request is conversation history the
+compressor deliberately refuses to rewrite, so the blended figure measures
+coverage rather than compressor quality. Both are shown on the dashboard, side
+by side, because a single number hides which one you are looking at.
+
+**Coverage is capped by safety, on purpose.** Of the large tool payloads left
+untouched in that sample, 78% were held back by the source guard: they were file
+reads, and an agent editing against a mutilated read is a worse outcome than any
+token saving is worth. Pushing coverage higher means weakening that guard.
+
+**Savings are reported net of the provider's prompt cache.** Rewriting a payload
+that was being served from cache turns cheap cache reads into full-price cache
+writes, so a gross saving can be a net loss. Memor reads usage out of the
+response stream and prices cache writes against reads; where the provider never
+reported usage it says *unmeasured* rather than assuming zero.
 
 ---
 
@@ -29,6 +59,9 @@ pipx install memor-cli
 memor install-hook                  # interactive — pick an agent
 memor install-hook --agent kimi     # or pass directly (claude, codex, copilot, kimi, goose, jcode)
 
+# Compress noisy tool output before it reaches the model (Claude Code)
+memor install-compress-hook         # restart Claude Code afterwards
+
 # Start as a background service (macOS/Linux)
 memor service install
 
@@ -36,7 +69,15 @@ memor service install
 memor daemon
 ```
 
-That's it. Every prompt now gets automatic context recall. `memor service install` also starts the dashboard as a background service, so it's already live at http://localhost:8420 (and is recycled whenever you stop/restart/uninstall the service). To run it in the foreground instead:
+That's it. Every prompt now gets automatic context recall, and noisy command
+output is crushed before it reaches the model. Check what that was worth on your
+own traffic at any time:
+
+```bash
+memor compression-worth             # realized savings, coverage, and net of cache
+```
+
+`memor service install` also starts the dashboard as a background service, so it's already live at http://localhost:8420 (and is recycled whenever you stop/restart/uninstall the service). To run it in the foreground instead:
 
 ```bash
 memor dashboard
