@@ -122,3 +122,37 @@ def test_health_endpoint_reports_build_identity():
     assert isinstance(health["started_at"], float)
     assert health["captures_stream_usage"] is True
     assert health["version"]
+
+
+# --- restart safety ---------------------------------------------------------
+
+def test_install_reports_a_healthy_proxy(monkeypatch):
+    """Restarting must confirm the proxy came back, not assume it."""
+    from memor import service
+
+    _patch_health(monkeypatch, {"ok": True, "version": "9.9.9"})
+    lines = service._verify_proxy_started(timeout=1.0)
+    assert len(lines) == 1
+    assert "healthy" in lines[0]
+    assert "9.9.9" in lines[0]
+
+
+def test_install_reports_a_proxy_that_never_came_back(monkeypatch):
+    """The failure that matters: agents point at localhost, so a dead proxy
+    takes them offline rather than degrading to a direct provider call."""
+    from memor import service
+
+    _patch_health(monkeypatch, None, error=OSError("connection refused"))
+    lines = service._verify_proxy_started(timeout=0.5)
+    assert any("ERROR" in line for line in lines)
+    assert any("cannot reach their provider" in line for line in lines)
+    # It must name the escape hatch, not just the problem.
+    assert any("uninstall-proxy" in line for line in lines)
+
+
+def test_install_treats_not_ok_health_as_failure(monkeypatch):
+    from memor import service
+
+    _patch_health(monkeypatch, {"ok": False, "error": "bad upstream"})
+    lines = service._verify_proxy_started(timeout=0.5)
+    assert any("ERROR" in line for line in lines)

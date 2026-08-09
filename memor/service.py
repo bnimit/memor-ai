@@ -317,9 +317,54 @@ def install(with_dashboard: bool = True, with_proxy: bool = False) -> str:
     out = [header, *lines]
     if with_dashboard:
         out.append(f"  dashboard: http://localhost:{port}")
+    if with_proxy:
+        out.extend(_verify_proxy_started())
     if warnings:
         out.extend(warnings)
     return "\n".join(out)
+
+
+#: How long to wait for a restarted proxy to answer before calling it failed.
+_PROXY_BOOT_TIMEOUT = 10.0
+
+
+def _verify_proxy_started(timeout: float = _PROXY_BOOT_TIMEOUT) -> list[str]:
+    """Confirm the proxy answers after a restart, and say so if it does not.
+
+    Restarting is the moment this matters most. Agents are configured to send
+    their traffic to localhost, so a proxy that fails to come back does not
+    degrade to talking directly to the provider -- it takes every routed agent
+    down with it, silently, until someone notices their tool has stopped
+    working. Installing without checking leaves that state undetected.
+    """
+    import json
+    import time
+    import urllib.error
+    import urllib.request
+
+    url = f"http://127.0.0.1:{_proxy_port()}/health"
+    deadline = time.time() + timeout
+    last_error = "no response"
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=1.0) as response:
+                payload = json.loads(response.read())
+            if payload.get("ok"):
+                version = payload.get("version") or "unknown"
+                return [f"  proxy: healthy on {url} (version {version})"]
+            last_error = f"health reported not ok: {payload}"
+        except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
+            last_error = str(exc)
+        time.sleep(0.3)
+
+    return [
+        f"  ERROR: proxy did not become healthy within {timeout:.0f}s "
+        f"({last_error}).",
+        "         Agents routed through it cannot reach their provider while it",
+        "         is down. Check the log, or run `memor uninstall-proxy --agent"
+        " <name>`",
+        "         to restore direct API endpoints.",
+    ]
 
 
 def uninstall() -> str:
