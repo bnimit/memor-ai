@@ -1081,6 +1081,24 @@ def uninstall_compress_hook_cmd():
         typer.echo("No memor PostToolUse compression hook was installed.")
 
 
+@app.command("hook-worth")
+def hook_worth_cmd(
+    sessions: int = typer.Option(
+        60, "--sessions", help="How many recent sessions to scan"),
+):
+    """What tool-output compression is worth on your own Bash output.
+
+    Replays the real hook over real session transcripts, so the figure is
+    yours rather than one measured on someone else's traffic. Reports the
+    denominator it used, because this project has twice published a rate whose
+    population turned out to be wrong.
+    """
+    from memor.eval.hook_worth import report
+
+    for line in report(limit=sessions):
+        typer.echo(line)
+
+
 @app.command("uninstall-cursor-compress-hooks")
 def uninstall_cursor_compress_hooks_cmd():
     """Remove Memor Cursor Shell compression hooks and restore backups."""

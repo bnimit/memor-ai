@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1278%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1290%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -26,9 +26,9 @@ Compression is easy to verify and therefore easy to falsify, so these are measur
 
 | Measurement | Result | Measured on |
 |---|---|---|
-| Tool-output compression, when it fires | **61.8%** saved | 33 of 173 real Bash results from live sessions |
-| Tool-output compression, across all Bash output | **17.1%** saved | the same 173 results |
-| A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,278-test suite |
+| Tool-output compression, when it fires | **51.9%** saved | 259 of 1,219 real Bash results from live sessions |
+| Tool-output compression, across all Bash output | **13.2%** saved | the same 1,219 results |
+| A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,290-test suite |
 | Proxy, on compressible payloads | **7.3%** | 5,414 real proxied requests |
 | Proxy, blended over all traffic | **0.8%** | the same 5,414 requests |
 
@@ -37,7 +37,7 @@ compressor deliberately refuses to rewrite, so the blended figure measures
 coverage rather than compressor quality. Both are shown on the dashboard, side
 by side, because a single number hides which one you are looking at.
 
-**Coverage is capped by safety, on purpose.** The hook fires on 19.1% of large
+**Coverage is capped by safety, on purpose.** The hook fires on 21.2% of large
 Bash results. Nearly all of the rest is held back by the source guard — output
 that is source code, most often a heredoc or a `cat`, and an agent editing
 against a mutilated read is a worse outcome than any token saving is worth.
@@ -46,6 +46,10 @@ Pushing coverage higher means weakening that guard.
 Read, Grep and Glob results are never touched at all and are excluded from
 these figures rather than counted as missed coverage: they feed edits directly,
 so the hook declines them by design rather than by failure.
+
+None of these are numbers you have to take on trust. `memor hook-worth` replays
+the hook over your own sessions and prints the same breakdown, including the
+denominator it used.
 
 **Savings are reported net of the provider's prompt cache.** Rewriting a payload
 that was being served from cache turns cheap cache reads into full-price cache
