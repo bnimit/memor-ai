@@ -9,7 +9,7 @@ Thanks for your interest in contributing. This guide covers everything you need 
  │  Fork ──► Branch ──► Code ──► Test ──► PR ──► Review        │
  │                                                               │
  │  Every PR must:                                              │
- │    1. Pass all 45+ existing tests                            │
+ │    1. Pass all 1,270+ existing tests (CI runs 3.11 and 3.14) │
  │    2. Add tests for new functionality                        │
  │    3. Not regress eval metrics (if touching retrieval)       │
  └─────────────────────────────────────────────────────────────┘
@@ -34,7 +34,7 @@ pip install -e ".[dev,local,anthropic]"
 pytest
 ```
 
-You should see 45 tests passing. If any fail, open an issue before proceeding.
+You should see 1,270+ tests passing. If any fail, open an issue before proceeding.
 
 ## Project Structure
 
@@ -106,8 +106,22 @@ feat: auto-ingest daemon + agent-readable recall skill
  │  3. Use tmp_path for database files (no cleanup needed)     │
  │  4. No mocks for the database — hit real SQLite             │
  │  5. If touching retrieval: run eval and report numbers      │
+ │  6. Spawning a subprocess? Override HOME. See below.        │
  └─────────────────────────────────────────────────────────────┘
 ```
+
+**Rule 6 is not theoretical.** Several entry points derive their database path
+from `Path.home()`, and a subprocess resolves that for real no matter what the
+parent monkeypatched. The `PostToolUse` tests once wrote 35 fixture rows into a
+live `~/.memor/memor.db`, and those rows were then read back off the dashboard
+and quoted as real savings. An autouse fixture in `conftest.py` now fails any
+test that grows the real ledger, but the fix is to point `HOME` at a temporary
+directory when you spawn anything.
+
+Testing a helper is not testing the command that calls it. `memor
+install-compress-hook` shipped crashing on an unimported name while its helper
+had full coverage; invoke commands through `typer.testing.CliRunner` so the
+body actually executes.
 
 ```bash
 # Run all tests

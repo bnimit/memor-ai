@@ -1,0 +1,114 @@
+name: tests
+
+# The guards this suite carries only work if they run. Four of them exist
+# because a real bug shipped past a green local run: a command body that was
+# never executed, a test writing into a real database, a detector regression
+# that only a corpus replay caught, and a published figure with no population
+# behind it. None of that helps if the suite is only run by whoever remembers.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor pyproject declares. 3.14 is what the pipx install
+        # actually runs on the maintainer's machine, and the proxy is a
+        # long-lived process there, so a syntax or stdlib difference that only
+        # appears on the newer runtime would reach users before it reached a
+        # test.
+        python-version: ["3.11", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Tests
+        run: pytest -q
+
+      - name: No undefined names
+        # Redundant with the test that wraps it, and kept separate so the
+        # failure is legible in the job list rather than buried in pytest
+        # output.
+        run: |
+          pip install pyflakes
+          ! pyflakes memor/ tests/ 2>&1 | grep -i "undefined name"
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build and check the artifacts
+        # Everything else verifies the working tree. This verifies what a user
+        # would actually install: that the wheel carries the modules and
+        # console scripts, and that PyPI would accept the metadata.
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check dist/*
+          python - <<'PY'
+          import glob, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          required = [
+              "memor/posttool_compress.py",
+              "memor/proxy/usage.py",
+              "memor/compression_worth.py",
+              "memor/dashboard/static/index.html",
+          ]
+          missing = [r for r in required if r not in names]
+          assert not missing, f"wheel is missing: {missing}"
+          entry_points = next(n for n in names if n.endswith("entry_points.txt"))
+          scripts = zipfile.ZipFile(wheel).read(entry_points).decode()
+          for script in ("memor =", "memor-hook =", "memor-posttool-compress ="):
+              assert script in scripts, f"missing console script: {script}"
+          print("wheel contents and console scripts verified")
+          PY
+
+      - name: Install the wheel clean and run it
+        # A wheel that imports is not the same as a wheel that works. This is
+        # the failure that shipped `install-compress-hook` crashing on an
+        # unimported name while every unit test passed.
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install --quiet dist/*.whl
+          /tmp/clean/bin/memor version
+          HOME=$(mktemp -d) /tmp/clean/bin/memor compression-worth
+          python - <<'PY'
+          import json, subprocess, tempfile, os
+          log = "\n".join(f"INFO svc: handled request {i} in 4ms"
+                          for i in range(400)) + "\nERROR upstream timeout\n"
+          payload = json.dumps({
+              "tool_name": "Bash",
+              "tool_response": {"stdout": log, "stderr": "",
+                                "interrupted": False, "isImage": False},
+          })
+          env = dict(os.environ, HOME=tempfile.mkdtemp())
+          out = subprocess.run(["/tmp/clean/bin/memor-posttool-compress"],
+                               input=payload, capture_output=True, text=True,
+                               env=env)
+          assert out.returncode == 0, out.stderr
+          result = json.loads(out.stdout)["hookSpecificOutput"]
+          shown = result["updatedToolOutput"]["stdout"]
+          assert len(shown) < len(log), "packaged hook did not compress"
+          assert "ERROR upstream timeout" in shown, "packaged hook dropped the error"
+          print(f"packaged hook: {len(log)} -> {len(shown)} chars, error preserved")
+          PY

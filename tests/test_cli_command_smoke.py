@@ -116,3 +116,45 @@ def test_readme_quotes_only_figures_this_repo_can_reproduce():
         assert source, f"figure without a stated source: {row}"
         assert re.search(r"\d", source), (
             f"source must name a concrete population: {row}")
+
+
+def test_documented_test_counts_are_not_stale():
+    """Docs claiming a test count must stay within reach of reality.
+
+    CONTRIBUTING told contributors to expect 45 passing tests and the README
+    said 445, against a suite of more than 1,200. A contributor who runs the
+    suite and sees a number nowhere near the documented one cannot tell a
+    healthy repo from a broken checkout, which is the exact moment the
+    document was supposed to help.
+
+    Counts are written as an approximate floor ("1,270+"), so this checks the
+    floor is still a floor and has not drifted far below the real figure.
+    """
+    import re
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parent.parent
+    # Ask pytest, rather than counting `def test_` lines: parametrized cases
+    # expand, so the file count (1,016) understates what a contributor sees
+    # reported (1,278), and a check against the wrong number is worse than none.
+    collected = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "--no-header"],
+        capture_output=True, text=True, cwd=str(root),
+    )
+    match = re.search(r"(\d+)\s+tests? collected", collected.stdout)
+    if not match:
+        pytest.skip("could not determine the collected test count")
+    actual = int(match.group(1))
+    assert actual > 100, f"sanity: only found {actual} tests"
+
+    for name in ("CONTRIBUTING.md", "README.md"):
+        text = (root / name).read_text()
+        for claimed in re.findall(r"([\d,]+)\+? (?:existing )?tests", text):
+            floor = int(claimed.replace(",", ""))
+            assert floor <= actual, (
+                f"{name} claims {floor} tests but only {actual} exist")
+            # Half the suite going undocumented means the number was left
+            # behind, which is how 45 survived to describe 1,200.
+            assert floor >= actual * 0.5, (
+                f"{name} claims {floor} tests, well below the actual {actual}")
