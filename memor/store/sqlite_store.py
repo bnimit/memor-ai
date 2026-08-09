@@ -79,8 +79,14 @@ def _choose_chunk_size(active_count: int) -> int:
     return 1024
 
 class SqliteStore:
+    #: Cap on the memoised document-frequency table. Vocabulary is unbounded
+    #: in principle; the terms that matter are the few hundred common ones.
+    _DF_CACHE_MAX = 2000
+
     def __init__(self, path: str, dim: int):
         self.dim = dim
+        self._df_cache: dict[str, int] = {}
+        self._corpus_size_cache: int | None = None
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         # The daemon ingests continuously against this same file while the proxy
         # writes to it from the request path. Python's 5s default was not enough
@@ -569,16 +575,102 @@ class SqliteStore:
             "duration_ms": elapsed,
         }
 
+    #: A term matching more than this share of the corpus contributes almost no
+    #: ranking signal and costs a great deal: OR-combining "the", which matches
+    #: 91% of a real 28,682-artifact store, forces BM25 to score nearly every
+    #: document to return eight. Swept against real queries, every ceiling from
+    #: 90% down to 40% returned byte-identical top-8; 30% started changing
+    #: results, so 50% sits in the middle of the safe range rather than at its
+    #: edge.
+    _LEXICAL_DF_CEILING = 0.50
+
+    #: Below this the corpus is too small for document frequency to mean
+    #: anything, and the scan is fast regardless.
+    _LEXICAL_MIN_CORPUS = 500
+
+    def _selective_terms(self, terms: list[str]) -> list[str]:
+        """Drop terms so common they only add work.
+
+        Never returns empty: a query made entirely of common words still has to
+        match on something, and a silent no-op is worse than a slow query.
+
+        Document frequencies are cached per term. Measured without the cache
+        the lookups cost as much as the ranking they save -- 76.1 ms before,
+        74.8 ms after, which is not a fix -- because each one is itself an FTS
+        MATCH over the same index. Cached, the cost falls to a dict hit on
+        every repeat of a common word, which is what common words are.
+        """
+        total = self._corpus_size()
+        if total is None:
+            return terms
+        if total < self._LEXICAL_MIN_CORPUS:
+            return terms
+
+        ceiling = total * self._LEXICAL_DF_CEILING
+        kept = []
+        for term in terms:
+            count = self._document_frequency(term)
+            if count is None:
+                kept.append(term)  # unparseable for FTS; let the main query decide
+                continue
+            if count <= ceiling:
+                kept.append(term)
+        return kept or terms
+
+    def _document_frequency(self, term: str) -> int | None:
+        """How many indexed artifacts contain this term, memoised.
+
+        The cache is per-connection and never invalidated. Document frequency
+        moves slowly relative to a process lifetime, and the value is only used
+        to decide whether a term is worth searching on -- being a few hundred
+        documents out of date cannot change that verdict for a term anywhere
+        near the threshold.
+        """
+        cached = self._df_cache.get(term)
+        if cached is not None:
+            return cached
+        try:
+            count = self.db.execute(
+                "SELECT COUNT(*) c FROM fts_artifacts WHERE fts_artifacts MATCH ?",
+                (term,)).fetchone()["c"]
+        except sqlite3.Error:
+            return None
+        if len(self._df_cache) < self._DF_CACHE_MAX:
+            self._df_cache[term] = count
+        return count
+
+    def _corpus_size(self) -> int | None:
+        """Indexed artifact count, memoised.
+
+        ``COUNT(*)`` over an FTS5 table is a full scan, so asking once per
+        query put the cost back that dropping common terms had removed. Like
+        the term frequencies this only decides whether a term is worth
+        searching, so a slightly stale count cannot change the outcome.
+        """
+        if self._corpus_size_cache is None:
+            try:
+                self._corpus_size_cache = self.db.execute(
+                    "SELECT COUNT(*) c FROM fts_artifacts").fetchone()["c"]
+            except sqlite3.Error:
+                return None
+        return self._corpus_size_cache
+
     def search_lexical(self, query: str, scope: Scope, k: int) -> list[tuple[Artifact, float]]:
         """Lexical BM25 search over artifact text via FTS5. Returns
         (artifact, bm25_score) ordered best-first (lower bm25 = better match).
         Terms are OR-combined so partial matches still surface — the dense
-        channel handles semantics, this channel recovers exact terms."""
+        channel handles semantics, this channel recovers exact terms.
+
+        Terms matching most of the corpus are dropped first. They carry almost
+        no BM25 signal and dominate the cost, because OR pulls their entire
+        posting list into the ranking. On a real store this was the single
+        largest component of recall latency: 167 ms of a 296 ms query.
+        """
         from memor.types import GLOBAL_PROJECT
         terms = re.findall(r"[A-Za-z0-9_]+", query.lower())
         if not terms:
             return []
-        match = " OR ".join(terms)
+        match = " OR ".join(self._selective_terms(terms))
         rows = self.db.execute(f"""
           SELECT a.*, bm25(fts_artifacts) AS bm25_rank
           FROM fts_artifacts f JOIN artifacts a ON a.id = f.id
