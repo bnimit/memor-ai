@@ -25,6 +25,14 @@ _TEST_RESULT = re.compile(
     r"|^\s*[✓✗√×]\s"                      # jest / mocha / vitest
 )
 
+#: pytest's default progress output: "tests/test_x.py ....F..  [ 12%]". This is
+#: the single most common shape of noisy test output an agent pastes into a
+#: transcript, and without it a 400-line run is classified as generic prose and
+#: passed through whole. The percentage suffix is what makes it unambiguous:
+#: the line must end in a bracketed percentage and carry a run of status
+#: characters before it, which prose and source do not do.
+_TEST_PROGRESS = re.compile(r"^\S+\s+[.sFExX✓✗]+\s*\[\s*\d{1,3}%\]\s*$")
+
 #: Extension -> content type. When a payload came from a file we know the type
 #: for certain, and guessing from bytes is strictly worse: `var(--warn)` in a
 #: stylesheet is enough to make a heuristic call it a log and crush it. The
@@ -136,7 +144,11 @@ def detect_content_type(text: str, file_path: str | None = None) -> str:
 
     # Test-runner output before the source guard: `--- PASS: TestX (0.00s)` is
     # unambiguous, but its trailing `)` reads as code to the structural check.
-    if sum(1 for line in lines if _TEST_RESULT.search(line)) >= 3:
+    test_lines = sum(
+        1 for line in lines
+        if _TEST_RESULT.search(line) or _TEST_PROGRESS.match(line)
+    )
+    if test_lines >= 3:
         return "log"
 
     # Guard source code before the log heuristic. Code trips it constantly:

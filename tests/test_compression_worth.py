@@ -217,3 +217,30 @@ def test_since_filter_reads_only_rows_after_the_boundary(tmp_path):
     db.commit()
     db.close()
     assert len(load_savings_rows(str(path), since=now - 100)) == 1
+
+
+def test_hook_path_savings_are_reported_separately():
+    """Hook savings and proxy savings are not the same kind of number.
+
+    The hook shrinks a payload before it enters the transcript, so there is no
+    cached prefix to invalidate; the proxy rewrites a payload that may already
+    be cached. Blending them would attach the proxy's cache caveat to savings
+    that do not carry it.
+    """
+    rows = [
+        dict(agent="claude", provider="hook", tokens_before=1000,
+             tokens_after=100, content_types={"log": 1}, passthrough=0)
+        for _ in range(MIN_REQUESTS + 5)
+    ]
+    summary = summarize_savings(rows)
+    assert summary.hook_requests == MIN_REQUESTS + 5
+    assert summary.hook_pct == 90.0
+
+    text = "\n".join(format_report(summary))
+    assert "HOOK PATH" in text
+    assert "No cache risk on this path" in text
+
+
+def test_proxy_only_report_omits_the_hook_section():
+    rows = [_row() for _ in range(MIN_REQUESTS + 5)]
+    assert "HOOK PATH" not in "\n".join(format_report(summarize_savings(rows)))

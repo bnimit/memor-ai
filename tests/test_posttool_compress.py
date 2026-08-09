@@ -1,0 +1,355 @@
+"""PostToolUse output compression for Claude Code.
+
+Coverage is what caps realized savings: 87.6% of proxied requests on the
+development ledger carried nothing compressible, because the proxy sees a
+conversation whose bulk is history it must leave byte-exact. This hook works
+at the point where that bulk is created instead.
+
+Most of these tests are about what the hook refuses to do. ``updatedToolOutput``
+replaces what the model sees, so an over-eager rewrite is not a missed saving,
+it is the agent reasoning about output that never existed.
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from memor.posttool_compress import build_response, main, should_compress
+
+
+def _bash_request(stdout: str, **response_extra) -> dict:
+    response = {"stdout": stdout, "stderr": "", "interrupted": False, "isImage": False}
+    response.update(response_extra)
+    return {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "pytest"},
+        "tool_response": response,
+        "session_id": "s1",
+    }
+
+
+def _noisy_log(lines: int = 400) -> str:
+    body = "\n".join(f"INFO  module.sub{i % 7}: handled request {i} in 3ms"
+                     for i in range(lines))
+    return body + "\nERROR failed to connect to db\n"
+
+
+# --- the saving ------------------------------------------------------------
+
+def test_long_bash_log_is_compressed():
+    request = _bash_request(_noisy_log())
+    out = build_response(request)
+
+    updated = out["hookSpecificOutput"]["updatedToolOutput"]
+    assert len(updated["stdout"]) < len(request["tool_response"]["stdout"])
+    # The error line is the reason the user ran the command.
+    assert "ERROR failed to connect to db" in updated["stdout"]
+    assert out["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+
+
+def test_response_shape_is_preserved():
+    """A value that does not match the tool's schema is silently discarded.
+
+    Claude Code validates ``updatedToolOutput`` against the tool's output
+    shape and falls back to the original when it does not match, so dropping a
+    field turns the whole feature into a no-op that still looks like it works.
+    """
+    request = _bash_request(_noisy_log())
+    updated = build_response(request)["hookSpecificOutput"]["updatedToolOutput"]
+    assert set(updated) == {"stdout", "stderr", "interrupted", "isImage"}
+    assert updated["interrupted"] is False
+    assert updated["isImage"] is False
+
+
+def test_context_tells_the_model_output_was_elided():
+    """Silent truncation invites the model to treat partial output as whole."""
+    out = build_response(_bash_request(_noisy_log()))
+    context = out["hookSpecificOutput"]["additionalContext"]
+    assert "memor" in context.lower()
+    assert "rerun" in context.lower()
+
+
+# --- the refusals ----------------------------------------------------------
+
+def test_read_output_is_never_touched():
+    """A file read is the most likely input to the next edit.
+
+    Eliding lines here produces an edit against content that was never in the
+    file, and nothing in the transcript reveals it happened.
+    """
+    request = {
+        "tool_name": "Read",
+        "tool_response": {"file": {"contents": _noisy_log()}},
+    }
+    assert should_compress(request) is False
+    assert build_response(request) == {}
+
+
+def test_grep_and_glob_are_not_touched():
+    for tool in ("Grep", "Glob", "Edit", "Write", "WebFetch"):
+        request = _bash_request(_noisy_log())
+        request["tool_name"] = tool
+        assert should_compress(request) is False, tool
+
+
+def test_failed_command_passes_through():
+    """A non-zero exit is the moment the user needs every line."""
+    for key in ("exit_code", "exitCode", "returncode"):
+        request = _bash_request(_noisy_log(), **{key: 1})
+        assert should_compress(request) is False, key
+
+
+def test_successful_command_with_explicit_zero_exit_is_compressed():
+    request = _bash_request(_noisy_log(), exit_code=0)
+    assert should_compress(request) is True
+
+
+def test_interrupted_command_passes_through():
+    request = _bash_request(_noisy_log(), interrupted=True)
+    assert should_compress(request) is False
+
+
+def test_source_code_is_never_crushed():
+    """`cat`ing a module must come back byte-exact.
+
+    The log crusher deletes lines it reads as repetitive, which mangles code
+    into something that still looks plausible.
+    """
+    source = "\n".join(
+        [f"def handler_{i}(request):\n    return process(request, {i})\n"
+         for i in range(80)]
+    )
+    request = _bash_request(source)
+    assert build_response(request) == {}
+
+
+def test_short_output_is_left_alone():
+    assert should_compress(_bash_request("all tests passed\n")) is False
+
+
+def test_incompressible_output_produces_no_rewrite():
+    """No rewrite at all is better than a rewrite that saves nothing."""
+    request = _bash_request("".join(f"{i} unique-token-{i*7919}\n" for i in range(60)))
+    out = build_response(request)
+    if out:
+        updated = out["hookSpecificOutput"]["updatedToolOutput"]["stdout"]
+        assert len(updated) < len(request["tool_response"]["stdout"])
+
+
+def test_string_tool_response_is_skipped():
+    """Older/other shapes cannot be returned without violating the schema."""
+    request = _bash_request(_noisy_log())
+    request["tool_response"] = _noisy_log()
+    assert should_compress(request) is False
+
+
+def test_missing_tool_response_is_safe():
+    assert should_compress({"tool_name": "Bash"}) is False
+    assert build_response({"tool_name": "Bash"}) == {}
+
+
+def test_image_output_is_skipped():
+    request = _bash_request(_noisy_log(), isImage=True)
+    assert should_compress(request) is False
+
+
+# --- process contract -------------------------------------------------------
+
+def _run_hook(payload: dict) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-c",
+         "from memor.posttool_compress import main; main()"],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+    )
+
+
+def test_hook_emits_only_json_on_stdout():
+    """Claude Code parses stdout as JSON; stray output breaks the contract."""
+    proc = _run_hook(_bash_request(_noisy_log()))
+    assert proc.returncode == 0
+    parsed = json.loads(proc.stdout)
+    assert "hookSpecificOutput" in parsed
+
+
+def test_hook_stays_silent_when_it_declines():
+    proc = _run_hook(_bash_request("short\n"))
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+
+def test_hook_survives_malformed_stdin():
+    """Exit 0 and say nothing: a broken hook must not cost a tool result."""
+    proc = subprocess.run(
+        [sys.executable, "-c", "from memor.posttool_compress import main; main()"],
+        input="not json at all",
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+    )
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+
+# --- install / uninstall ----------------------------------------------------
+
+def test_install_registers_bash_matched_posttool_hook(tmp_path):
+    from memor.cli import _install_posttool_compress
+
+    settings = tmp_path / "settings.json"
+    _install_posttool_compress(settings, "/usr/local/bin/memor-posttool-compress")
+
+    data = json.loads(settings.read_text())
+    group = data["hooks"]["PostToolUse"][0]
+    assert group["matcher"] == "Bash"
+    assert "memor-posttool-compress" in group["hooks"][0]["command"]
+
+
+def test_install_is_idempotent_and_preserves_other_hooks(tmp_path):
+    from memor.cli import _install_posttool_compress
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({
+        "hooks": {
+            "PostToolUse": [
+                {"matcher": "Edit", "hooks": [{"type": "command", "command": "lint.sh"}]}
+            ],
+            "UserPromptSubmit": [
+                {"matcher": "", "hooks": [{"type": "command", "command": "memor-hook"}]}
+            ],
+        }
+    }))
+
+    for _ in range(3):
+        _install_posttool_compress(settings, "/bin/memor-posttool-compress")
+
+    data = json.loads(settings.read_text())
+    post = data["hooks"]["PostToolUse"]
+    assert len(post) == 2  # the user's lint hook plus exactly one of ours
+    assert any(g["hooks"][0]["command"] == "lint.sh" for g in post)
+    # The recall hook must survive a compression install.
+    assert data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] == "memor-hook"
+
+
+def test_uninstall_removes_only_our_hook(tmp_path):
+    from memor.cli import _install_posttool_compress, _uninstall_posttool_compress
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({
+        "hooks": {"PostToolUse": [
+            {"matcher": "Edit", "hooks": [{"type": "command", "command": "lint.sh"}]}
+        ]}
+    }))
+    _install_posttool_compress(settings, "/bin/memor-posttool-compress")
+    assert _uninstall_posttool_compress(settings) is True
+
+    data = json.loads(settings.read_text())
+    assert len(data["hooks"]["PostToolUse"]) == 1
+    assert data["hooks"]["PostToolUse"][0]["hooks"][0]["command"] == "lint.sh"
+
+
+def test_uninstall_leaves_no_empty_scaffolding(tmp_path):
+    from memor.cli import _install_posttool_compress, _uninstall_posttool_compress
+
+    settings = tmp_path / "settings.json"
+    _install_posttool_compress(settings, "/bin/memor-posttool-compress")
+    _uninstall_posttool_compress(settings)
+    assert "PostToolUse" not in json.loads(settings.read_text()).get("hooks", {})
+
+
+def test_uninstall_is_a_noop_when_not_installed(tmp_path):
+    from memor.cli import _uninstall_posttool_compress
+
+    assert _uninstall_posttool_compress(tmp_path / "missing.json") is False
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"hooks": {}}')
+    assert _uninstall_posttool_compress(settings) is False
+
+
+def test_savings_are_written_to_the_shared_ledger(tmp_path, monkeypatch):
+    """Hook savings must reach the same ledger the dashboard reads.
+
+    A user who never installs the proxy still saves tokens through this path,
+    and savings that are not recorded cannot be reported, which is how a real
+    benefit ends up looking like no benefit at all.
+    """
+    import sqlite3
+
+    from memor.store.sqlite_store import SqliteStore
+
+    home = tmp_path / "home"
+    (home / ".memor").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    SqliteStore(str(home / ".memor" / "memor.db"), dim=16)
+
+    from memor.posttool_compress import build_response as build
+
+    out = build(_bash_request(_noisy_log()), ledger=True)
+    assert out  # the rewrite happened
+
+    db = sqlite3.connect(str(home / ".memor" / "memor.db"))
+    db.row_factory = sqlite3.Row
+    rows = [dict(r) for r in db.execute(
+        "SELECT agent, provider, tokens_before, tokens_after, passthrough, "
+        "session_id FROM proxy_savings")]
+    db.close()
+
+    assert len(rows) == 1
+    assert rows[0]["provider"] == "hook"  # distinguishable from proxy traffic
+    assert rows[0]["session_id"] == "s1"
+    assert rows[0]["tokens_after"] < rows[0]["tokens_before"]
+    assert rows[0]["passthrough"] == 0
+
+
+def test_ledger_failure_never_blocks_the_rewrite(tmp_path, monkeypatch):
+    """Losing a statistic must not cost the user the compression."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "nonexistent"))
+    out = build_response(_bash_request(_noisy_log()), ledger=True)
+    assert out["hookSpecificOutput"]["updatedToolOutput"]["stdout"]
+
+
+def test_real_pytest_output_compresses_substantially():
+    """Guards the case the whole feature was built for.
+
+    pytest progress lines were previously classified as prose and passed
+    through untouched; this is the shape that regression would reappear in.
+    """
+    from memor.tokencount import count_tokens
+
+    out = "\n".join(
+        [f"tests/test_module_{i}.py {'.' * (i % 12 + 1)}"
+         f"{' ' * 20}[{i * 2:3d}%]" for i in range(45)]
+    )
+    out = ("============ test session starts ============\n" + out
+           + "\n============ 1188 passed in 6.02s ============")
+    result = build_response(_bash_request(out))
+    assert result
+    new = result["hookSpecificOutput"]["updatedToolOutput"]["stdout"]
+    assert count_tokens(new) < count_tokens(out) * 0.5
+    # The line the user actually reads must survive.
+    assert "1188 passed" in new
+
+
+def test_declining_does_not_load_the_tokenizer():
+    """This hook runs on every Bash call, including trivial ones.
+
+    tiktoken costs ~50ms to import. Paying that to conclude that `ls` produced
+    two lines is a cost the user pays hundreds of times a day for nothing, so
+    the early-exit path must not touch it.
+    """
+    proc = subprocess.run(
+        [sys.executable, "-c",
+         "import json,sys\n"
+         "from memor.posttool_compress import build_response\n"
+         "build_response(json.loads(sys.argv[1]))\n"
+         "print('tiktoken' in sys.modules)",
+         json.dumps(_bash_request("short output\n"))],
+        capture_output=True, text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+    )
+    assert proc.stdout.strip() == "False", proc.stderr

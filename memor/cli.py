@@ -649,6 +649,65 @@ def _install_hook_logic_codex(hooks_path: Path, hook_command: str) -> None:
     hooks_path.write_text(json.dumps(data, indent=2))
 
 
+#: Marker identifying our PostToolUse handler inside a settings file.
+POSTTOOL_HOOK_MARKER = "memor-posttool-compress"
+
+
+def _install_posttool_compress(settings_path: Path, hook_command: str) -> None:
+    """Register the PostToolUse output compressor for Claude Code.
+
+    Matched to Bash only. The hook itself re-checks the tool name, but keeping
+    the matcher narrow means no process is spawned for the Read and Edit calls
+    it would refuse anyway, which is most of them.
+    """
+    if settings_path.exists():
+        data = json.loads(settings_path.read_text())
+    else:
+        data = {}
+    hooks = data.setdefault("hooks", {})
+    post_hooks = hooks.setdefault("PostToolUse", [])
+    entry = {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": hook_command, "timeout": 10}],
+    }
+    for i, group in enumerate(post_hooks):
+        if any(POSTTOOL_HOOK_MARKER in h.get("command", "")
+               for h in group.get("hooks", [])):
+            post_hooks[i] = entry
+            break
+    else:
+        post_hooks.append(entry)
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(data, indent=2))
+
+
+def _uninstall_posttool_compress(settings_path: Path) -> bool:
+    """Remove our PostToolUse handler, leaving anyone else's intact."""
+    if not settings_path.exists():
+        return False
+    try:
+        data = json.loads(settings_path.read_text())
+    except json.JSONDecodeError:
+        return False
+    post_hooks = data.get("hooks", {}).get("PostToolUse")
+    if not isinstance(post_hooks, list):
+        return False
+    kept = [
+        g for g in post_hooks
+        if not any(POSTTOOL_HOOK_MARKER in h.get("command", "")
+                   for h in g.get("hooks", []))
+    ]
+    if len(kept) == len(post_hooks):
+        return False
+    if kept:
+        data["hooks"]["PostToolUse"] = kept
+    else:
+        # Leave no empty scaffolding behind in the user's settings.
+        data["hooks"].pop("PostToolUse", None)
+    settings_path.write_text(json.dumps(data, indent=2))
+    return True
+
+
 def _install_hook_logic_copilot(hooks_path: Path, hook_command: str) -> None:
     if hooks_path.exists():
         data = json.loads(hooks_path.read_text())
@@ -974,6 +1033,50 @@ def install_cursor_compress_hooks_cmd():
 
     for line in lines:
         typer.echo(line)
+
+
+@app.command("install-compress-hook")
+def install_compress_hook_cmd(
+    agent: str = typer.Option("claude", "--agent", help="claude"),
+):
+    """Compress Bash output before it enters the transcript (Claude Code).
+
+    Complements the proxy rather than duplicating it. The proxy can only shrink
+    a payload after it is already part of the conversation, where most of the
+    request is history it must leave byte-exact; this crushes command output at
+    the moment it is produced, so it never enters the prefix at full size.
+    """
+    if agent != "claude":
+        typer.echo(f"Error: unsupported agent '{agent}' (claude only)", err=True)
+        raise typer.Exit(1)
+
+    hook_bin = shutil.which("memor-posttool-compress")
+    if not hook_bin:
+        typer.echo(
+            "Error: memor-posttool-compress not found on PATH.\n"
+            "  Reinstall memor (pipx install --force memor-cli) and retry.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    settings_path = Path.home() / ".claude" / "settings.json"
+    _install_posttool_compress(settings_path, hook_bin)
+    typer.echo("Installed PostToolUse output compression for Claude Code.")
+    typer.echo(f"  Updated {settings_path}")
+    typer.echo("  Scope: Bash output only. Reads, greps and source are untouched,")
+    typer.echo("  and failed commands pass through uncompressed.")
+    typer.echo("  Savings land on the dashboard: memor compression-worth")
+    typer.echo("  Restart Claude Code to load the hook.")
+
+
+@app.command("uninstall-compress-hook")
+def uninstall_compress_hook_cmd():
+    """Remove the PostToolUse output compression hook."""
+    settings_path = Path.home() / ".claude" / "settings.json"
+    if _uninstall_posttool_compress(settings_path):
+        typer.echo(f"Removed PostToolUse compression from {settings_path}")
+    else:
+        typer.echo("No memor PostToolUse compression hook was installed.")
 
 
 @app.command("uninstall-cursor-compress-hooks")

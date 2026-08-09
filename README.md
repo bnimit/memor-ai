@@ -47,6 +47,28 @@ memor dashboard
 
 ### Optional: Token savings proxy
 
+Two independent compression paths, usable together or alone.
+
+**Tool-output compression (Claude Code, no proxy):**
+
+```bash
+memor install-compress-hook          # PostToolUse; restart Claude Code after
+```
+
+This crushes Bash output *before* it enters the transcript, which is where the
+compressible bulk actually is. Measured on this repo's own test suite, a
+`pytest -v` run goes from 1,975 to 222 tokens (88.8%) with the pass/fail summary
+and every failure diagnostic intact. Because the payload is shrunk on the way
+in, no already-cached prompt prefix is rewritten, so there is no cache
+re-formation cost to weigh against the saving.
+
+Scope is deliberately narrow: Bash output only. Reads, greps and source code
+are never rewritten, and a command that exits non-zero passes through whole —
+a failing build is when every line matters most. Savings land in the same
+ledger the dashboard reads.
+
+**Full request compression (proxy):**
+
 Memory works out of the box via hooks. To also compress tool payloads and track token savings:
 
 ```bash
@@ -324,6 +346,10 @@ memor uninstall-proxy                Restore original agent config
 memor proxy                          Run proxy server in foreground (localhost:8421)
 memor install-cursor-compress-hooks  Cursor Shell output compression (subscription)
 memor uninstall-cursor-compress-hooks
+memor install-compress-hook          Compress Bash output before it enters the
+                                     transcript (Claude Code); no proxy needed
+memor uninstall-compress-hook        Remove it
+memor compression-worth              Realized savings, coverage, and net of cache
 memor daemon                         Auto-ingest + distill (Claude, Kimi, Goose)
 memor backfill                       One-shot ingest of past local agent sessions
 memor dashboard                      Web dashboard on localhost:8420

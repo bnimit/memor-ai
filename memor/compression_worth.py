@@ -60,6 +60,23 @@ class CompressionSummary:
     #: Tokens on the subset of requests that carried something compressible.
     compressible_before: int = 0
     compressible_after: int = 0
+    #: Savings from the PostToolUse hook path, which crushes tool output
+    #: before it ever enters the transcript. Kept apart from proxy savings
+    #: because it carries no cache risk: the payload is shrunk on its way in,
+    #: so no already-cached prefix is rewritten.
+    hook_requests: int = 0
+    hook_before: int = 0
+    hook_after: int = 0
+
+    @property
+    def hook_saved(self) -> int:
+        return max(0, self.hook_before - self.hook_after)
+
+    @property
+    def hook_pct(self) -> float:
+        if self.hook_before <= 0:
+            return 0.0
+        return self.hook_saved / self.hook_before * 100
 
     @property
     def saved(self) -> int:
@@ -168,6 +185,10 @@ def summarize_savings(rows: list[dict]) -> CompressionSummary:
         if not row.get("passthrough"):
             s.compressible_before += before
             s.compressible_after += after
+        if row.get("provider") == "hook":
+            s.hook_requests += 1
+            s.hook_before += before
+            s.hook_after += after
 
         # Usage is absent on rows written before streaming usage was captured,
         # and on providers that only report it when the client opts in. Those
@@ -228,13 +249,15 @@ def load_savings_rows(
         have = {r["name"] for r in db.execute("PRAGMA table_info(proxy_savings)")}
         optional = [
             c for c in (
+                "provider",
                 "upstream_input_tokens",
                 "upstream_cache_read_tokens",
                 "upstream_cache_creation_tokens",
             ) if c in have
         ]
         columns = ", ".join(
-            ["agent", "tokens_before", "tokens_after", "content_types", "passthrough"]
+            ["agent", "tokens_before", "tokens_after", "content_types",
+             "passthrough"]
             + optional
         )
         rows = db.execute(
@@ -355,6 +378,20 @@ def format_report(summary: CompressionSummary, *, days: int = 30) -> list[str]:
     lines.append("  is the larger lever.")
     lines.append("")
     lines.extend(_cache_lines(summary))
+    if summary.hook_requests:
+        lines.append("")
+        lines.append(
+            f"HOOK PATH (tool output crushed before it enters the transcript): "
+            f"{summary.hook_pct:.1f}%"
+        )
+        lines.append(
+            f"  {summary.hook_requests:,} tool results, "
+            f"{summary.hook_before:,} -> {summary.hook_after:,} tokens"
+        )
+        lines.append(
+            "  No cache risk on this path: the payload is shrunk on the way in,"
+        )
+        lines.append("  so no already-cached prefix is rewritten.")
     lines.append("")
     lines.append("  Says nothing about answer quality.")
     return lines
