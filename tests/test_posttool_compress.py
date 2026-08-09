@@ -12,8 +12,10 @@ it is the agent reasoning about output that never existed.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from memor.posttool_compress import build_response, main, should_compress
@@ -158,7 +160,17 @@ def test_image_output_is_skipped():
 
 # --- process contract -------------------------------------------------------
 
-def _run_hook(payload: dict) -> subprocess.CompletedProcess:
+def _run_hook(payload: dict, home: Path | None = None) -> subprocess.CompletedProcess:
+    """Run the hook as a real process, with HOME pointed somewhere disposable.
+
+    ``main()`` writes savings to the ledger under ``Path.home()``, and a
+    subprocess does not inherit a monkeypatched ``Path.home``. Without an
+    overridden HOME these tests append fixture rows to the developer's real
+    ~/.memor/memor.db -- which happened, and produced 35 identical
+    "6007 -> 138" rows that then showed up in the dashboard as live traffic.
+    """
+    env = dict(os.environ)
+    env["HOME"] = str(home or Path(tempfile.mkdtemp()))
     return subprocess.run(
         [sys.executable, "-c",
          "from memor.posttool_compress import main; main()"],
@@ -166,6 +178,7 @@ def _run_hook(payload: dict) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parent.parent),
+        env=env,
     )
 
 
@@ -185,15 +198,45 @@ def test_hook_stays_silent_when_it_declines():
 
 def test_hook_survives_malformed_stdin():
     """Exit 0 and say nothing: a broken hook must not cost a tool result."""
+    env = dict(os.environ)
+    env["HOME"] = tempfile.mkdtemp()
     proc = subprocess.run(
         [sys.executable, "-c", "from memor.posttool_compress import main; main()"],
         input="not json at all",
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parent.parent),
+        env=env,
     )
     assert proc.returncode == 0
     assert proc.stdout.strip() == ""
+
+
+def test_running_the_hook_never_writes_to_the_real_home(tmp_path):
+    """Tests must not append fixture rows to the developer's own ledger.
+
+    ``main()`` records savings under ``Path.home()``, and a subprocess ignores
+    a monkeypatched ``Path.home``. This suite wrote 35 identical rows into a
+    real ~/.memor/memor.db before that was noticed, and they were then read
+    back off the dashboard as though they were live traffic.
+    """
+    import sqlite3
+
+    from memor.store.sqlite_store import SqliteStore
+
+    home = tmp_path / "home"
+    (home / ".memor").mkdir(parents=True)
+    SqliteStore(str(home / ".memor" / "memor.db"), dim=16)
+
+    proc = _run_hook(_bash_request(_noisy_log()), home=home)
+    assert proc.returncode == 0
+
+    db = sqlite3.connect(str(home / ".memor" / "memor.db"))
+    written = db.execute("SELECT COUNT(*) FROM proxy_savings").fetchone()[0]
+    db.close()
+    # The saving landed in the sandbox, which proves HOME was honoured and
+    # therefore that the real ledger was not the thing being written to.
+    assert written == 1
 
 
 # --- install / uninstall ----------------------------------------------------
