@@ -12,3 +12,10 @@ docs/superpowers/
 scratch_*.py
 .superpowers/
 /scratch/
+
+# uv resolves its own lock from pyproject.toml; the project has never
+# committed one, and a lock generated on one machine's Python would pin
+# resolutions the published package does not intend.
+uv.lock
+
+.DS_Store

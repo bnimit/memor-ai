@@ -84,3 +84,35 @@ def test_readme_commands_all_exist():
     referenced.discard("can")
     missing = sorted(referenced - registered - groups)
     assert not missing, f"README references non-existent commands: {missing}"
+
+
+def test_readme_quotes_only_figures_this_repo_can_reproduce():
+    """Published numbers must stay tied to a stated source.
+
+    Every figure in the README's results table was contested at least once
+    during the work that produced it: 7.8% was inflated by test fixtures in a
+    real ledger, and a 96.5% hook figure described the test suite rather than
+    anyone's traffic. A number without its provenance beside it is how that
+    happens quietly, so the table must keep naming what each was measured on.
+    """
+    import re
+
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    table = re.search(
+        r"\| Measurement \| Result \| Measured on \|(.*?)\n\n", readme, re.S)
+    assert table, "the results table must exist"
+
+    rows = [r for r in table.group(1).splitlines()
+            if r.strip().startswith("|") and "---" not in r]
+    assert rows, "the results table must have rows"
+
+    for row in rows:
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        assert len(cells) == 3, row
+        measurement, result, source = cells
+        assert measurement and result, row
+        # The third column is the whole point: a result with no stated
+        # population is not a measurement, it is an assertion.
+        assert source, f"figure without a stated source: {row}"
+        assert re.search(r"\d", source), (
+            f"source must name a concrete population: {row}")
