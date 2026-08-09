@@ -27,6 +27,11 @@ def _assert_localhost(host: str) -> None:
         raise ValueError(f"refusing non-localhost bind: {host}")
 
 
+#: When this process loaded. Compared against the mtime of the installed
+#: sources to detect a proxy still serving code that has since changed.
+_STARTED_AT = time.time()
+
+
 def _wants_stream(body: dict, headers) -> bool:
     """True when the client requested SSE streaming.
 
@@ -66,12 +71,27 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
     
     @app.get("/health")
     async def health():
-        """Health check endpoint."""
+        """Health check, including which build is actually serving.
+
+        A proxy is a long-lived process, and an editable install means the
+        files on disk can move far ahead of the code in memory. That gap is
+        invisible: the version on disk says one thing, the running process
+        does another, and features appear not to work for reasons no log
+        explains. Reporting the loaded version and the process start time lets
+        a caller tell "not implemented" from "not restarted".
+        """
+        from memor import __version__
+
         return {
             "ok": True,
             "bind": "127.0.0.1",
             "mode": compressor_state.mode,
             "compressor_ready": compressor_state.compressor_ready,
+            "version": __version__,
+            "started_at": _STARTED_AT,
+            # Capabilities the caller can test for directly, rather than
+            # inferring them from a version string.
+            "captures_stream_usage": True,
         }
     
     @app.post("/v1/messages")

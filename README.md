@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1256%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1273%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -46,6 +46,11 @@ that was being served from cache turns cheap cache reads into full-price cache
 writes, so a gross saving can be a net loss. Memor reads usage out of the
 response stream and prices cache writes against reads; where the provider never
 reported usage it says *unmeasured* rather than assuming zero.
+
+> Usage arrives inside the response stream, so a proxy that has been running
+> since before this landed reports nothing. `memor service status` says so
+> explicitly when the running process is older than the installed code, and
+> `memor service restart` fixes it.
 
 ---
 

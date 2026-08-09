@@ -1680,6 +1680,67 @@ def service_status():
     """Show whether the daemon service is running."""
     from memor.service import status
     typer.echo(status())
+    for line in proxy_staleness_lines():
+        typer.echo(line)
+
+
+def proxy_staleness_lines() -> list[str]:
+    """Warn when the running proxy is older than the code it loads.
+
+    memor is commonly installed editable, so the sources on disk can move far
+    ahead of a long-running proxy process. Nothing about that is visible: the
+    installed version reports the new number while the socket serves the old
+    behaviour, and a feature appears broken for a reason no log explains.
+    Comparing the process start time against the mtime of the loaded package
+    turns that into one line of advice.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    from memor.config import proxy_port
+
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{proxy_port()}/health", timeout=1.0
+        ) as response:
+            health = json.loads(response.read())
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return []  # not running, or too old to answer; neither is an error here
+
+    started = health.get("started_at")
+    if not isinstance(started, (int, float)):
+        return [
+            "  proxy: running a build that predates restart detection —",
+            "         run `memor service restart` to pick up the current code",
+        ]
+
+    import memor
+
+    package = Path(memor.__file__).parent
+    newest = max(
+        (f.stat().st_mtime for f in package.rglob("*.py")), default=0.0
+    )
+    if newest <= started:
+        return []
+    return [
+        "  proxy: serving code older than what is installed "
+        f"(started {_ago(started)}, sources changed {_ago(newest)})",
+        "         run `memor service restart` to load the current build",
+    ]
+
+
+def _ago(when: float) -> str:
+    import time as _time
+
+    seconds = max(0, int(_time.time() - when))
+    if seconds < 90:
+        return f"{seconds}s ago"
+    if seconds < 5400:
+        return f"{seconds // 60}m ago"
+    if seconds < 172800:
+        return f"{seconds // 3600}h ago"
+    return f"{seconds // 86400}d ago"
 
 
 if __name__ == "__main__":
