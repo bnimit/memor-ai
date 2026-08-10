@@ -180,3 +180,54 @@ def test_panel_survives_an_empty_ledger(tmp_path):
     for text in out.values():
         assert "NaN" not in text
         assert "undefined" not in text
+
+
+def test_cheaper_verdict_renders_a_saving_as_negative(tmp_path):
+    """cost_delta_pct is a saving: positive means the bill went down.
+
+    The panel printed "−" whenever the value was >= 0, which is correct, and
+    "+" otherwise -- but it applied that to a verdict line where the sign was
+    already ambiguous, and paired it with an aggregate the verdict had
+    rejected. Pinning the direction so a future edit cannot silently flip it.
+    """
+    out = render(_payload(cost={
+        "verdict": "cheaper", "cost_delta_pct": 12.3,
+        "n_before": 4021, "n_after": 386,
+    }), tmp_path)
+    assert "costs less" in out["cx-note"]
+    assert "−12.3% per episode" in out["cx-note"]
+
+
+def test_dearer_verdict_renders_an_increase_as_positive(tmp_path):
+    out = render(_payload(cost={
+        "verdict": "dearer", "cost_delta_pct": -8.0,
+        "n_before": 4021, "n_after": 386,
+    }), tmp_path)
+    assert "costs MORE" in out["cx-note"]
+    assert "+8.0% per episode" in out["cx-note"]
+
+
+def test_no_effect_withholds_the_aggregate(tmp_path):
+    """A decisive number beside "no change" is the mix-shift, rendered.
+
+    no_effect is returned when complexity bands disagree in sign. On this
+    machine's real data they read -43%, +4%, -35% and +14% while the blended
+    figure said -40.5%, and the panel printed that -40.5% next to the words
+    "no cost change". Stratifying exists precisely to stop anyone reading the
+    blended number, so it is not shown.
+    """
+    out = render(_payload(cost={
+        "verdict": "no_effect", "cost_delta_pct": -40.5,
+        "n_before": 4021, "n_after": 386,
+    }), tmp_path)
+    assert "no measurable cost change" in out["cx-note"]
+    assert "40.5" not in out["cx-note"], "the rejected aggregate must not appear"
+    assert "different directions across task sizes" in out["cx-note"]
+
+
+def test_insufficient_data_says_so(tmp_path):
+    out = render(_payload(cost={
+        "verdict": "insufficient_data", "cost_delta_pct": None,
+        "n_before": 3, "n_after": 1,
+    }), tmp_path)
+    assert "not enough episodes" in out["cx-note"]

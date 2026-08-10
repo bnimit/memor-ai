@@ -1620,11 +1620,25 @@
 
     var cost = d.cost;
     if (cost && cost.verdict && cost.verdict !== 'insufficient_data') {
-      var word = {cheaper: 'costs less', dearer: 'costs MORE', no_effect: 'no cost change'}[cost.verdict];
-      noteEl.textContent = 'Bill: ' + word + ' since enabled ('
-        + (cost.cost_delta_pct >= 0 ? '−' : '+')
-        + Math.abs(cost.cost_delta_pct).toFixed(1) + '%, '
-        + cost.n_after + ' episodes after). Measured from the provider’s own token usage.';
+      var word = {cheaper: 'costs less', dearer: 'costs MORE',
+                  no_effect: 'no measurable cost change'}[cost.verdict];
+      var note = 'Bill: ' + word + ' since enabled ('
+        + cost.n_after + ' episodes after). Measured from the provider’s own'
+        + ' token usage.';
+      if (cost.verdict === 'no_effect') {
+        // The overall delta is deliberately withheld here. no_effect is
+        // returned when complexity bands disagree in sign, and on real data
+        // that has read -43%, +4%, -35%, +14% while the blended figure said
+        // -40.5%. Printing a decisive-looking number beside "no change" is
+        // the mix-shift that stratifying exists to stop anyone reading.
+        note += ' Cost moved in different directions across task sizes, so'
+          + ' the aggregate is not meaningful.';
+      } else {
+        // cost_delta_pct is a saving: positive means cheaper.
+        note += ' ' + (cost.cost_delta_pct > 0 ? '−' : '+')
+          + Math.abs(cost.cost_delta_pct).toFixed(1) + '% per episode.';
+      }
+      noteEl.textContent = note;
     } else if (cost) {
       noteEl.textContent = 'Bill: not enough episodes on both sides of the change yet.';
     } else {
