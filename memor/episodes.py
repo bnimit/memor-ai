@@ -355,12 +355,69 @@ def summarize(episodes: list[Episode], *, min_per_arm: int = 20) -> dict:
         overall["token_delta_pct"] = _delta_pct(without, with_r, lambda e: e.total_tokens)
 
     strata = stratified_deltas(with_r, without)
+    overall["project_adjusted"] = project_adjusted_delta(with_r, without)
     overall["verdict"] = verdict(overall, strata)
     return {
         "overall": overall,
         "by_project": by_project,
         "strata": strata,
         "confound": CONFOUND_NOTE,
+    }
+
+
+def project_adjusted_delta(with_r: list[Episode], without: list[Episode],
+                           *, min_per_arm: int = 25) -> dict:
+    """The difference within each project, pooled on a common weighting.
+
+    The arms are not drawn from the same projects: on the development machine
+    plirin is 42% of the recalled arm against 16% of the control, and ygo is 9%
+    against 28%. Projects differ in how tool-heavy they are, so an aggregate
+    over the pooled arms is partly measuring which projects happen to get
+    recall. Measured there, the naive aggregate reads -33.3% while the
+    within-project difference is -6.1% -- five sixths of the headline was
+    project mix.
+
+    Each project contributes its own difference, weighted by its episode count,
+    so no project can dominate through volume alone. Projects without enough
+    episodes in both arms are excluded rather than estimated from a handful.
+    """
+    by_project: dict[str, dict] = {}
+    for e in with_r:
+        by_project.setdefault(e.project, {"w": [], "n": []})["w"].append(e)
+    for e in without:
+        by_project.setdefault(e.project, {"w": [], "n": []})["n"].append(e)
+
+    deltas: list[tuple[float, int]] = []
+    contributions: list[dict] = []
+    for project, arms in sorted(by_project.items()):
+        if len(arms["w"]) < min_per_arm or len(arms["n"]) < min_per_arm:
+            continue
+        delta = _delta_pct_mean(arms["n"], arms["w"], lambda e: e.tool_calls)
+        if delta is None:
+            continue
+        weight = len(arms["w"]) + len(arms["n"])
+        deltas.append((delta, weight))
+        contributions.append({
+            "project": project, "delta_pct": delta,
+            "with_n": len(arms["w"]), "without_n": len(arms["n"]),
+        })
+
+    if not deltas:
+        return {"scored": False, "projects": [], "min_per_arm": min_per_arm}
+
+    total = sum(w for _, w in deltas)
+    pooled = sum(d * w for d, w in deltas) / total
+    spread = max(d for d, _ in deltas) - min(d for d, _ in deltas)
+    return {
+        "scored": True,
+        "delta_pct": round(pooled, 1),
+        "projects": contributions,
+        "n_projects": len(contributions),
+        "spread_pct": round(spread, 1),
+        # Projects disagreeing in sign means there is no single effect to
+        # report, whatever the pooled number happens to be.
+        "consistent": all(d >= 0 for d, _ in deltas) or all(d <= 0 for d, _ in deltas),
+        "min_per_arm": min_per_arm,
     }
 
 
@@ -572,7 +629,11 @@ def verdict(overall: dict, strata: list[dict]) -> str:
 
     An aggregate difference is only called an effect when it survives
     stratification — if the sign flips across prompt-length bands, the aggregate
-    is composition, not causation. Returns one of:
+    is composition, not causation. The same test is applied across projects,
+    because the arms are not drawn from the same ones: measured on the
+    development machine the naive aggregate read -33.3% while the within-project
+    difference was -6.1%, so most of the headline was project mix rather than
+    recall. Returns one of:
     ``insufficient_data`` | ``no_effect`` | ``saves`` | ``costs``.
     """
     if not overall.get("scored"):
@@ -585,7 +646,14 @@ def verdict(overall: dict, strata: list[dict]) -> str:
     if len(signs) > 1:
         return "no_effect"  # direction is not stable — aggregate is composition
 
-    delta = overall.get("tool_call_delta_pct")
+    adjusted = overall.get("project_adjusted") or {}
+    if adjusted.get("scored") and not adjusted.get("consistent"):
+        return "no_effect"  # projects disagree on direction
+
+    # Prefer the project-adjusted figure: it answers "what does recall do"
+    # rather than "which projects get recall".
+    delta = adjusted.get("delta_pct") if adjusted.get("scored") \
+        else overall.get("tool_call_delta_pct")
     if delta is None or abs(delta) < EFFECT_THRESHOLD_PCT:
         return "no_effect"
     return "saves" if delta > 0 else "costs"

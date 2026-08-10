@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+
+from memor.episodes import is_user_prompt
 from datetime import datetime
 from pathlib import Path
 
@@ -44,27 +46,43 @@ def parse_turn_metrics(transcript_path: Path, session_id: str) -> list[TurnMetri
     metrics = []
     turn_idx = 0
     pending_user_ts = None
+    pending_tools: list[str] = []
 
     for rec in records:
         rec_type = rec.get("type")
-        if rec_type == "user":
+        # A tool result is delivered as a record typed "user". Treating those as
+        # prompts split every turn at the first tool call: 92% of "user" records
+        # in real transcripts are tool results, so a task with 30 tool calls was
+        # recorded as ~30 turns of one call each. tool_call_count could then only
+        # be 0 or 1 (67%/33% of all rows), and a median over it cannot move no
+        # matter what recall does -- which is what made the dashboard panel read
+        # 0.0 in both arms.
+        if rec_type == "user" and is_user_prompt(rec):
+            if pending_user_ts is not None:
+                metrics.append(TurnMetric(
+                    turn_idx=turn_idx,
+                    user_timestamp=pending_user_ts,
+                    tool_call_count=len(pending_tools),
+                    tool_names=list(pending_tools),
+                ))
+                turn_idx += 1
             pending_user_ts = _to_epoch(rec.get("timestamp", 0.0))
+            pending_tools = []
         elif rec_type == "assistant" and pending_user_ts is not None:
-            msg = rec.get("message", {})
-            content = msg.get("content", [])
-            tool_names = []
+            content = rec.get("message", {}).get("content", [])
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
-                        tool_names.append(block.get("name", "unknown"))
-            metrics.append(TurnMetric(
-                turn_idx=turn_idx,
-                user_timestamp=pending_user_ts,
-                tool_call_count=len(tool_names),
-                tool_names=tool_names,
-            ))
-            turn_idx += 1
-            pending_user_ts = None
+                        pending_tools.append(block.get("name", "unknown"))
+
+    # The final turn has no following prompt to close it.
+    if pending_user_ts is not None:
+        metrics.append(TurnMetric(
+            turn_idx=turn_idx,
+            user_timestamp=pending_user_ts,
+            tool_call_count=len(pending_tools),
+            tool_names=list(pending_tools),
+        ))
 
     return metrics
 
