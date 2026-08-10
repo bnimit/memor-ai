@@ -78,6 +78,7 @@ EVALUATION
   memor eval-judge --project <name>    LLM-as-judge evaluation
   memor eval-counterfactual --project  Win/tie/loss vs no-memory baseline
   memor bench-embed --project <name>   Compare embedding models
+  memor eval-longmemeval               Retrieval accuracy on LongMemEval (ground truth)
   memor eval-proxy                     Proxy compression benchmark (release gate)
 
 CURSOR
@@ -256,6 +257,29 @@ def bench_embed(project: str = typer.Option(...), db: str = "memor.db",
     for r in results:
         typer.echo(f"{r.model_name:<30} {r.dim:>5} {r.recall_at_k:>10.3f} {r.ndcg_at_k:>10.3f} "
                    f"{r.embed_latency_ms:>10.1f} {r.retrieval_latency_ms:>10.1f}")
+
+
+@app.command("eval-longmemeval")
+def eval_longmemeval(
+    n: int = typer.Option(36, help="Number of questions (stratified across all 6 types)"),
+    k: int = typer.Option(8, help="Turns retrieved per question"),
+    data: str = typer.Option(None, help="Path to longmemeval_s_cleaned.json"),
+):
+    """Score retrieval on LongMemEval against published ground truth (no LLM, no cost)."""
+    from memor.eval.longmemeval import DEFAULT_DATA, format_result, run
+
+    path = Path(data) if data else DEFAULT_DATA
+    if not path.exists():
+        typer.echo(
+            f"LongMemEval data not found at {path}\n\n"
+            "Download it (277 MB) with:\n"
+            "  mkdir -p ~/.memor/benchmarks && cd ~/.memor/benchmarks\n"
+            "  curl -LO https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned"
+            "/resolve/main/longmemeval_s_cleaned.json",
+            err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Scoring {n} questions from {path.name} ...")
+    typer.echo(format_result(run(n=n, k=k, data_path=path)))
 
 
 @app.command("eval-proxy")
