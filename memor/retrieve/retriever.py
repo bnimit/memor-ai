@@ -44,6 +44,24 @@ RRF_K = 60
 #: pool, so this can raise the memory share but never pad k with weak results.
 MEMORY_LANE_SHARE = 0.25
 
+#: A lane candidate must score at least this fraction of the best general-pool
+#: hit to be admitted. Without a relative floor the lane hits supply parity by
+#: promoting near-irrelevant memories -- measured at cosine 0.035 against 0.042
+#: for the chunks they displaced, which buys the headline share at the cost of
+#: the answer. Relative rather than absolute because these static embeddings
+#: put a good match near 0.05 on some queries and near 0.7 on others, so a fixed
+#: floor would be simultaneously too strict and too loose.
+#:
+#: Swept 0.0 to 1.0 over 50 real prompts, scoring promoted candidates against
+#: the ones they displaced by true cosine (not `components["sim"]`, which is
+#: 0.0 for the 46% of hits that arrive via the lexical channel and cannot rank
+#: anything). Every setting was a net gain, so the floor trades share against
+#: margin rather than correctness: 0.0 gives 10.2% share at +0.017 cosine, 0.25
+#: gives 8.2% at +0.029. 0.25 is chosen because it lands nearest supply parity
+#: (9.3%) while promoting candidates that beat what they replace by the wider
+#: margin -- the goal is memories that earn the slot, not the biggest number.
+LANE_RELATIVE_FLOOR = 0.25
+
 #: A retrieved chunk that largely repeats the query teaches the agent nothing:
 #: it is the transcript of the question being asked. 35% of top hits on the real
 #: store contained more than half the query verbatim. Candidates above this
@@ -254,6 +272,38 @@ class Retriever:
         lexical = []
         if dense and hasattr(self.store, 'search_lexical'):
             lexical = self.store.search_lexical(text, scope, self.k)
+
+        # Memory lane: a separate KNN restricted to distilled memories.
+        #
+        # Re-ranking the general pool is not enough, because the pool rarely
+        # contains a memory to promote: measured on the real store, memories are
+        # 4.2% of the dense top-8 and 4.1% of the top-32, so widening does not
+        # help. A dedicated search surfaced candidates for 38 of 60 real queries
+        # that the general pool never saw. This is only possible because the
+        # kinds filter now selects the top k *of that kind* rather than
+        # filtering an already-truncated slice.
+        #
+        # Gated by the same min_similarity floor as the general channel, so a
+        # project with no relevant memory contributes nothing rather than
+        # padding the results with its least-irrelevant one.
+        if dense and self.memory_lane > 0:
+            lane_scope = Scope(project=scope.project, kinds=["memory"],
+                               since=scope.since, until=scope.until)
+            try:
+                lane = self.store.search(qv, lane_scope, self.k)
+            except Exception:
+                lane = []
+            # Admit a lane candidate only if it is competitive with what the
+            # general pool already found. Without this the lane reaches supply
+            # parity by injecting near-zero-similarity memories: measured, the
+            # promoted ones averaged cosine 0.035 against 0.042 for the chunks
+            # they displaced, so the share improved while the results got worse.
+            best_general = max((s for _, s in dense), default=0.0)
+            admit = max(self.min_similarity, best_general * LANE_RELATIVE_FLOOR)
+            seen = {x.id for x, _ in dense}
+            for a, sim in lane:
+                if sim >= admit and a.id not in seen:
+                    dense.append((a, sim))
 
         arts_by_id: dict[str, object] = {}
         sim_by_id: dict[str, float] = {}
