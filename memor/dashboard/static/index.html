@@ -419,7 +419,7 @@
             <div class="chart-title">Cumulative tokens saved</div>
             <div class="chart-big" id="cum-saved-big">–</div>
           </div>
-          <div class="chart-meta">30d equity curve · all proxied agents</div>
+          <div class="chart-meta" id="cum-saved-meta">30d equity curve · all proxied agents</div>
         </div>
         <div class="chart-canvas tall" id="savings-equity"></div>
       </div>
@@ -950,6 +950,28 @@
     }
     document.getElementById('cum-saved-big').textContent = fmt(cum) + ' saved';
     renderEquityChart('savings-equity', series, 'cumulative_saved', '#2fd67b');
+
+    // A cumulative total is indistinguishable from a broken one when it stops
+    // moving: the figure looks current whether the proxy saved nothing today
+    // or stopped recording weeks ago. Naming the last day that actually
+    // contributed makes a flat curve self-explaining.
+    var metaEl = document.getElementById('cum-saved-meta');
+    if (metaEl) {
+      var lastActive = null;
+      for (var i = series.length - 1; i >= 0; i--) {
+        if ((series[i].tokens_saved || 0) > 0) { lastActive = series[i].day; break; }
+      }
+      var base = '30d equity curve · all proxied agents';
+      if (!lastActive) {
+        metaEl.textContent = base + ' · no proxied traffic in this window';
+      } else {
+        var ageDays = Math.floor(
+          (Date.now() - new Date(lastActive + 'T00:00:00').getTime()) / 86400000);
+        metaEl.textContent = ageDays >= 2
+          ? base + ' · last saved ' + lastActive + ' (' + ageDays + 'd ago)'
+          : base;
+      }
+    }
 
     var parts = [];
     if (data.content_types && data.content_types.length) {
