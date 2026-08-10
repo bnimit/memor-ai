@@ -397,6 +397,20 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "embedder_dim": int(dim_row["value"]) if dim_row else None,
         }
 
+    @app.get("/api/provenance")
+    def provenance(project: str = Query(None), limit: int = Query(60, ge=5, le=200)):
+        """Distillation lineage for one project: chunks -> memory -> superseded."""
+        from memor.dashboard.provenance import (
+            build_provenance_graph, list_projects_with_provenance)
+        store = _store()
+        projects = list_projects_with_provenance(store)
+        if not project:
+            project = projects[0]["project"] if projects else ""
+        graph = build_provenance_graph(store, project, limit=limit) if project else {
+            "project": "", "nodes": [], "edges": [], "stats": {}}
+        graph["projects"] = projects
+        return graph
+
     @app.get("/api/savings-ledger")
     def savings_ledger(
         days: int = Query(30, ge=1, le=90),

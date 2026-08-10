@@ -377,6 +377,34 @@
     </div>
   </div>
 
+  <!-- ═══════════════ PROVENANCE PANE ═══════════════ -->
+  <div class="pane" id="pane-provenance" data-pane="provenance">
+    <section>
+      <div class="section-label"><span class="dot"></span> How transcript becomes memory</div>
+      <p class="muted" style="margin:-4px 0 14px;max-width:70ch;">
+        Every line here was written by the distiller at ingest, not inferred later.
+        A <strong>memory</strong> is linked to the session chunks it was distilled
+        from, and to the memory it replaced when a fact changed.
+      </p>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+        <select id="prov-project" class="mono" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;"></select>
+        <span class="muted mono" id="prov-summary"></span>
+      </div>
+      <div class="kpi-grid" id="prov-kpis"></div>
+    </section>
+    <section>
+      <div class="section-label"><span class="dot"></span> Lineage</div>
+      <div class="table-card" style="padding:0;overflow:hidden;">
+        <svg id="prov-graph" style="width:100%;height:520px;display:block;background:var(--bg);"></svg>
+      </div>
+      <div class="muted mono" style="margin-top:8px;font-size:12px;">
+        <span style="color:var(--ok);">●</span> distilled memory &nbsp;
+        <span style="color:var(--text-muted);">●</span> session chunk &nbsp;
+        <span style="color:var(--warn);">●</span> retired (superseded)
+      </div>
+    </section>
+  </div>
+
   <!-- ═══════════════ OVERVIEW PANE ═══════════════ -->
   <div class="pane active" id="pane-overview" data-pane="overview">
     <div class="status-row" id="status-row">
@@ -692,7 +720,7 @@
   var knownAgents = CORE_AGENTS.slice();
 
   function isValidPane(id) {
-    return id === 'overview' || CORE_AGENTS.indexOf(id) !== -1 || knownAgents.indexOf(id) !== -1;
+    return id === 'overview' || id === 'provenance' || CORE_AGENTS.indexOf(id) !== -1 || knownAgents.indexOf(id) !== -1;
   }
 
   function readStoredPane() {
@@ -855,6 +883,7 @@
         return { id: a, label: agentLabel(a), color: AGENT_COLORS[a] || 'var(--text-muted)' };
       })
     );
+    tabs.push({ id: 'provenance', label: 'Provenance', color: 'var(--ok)' });
     tabs.forEach(function(t) {
       var btn = el('button', {
         class: 'desk-tab' + (activePane === t.id ? ' active' : ''),
@@ -872,10 +901,154 @@
     activePane = id;
     persistPane(id);
     document.getElementById('pane-overview').classList.toggle('active', id === 'overview');
-    document.getElementById('pane-agent').classList.toggle('active', id !== 'overview');
+    document.getElementById('pane-provenance').classList.toggle('active', id === 'provenance');
+    document.getElementById('pane-agent').classList.toggle('active', id !== 'overview' && id !== 'provenance');
     renderTabs();
     if (id === 'overview') refreshOverview();
+    else if (id === 'provenance') loadProvenance();
     else loadAgentPane(id);
+  }
+
+
+  /* ── Provenance ────────────────────────────────────────
+     Deliberately the edges memor records (derived_from, supersedes) rather than
+     an inferred entity graph: that was measured and rejected, adding a median
+     of 12 candidates for 8 slots while rendering as a hairball. Layout is
+     computed here as a pure function so it can be tested without a browser. */
+  function provenanceLayout(graph, width, height) {
+    var nodes = (graph && graph.nodes) || [];
+    var edges = (graph && graph.edges) || [];
+    if (!nodes.length) return { nodes: [], edges: [] };
+
+    // Three columns left to right: raw chunks, live memories, retired memories.
+    // A memory's horizontal position tells its story without any physics sim,
+    // which also keeps the picture stable between refreshes.
+    function laneOf(n) {
+      if (n.kind !== 'memory') return 0;
+      return n.active ? 1 : 2;
+    }
+    var lanes = [[], [], []];
+    nodes.forEach(function(n) { lanes[laneOf(n)].push(n); });
+
+    var placed = {};
+    var out = [];
+    var colX = [width * 0.16, width * 0.5, width * 0.84];
+    lanes.forEach(function(group, li) {
+      var n = group.length || 1;
+      group.forEach(function(node, i) {
+        var y = height * ((i + 1) / (n + 1));
+        var pos = {
+          id: node.id, kind: node.kind, active: node.active,
+          preview: node.preview, tokens: node.tokens,
+          x: colX[li], y: y, lane: li,
+          r: node.kind === 'memory' ? 7 : 4,
+        };
+        placed[node.id] = pos;
+        out.push(pos);
+      });
+    });
+
+    var lines = [];
+    edges.forEach(function(e) {
+      var a = placed[e.source], b = placed[e.target];
+      if (!a || !b) return;   // never draw a line into a node that is not there
+      lines.push({ x1: b.x, y1: b.y, x2: a.x, y2: a.y, type: e.type });
+    });
+    return { nodes: out, edges: lines };
+  }
+
+  function renderProvenanceGraph(svg, graph) {
+    var width = svg.clientWidth || 900;
+    var height = svg.clientHeight || 520;
+    var layout = provenanceLayout(graph, width, height);
+    var NS = 'http://www.w3.org/2000/svg';
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    if (!layout.nodes.length) {
+      var t = document.createElementNS(NS, 'text');
+      t.setAttribute('x', width / 2); t.setAttribute('y', height / 2);
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('fill', 'var(--text-muted)');
+      t.textContent = 'No provenance recorded for this project yet.';
+      svg.appendChild(t);
+      return;
+    }
+
+    layout.edges.forEach(function(e, i) {
+      var line = document.createElementNS(NS, 'line');
+      line.setAttribute('x1', e.x1); line.setAttribute('y1', e.y1);
+      line.setAttribute('x2', e.x2); line.setAttribute('y2', e.y2);
+      line.setAttribute('stroke', e.type === 'supersedes' ? 'var(--warn)' : 'var(--border)');
+      line.setAttribute('stroke-width', e.type === 'supersedes' ? '1.4' : '1');
+      line.setAttribute('opacity', '0');
+      svg.appendChild(line);
+      // Growth over time is the point of the picture, so edges arrive in order
+      // rather than all at once.
+      setTimeout(function() {
+        line.style.transition = 'opacity .5s ease';
+        line.setAttribute('opacity', e.type === 'supersedes' ? '.55' : '.3');
+      }, Math.min(i * 12, 1200));
+    });
+
+    layout.nodes.forEach(function(n, i) {
+      var c = document.createElementNS(NS, 'circle');
+      c.setAttribute('cx', n.x); c.setAttribute('cy', n.y);
+      c.setAttribute('r', 0);
+      c.setAttribute('fill', n.kind !== 'memory' ? 'var(--text-muted)'
+        : (n.active ? 'var(--ok)' : 'var(--warn)'));
+      c.setAttribute('opacity', n.kind === 'memory' ? '.95' : '.5');
+      var title = document.createElementNS(NS, 'title');
+      title.textContent = (n.kind === 'memory'
+        ? (n.active ? 'memory' : 'memory (superseded)') : 'session chunk')
+        + ' · ' + (n.tokens || 0) + ' tokens\n' + (n.preview || '');
+      c.appendChild(title);
+      svg.appendChild(c);
+      setTimeout(function() {
+        c.style.transition = 'r .45s cubic-bezier(.2,.8,.3,1)';
+        c.setAttribute('r', n.r);
+      }, Math.min(i * 8, 900));
+    });
+  }
+
+  function loadProvenance(project) {
+    var url = '/api/provenance' + (project ? ('?project=' + encodeURIComponent(project)) : '');
+    api(url).then(function(data) {
+      var sel = document.getElementById('prov-project');
+      if (sel && !sel.dataset.filled) {
+        (data.projects || []).forEach(function(p) {
+          var o = el('option', { value: p.project });
+          o.textContent = p.project + ' (' + p.edges + ' links)';
+          sel.appendChild(o);
+        });
+        sel.dataset.filled = '1';
+        sel.addEventListener('change', function() { loadProvenance(sel.value); });
+      }
+      if (sel && data.project) sel.value = data.project;
+
+      var s = data.stats || {};
+      var kpis = document.getElementById('prov-kpis');
+      if (kpis) {
+        kpis.innerHTML = '';
+        [['Session chunks', fmt(s.chunks || 0), 'var(--text-muted)'],
+         ['Distilled memories', fmt(s.memories || 0), 'var(--ok)'],
+         ['Retired as superseded', fmt(s.retired || 0), 'var(--warn)'],
+         ['Chunks per memory', (s.compression_ratio || 0) + '×', 'var(--accent)']
+        ].forEach(function(row) {
+          var d = el('div', { class: 'kpi' });
+          d.style.setProperty('--kpi-accent', row[2]);
+          d.innerHTML = '<div class="kpi-label">' + esc(row[0]) + '</div>' +
+                        '<div class="kpi-value">' + esc(String(row[1])) + '</div>';
+          kpis.appendChild(d);
+        });
+      }
+      var sum = document.getElementById('prov-summary');
+      if (sum) {
+        sum.textContent = (data.nodes || []).length + ' nodes, ' +
+          (data.edges || []).length + ' links shown';
+      }
+      var svg = document.getElementById('prov-graph');
+      if (svg) renderProvenanceGraph(svg, data);
+    }).catch(function() {});
   }
 
   /* ── Overview renderers ────────────────────────────────── */
