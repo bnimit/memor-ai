@@ -1,4 +1,5 @@
 from __future__ import annotations
+import difflib
 import math
 import time
 from memor.types import Scope, Hit, RetrievalTrace
@@ -25,6 +26,38 @@ RECENCY_HALF_LIFE_DAYS = 14
 MIN_SIMILARITY_FLOOR = -0.05
 
 RRF_K = 60
+
+#: Reserved share of k for distilled memories (`kind="memory"`).
+#:
+#: Measured on the real store: memories are 9.3% of active artifacts but reached
+#: only 3.0% of injected hits, a 0.33x lift. The cause is not embedding quality
+#: (cosine to real prompts is 0.275 for memories against 0.273 for chunks) nor
+#: index coverage (100% for both). It is competition: a prompt drawn from a live
+#: session is near-duplicate text to the transcript chunk that recorded it, and
+#: a paraphrase cannot out-score a verbatim copy of the question. Raising the
+#: kind boost from 1.3 to 3.0 moved the share 2.8% -> 4.1%, which is the most a
+#: scoring thumb can do against a candidate-generation problem.
+#:
+#: So memories get a lane instead of a thumb: they compete against each other
+#: for a small guaranteed share, and only fill it if they clear the same
+#: relevance gate as everything else. An empty lane is given back to the general
+#: pool, so this can raise the memory share but never pad k with weak results.
+MEMORY_LANE_SHARE = 0.25
+
+#: A retrieved chunk that largely repeats the query teaches the agent nothing:
+#: it is the transcript of the question being asked. 35% of top hits on the real
+#: store contained more than half the query verbatim. Candidates above this
+#: containment ratio are demoted below genuine matches rather than deleted,
+#: because a chunk that quotes the question can still carry the answer after it.
+SELF_RECALL_CONTAINMENT = 0.6
+
+#: Below this length a query is not evidence of self-recall. A short search term
+#: like "auth refresh" is fully contained in any genuinely relevant document, so
+#: containment there measures relevance, not echo. Caught by an existing test
+#: that asserts recency breaks a tie between two equally-matching artifacts:
+#: both scored 1.0 containment and were demoted together, silently inverting the
+#: ranking the test was checking.
+SELF_RECALL_MIN_QUERY_CHARS = 80
 
 #: Fallback for a candidate with no quality row, and the ceiling every quality
 #: value is held to. The blended score below is a convex combination — every
@@ -101,6 +134,61 @@ def mmr_select(ranked, vectors: dict, k: int, *, lam: float = MMR_LAMBDA):
     return selected
 
 
+
+def _containment(query: str, text: str) -> float:
+    """Fraction of the query that appears verbatim inside `text`.
+
+    Uses the longest common contiguous run rather than token overlap: the target
+    is a transcript that literally quotes the prompt, not a document that merely
+    shares vocabulary with it. Comparison is bounded to the first 300/2000
+    characters so cost stays flat on long chunks.
+    """
+    if not query or not text or len(query) < SELF_RECALL_MIN_QUERY_CHARS:
+        return 0.0
+    q = query[:300].lower()
+    body = text[:2000].lower()
+    match = difflib.SequenceMatcher(None, q, body).find_longest_match(
+        0, len(q), 0, len(body))
+    return match.size / len(q)
+
+
+def select_with_memory_lane(ranked, k: int, *, share: float = MEMORY_LANE_SHARE):
+    """Take the top k, reserving a share of the slots for distilled memories.
+
+    The lane is a floor, not a quota: memories that already win on score fill it
+    for free, and the reserved slots are released back to the general pool when
+    no memory is available. So this can only change which candidates occupy the
+    tail of k, never how many results are returned.
+    """
+    if k <= 0:
+        return []
+    reserved = int(k * share)
+    if reserved <= 0:
+        return list(ranked)[:k]
+
+    memories = [h for h in ranked if h.artifact.kind == "memory"]
+    if not memories:
+        return list(ranked)[:k]
+
+    general = list(ranked)[:k]
+    already = sum(1 for h in general if h.artifact.kind == "memory")
+    missing = max(0, reserved - already)
+    if missing == 0:
+        return general
+
+    promote = [h for h in memories if h not in general][:missing]
+    if not promote:
+        return general
+
+    # Drop the weakest non-memory hits to make room, preserving overall order.
+    keep = [h for h in general if h.artifact.kind == "memory"]
+    others = [h for h in general if h.artifact.kind != "memory"]
+    others = others[:max(0, k - len(keep) - len(promote))]
+    merged = keep + others + promote
+    merged.sort(key=lambda h: h.score, reverse=True)
+    return merged[:k]
+
+
 def _bounded_quality(scores: dict, aid: str) -> float:
     value = scores.get(aid, NEUTRAL_QUALITY)
     try:
@@ -126,7 +214,8 @@ class Retriever:
                  k: int = 8, recency_weight: float = 0.25,
                  kind_weight: float = 0.15, quality_weight: float = 0.10,
                  min_similarity: float = MIN_SIMILARITY_FLOOR, edge_expand: bool = True,
-                 use_keys: bool = False):
+                 use_keys: bool = False, memory_lane: float = MEMORY_LANE_SHARE,
+                 suppress_self_recall: bool = True):
         self.store, self.embedder = store, embedder
         self.k, self.edge_expand = k, edge_expand
         self.min_similarity = min_similarity
@@ -135,6 +224,8 @@ class Retriever:
         self.w_rec = recency_weight
         self.w_kind = kind_weight
         self.w_qual = quality_weight
+        self.memory_lane = memory_lane
+        self.suppress_self_recall = suppress_self_recall
 
     def query(self, text: str, scope: Scope) -> RetrievalTrace:
         t0 = time.perf_counter()
@@ -215,9 +306,38 @@ class Retriever:
         # Diversify over a wider slice than k, so there is something to choose
         # between; taking k first would leave nothing to swap a duplicate for.
         pool = ranked[:max(self.k * 4, self.k)]
-        ranked = mmr_select(pool, self._vectors_for(pool), self.k)
+        pool = self._demote_self_recall(text, pool)
+        pool = mmr_select(pool, self._vectors_for(pool), len(pool))
+        ranked = select_with_memory_lane(pool, self.k, share=self.memory_lane)
         return RetrievalTrace(query=text, scope=scope, candidates=candidates,
                               hits=ranked, latency_ms=(time.perf_counter()-t0)*1000)
+
+    def _demote_self_recall(self, text: str, hits):
+        """Push candidates that merely quote the query below genuine matches.
+
+        A prompt taken from a live session is near-duplicate text to the
+        transcript chunk that recorded it, so the dense channel ranks that chunk
+        first for reasons that carry no information: the agent already has the
+        question. Demotion rather than deletion, because the chunk that quotes
+        the prompt often continues into the answer.
+
+        Distilled memories are exempt. They are paraphrases by construction, so
+        high containment there means the memory is genuinely about this topic.
+        """
+        if not self.suppress_self_recall or not hits:
+            return hits
+        adjusted = []
+        for h in hits:
+            if h.artifact.kind != "memory":
+                ratio = _containment(text, h.artifact.text)
+                if ratio >= SELF_RECALL_CONTAINMENT:
+                    components = dict(h.components)
+                    components["self_recall"] = round(ratio, 3)
+                    adjusted.append(Hit(h.artifact, h.score - 1.0, components))
+                    continue
+            adjusted.append(h)
+        adjusted.sort(key=lambda x: x.score, reverse=True)
+        return adjusted
 
     def _vectors_for(self, hits) -> dict:
         """Embeddings for candidates, for the redundancy term. Best effort.
