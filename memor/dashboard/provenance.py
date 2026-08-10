@@ -15,6 +15,11 @@ from __future__ import annotations
 
 MAX_NODES = 400
 
+#: Source chunks kept per memory. A memory distilled from 30 chunks does not
+#: need all 30 on screen to show that it has provenance, and at 400 nodes in a
+#: 900x520 frame there is 34px of space per node against a ~150px label.
+FANOUT_PER_MEMORY = 3
+
 
 def build_provenance_graph(store, project: str, limit: int = 60) -> dict:
     """Nodes and edges for one project's distillation lineage.
@@ -22,26 +27,65 @@ def build_provenance_graph(store, project: str, limit: int = 60) -> dict:
     Scoped to a project because the graph is only legible at that scale, and
     capped because a browser cannot lay out 12,138 edges usefully.
     """
-    rows = store.db.execute(
+    # Pick the memories first, then pull in only their edges. Selecting the most
+    # recent *edges* instead produced a field of near-orphans: 401 nodes joined
+    # by 237 links, most of them a lone pair, which is a scatter plot rather than
+    # a lineage. Ordering by how much each memory actually connects gives the
+    # same budget something to show.
+    seeds = store.db.execute(
         """
-        SELECT e.src_id, e.dst_id, e.type
-        FROM edges e
-        JOIN artifacts a ON a.id = e.src_id
-        WHERE a.project = ? AND a.active = 1
-        ORDER BY a.created_at DESC
+        SELECT a.id, COUNT(e.dst_id) AS degree
+        FROM artifacts a
+        LEFT JOIN edges e ON e.src_id = a.id
+        WHERE a.project = ? AND a.kind = 'memory'
+        GROUP BY a.id
+        HAVING degree > 0
+        ORDER BY degree DESC, a.created_at DESC
         LIMIT ?
         """,
-        (project, limit * 4),
+        (project, limit),
+    ).fetchall()
+    seed_ids = [r["id"] for r in seeds]
+    seed_set = set(seed_ids)
+    if not seed_ids:
+        return {"project": project, "nodes": [], "edges": [],
+                "stats": _stats(store, project)}
+
+    qs = ",".join("?" * len(seed_ids))
+    rows = store.db.execute(
+        f"""SELECT src_id, dst_id, type FROM edges
+            WHERE src_id IN ({qs}) OR dst_id IN ({qs})
+            ORDER BY CASE type WHEN 'derived_from' THEN 0 ELSE 1 END""",
+        seed_ids + seed_ids,
     ).fetchall()
 
-    wanted: set[str] = set()
+    # Each seed keeps a few of its source chunks. A memory distilled from 30
+    # chunks would otherwise drag all 30 in, and the point is to show that a
+    # memory has provenance, not to enumerate it.
+    wanted: set[str] = set(seed_ids)
     edges: list[dict] = []
+    per_seed: dict[str, int] = {}
+    node_budget = min(MAX_NODES, max(limit * 3, limit + 10))
     for r in rows:
-        if len(wanted) >= MAX_NODES:
-            break
-        wanted.add(r["src_id"])
-        wanted.add(r["dst_id"])
-        edges.append({"source": r["src_id"], "target": r["dst_id"], "type": r["type"]})
+        src, dst = r["src_id"], r["dst_id"]
+        # A link between two chosen memories is the story and is always kept.
+        # One that reaches outside the selection is not: supersedes edges form
+        # long revision chains -- 329 of them against 24 derived_from links on
+        # one real project -- and following them pulls the whole history back
+        # in, which is what made a 24-memory request render 292 nodes.
+        if src in seed_set and dst in seed_set:
+            wanted.add(src)
+            wanted.add(dst)
+            edges.append({"source": src, "target": dst, "type": r["type"]})
+            continue
+        if per_seed.get(src, 0) >= FANOUT_PER_MEMORY:
+            continue
+        if len(wanted) >= node_budget and dst not in wanted:
+            continue
+        per_seed[src] = per_seed.get(src, 0) + 1
+        wanted.add(src)
+        wanted.add(dst)
+        edges.append({"source": src, "target": dst, "type": r["type"]})
 
     if not wanted:
         return {"project": project, "nodes": [], "edges": [], "stats": _stats(store, project)}

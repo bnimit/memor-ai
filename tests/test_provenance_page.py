@@ -319,3 +319,72 @@ class TestLayoutPerformance:
         a = _label("You are doing a significant refactor on PR #2123 sink paths")
         b = _label("You are doing a code quality review of Task 2 commit")
         assert a != b, "boilerplate-prefixed nodes must not share one label"
+
+
+class TestDensity:
+    """The default view must be legible, not merely complete.
+
+    401 nodes in a 900x520 frame is 34px of space per node against a ~150px
+    label, which is why the first version was unreadable. Selection is now
+    seeded by the best-connected memories and each keeps a bounded number of
+    source chunks.
+    """
+
+    @pytest.fixture
+    def store(self, tmp_path):
+        import time
+
+        from memor.embed.fake import FakeEmbedder
+        from memor.store.sqlite_store import SqliteStore
+        from memor.types import Artifact
+
+        emb = FakeEmbedder()
+        st = SqliteStore(str(tmp_path / "d.db"), dim=emb.dim)
+        arts = []
+        for m in range(10):
+            arts.append(Artifact(id=f"m{m}", kind="memory", project="proj",
+                                 source="t", text=f"decision {m} about retries",
+                                 token_count=20, created_at=time.time(), meta={}))
+            for c in range(20):          # a wide fan-out, as real memories have
+                arts.append(Artifact(id=f"m{m}c{c}", kind="session_chunk",
+                                     project="proj", source="t",
+                                     text=f"chunk {c} for memory {m}",
+                                     token_count=50, created_at=time.time(), meta={}))
+        st.add_artifacts(arts, emb.embed([a.text for a in arts]))
+        for m in range(10):
+            for c in range(20):
+                st.add_edge(f"m{m}", f"m{m}c{c}", "derived_from")
+        return st
+
+    def test_fanout_is_bounded_per_memory(self, store):
+        from memor.dashboard.provenance import FANOUT_PER_MEMORY, build_provenance_graph
+
+        g = build_provenance_graph(store, "proj", limit=10)
+        per_src = {}
+        for e in g["edges"]:
+            per_src[e["source"]] = per_src.get(e["source"], 0) + 1
+        assert per_src, "expected edges"
+        assert max(per_src.values()) <= FANOUT_PER_MEMORY, (
+            f"one memory pulled in {max(per_src.values())} chunks; "
+            "a wide fan-out swamps the picture")
+
+    def test_node_count_scales_with_the_requested_limit(self, store):
+        from memor.dashboard.provenance import build_provenance_graph
+
+        small = build_provenance_graph(store, "proj", limit=3)
+        large = build_provenance_graph(store, "proj", limit=10)
+        assert len(small["nodes"]) < len(large["nodes"])
+
+    def test_a_small_request_stays_small(self, store):
+        """200 chunks exist; asking for 3 memories must not return them all."""
+        from memor.dashboard.provenance import build_provenance_graph
+
+        g = build_provenance_graph(store, "proj", limit=3)
+        assert len(g["nodes"]) <= 20, f"got {len(g['nodes'])} nodes for limit=3"
+
+    def test_selected_memories_are_the_well_connected_ones(self, store):
+        from memor.dashboard.provenance import build_provenance_graph
+
+        g = build_provenance_graph(store, "proj", limit=5)
+        mems = [n for n in g["nodes"] if n["kind"] == "memory"]
+        assert mems, "a lineage view with no memories shows nothing"

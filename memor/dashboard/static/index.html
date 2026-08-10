@@ -388,6 +388,13 @@
       </p>
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
         <select id="prov-project" class="mono" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;"></select>
+        <select id="prov-density" class="mono" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;">
+          <option value="24">24 memories — readable</option>
+          <option value="45" selected>45 memories — balanced</option>
+          <option value="90">90 memories — dense</option>
+          <option value="200">200 memories — everything</option>
+        </select>
+        <button id="prov-reset" type="button" class="mono" style="background:var(--surface);color:var(--text-muted);border:1px solid var(--border);border-radius:8px;padding:7px 12px;cursor:pointer;">Reset view</button>
         <span class="muted mono" id="prov-summary"></span>
       </div>
       <div class="kpi-grid" id="prov-kpis"></div>
@@ -395,12 +402,13 @@
     <section>
       <div class="section-label"><span class="dot"></span> Lineage</div>
       <div class="table-card" style="padding:0;overflow:hidden;">
-        <svg id="prov-graph" style="width:100%;height:520px;display:block;background:var(--bg);"></svg>
+        <svg id="prov-graph" style="width:100%;height:78vh;min-height:600px;display:block;background:var(--bg);cursor:grab;touch-action:none;"></svg>
       </div>
       <div class="muted mono" style="margin-top:8px;font-size:12px;">
         <span style="color:var(--ok);">●</span> distilled memory &nbsp;
         <span style="color:var(--text-muted);">●</span> session chunk &nbsp;
         <span style="color:var(--warn);">●</span> retired (superseded)
+        &nbsp;·&nbsp; scroll to zoom, drag to pan, hover a node for its full text
       </div>
     </section>
   </div>
@@ -1037,10 +1045,56 @@
 
   function renderProvenanceGraph(svg, graph) {
     var width = svg.clientWidth || 900;
-    var height = svg.clientHeight || 560;
+    var height = svg.clientHeight || 600;
     var layout = provenanceLayout(graph, width, height);
     var NS = 'http://www.w3.org/2000/svg';
     while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    // Everything is drawn into one group so zoom and pan are a single
+    // transform. Even at the sparsest setting the graph is denser than labels
+    // want -- 124 nodes in this frame leaves ~86px per node against a ~150px
+    // label -- so reading it depends on being able to zoom in, not on choosing
+    // a node count that happens to fit.
+    var view = document.createElementNS(NS, 'g');
+    svg.appendChild(view);
+    var zoom = { k: 1, x: 0, y: 0 };
+    function applyTransform() {
+      view.setAttribute('transform',
+        'translate(' + zoom.x + ',' + zoom.y + ') scale(' + zoom.k + ')');
+    }
+    svg.__resetView = function() { zoom = { k: 1, x: 0, y: 0 }; applyTransform(); };
+    if (!svg.__zoomBound) {
+      svg.__zoomBound = true;
+      svg.addEventListener('wheel', function(ev) {
+        ev.preventDefault();
+        var rect = svg.getBoundingClientRect();
+        var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+        var factor = Math.exp(-ev.deltaY * 0.0016);
+        var next = Math.max(0.35, Math.min(6, zoom.k * factor));
+        // Keep the point under the cursor fixed, so zooming targets what you
+        // are looking at rather than the centre of the canvas.
+        zoom.x = mx - (mx - zoom.x) * (next / zoom.k);
+        zoom.y = my - (my - zoom.y) * (next / zoom.k);
+        zoom.k = next;
+        applyTransform();
+      }, { passive: false });
+      var drag = null;
+      svg.addEventListener('pointerdown', function(ev) {
+        drag = { x: ev.clientX, y: ev.clientY, ox: zoom.x, oy: zoom.y };
+        svg.style.cursor = 'grabbing';
+        svg.setPointerCapture(ev.pointerId);
+      });
+      svg.addEventListener('pointermove', function(ev) {
+        if (!drag) return;
+        zoom.x = drag.ox + (ev.clientX - drag.x);
+        zoom.y = drag.oy + (ev.clientY - drag.y);
+        applyTransform();
+      });
+      ['pointerup', 'pointercancel'].forEach(function(e) {
+        svg.addEventListener(e, function() { drag = null; svg.style.cursor = 'grab'; });
+      });
+    }
+    applyTransform();
 
     if (!layout.nodes.length) {
       var t = document.createElementNS(NS, 'text');
@@ -1048,7 +1102,7 @@
       t.setAttribute('text-anchor', 'middle');
       t.setAttribute('fill', 'var(--text-muted)');
       t.textContent = 'No provenance recorded for this project yet.';
-      svg.appendChild(t);
+      view.appendChild(t);
       return;
     }
 
@@ -1072,7 +1126,7 @@
       path.setAttribute('stroke-width', e.type === 'supersedes' ? '1.5' : '1');
       if (e.type === 'supersedes') path.setAttribute('stroke-dasharray', '4 3');
       path.setAttribute('opacity', '0');
-      svg.appendChild(path);
+      view.appendChild(path);
       setTimeout(function() {
         path.style.transition = 'opacity .6s ease';
         path.setAttribute('opacity', e.type === 'supersedes' ? '.6' : '.32');
@@ -1121,7 +1175,7 @@
         });
       }
 
-      svg.appendChild(g);
+      view.appendChild(g);
       setTimeout(function() {
         g.style.transition = 'opacity .5s ease';
         g.setAttribute('opacity', '1');
@@ -1130,7 +1184,10 @@
   }
 
   function loadProvenance(project) {
-    var url = '/api/provenance' + (project ? ('?project=' + encodeURIComponent(project)) : '');
+    var dens = document.getElementById('prov-density');
+    var limit = dens ? dens.value : 45;
+    var url = '/api/provenance?limit=' + encodeURIComponent(limit) +
+              (project ? ('&project=' + encodeURIComponent(project)) : '');
     api(url).then(function(data) {
       var sel = document.getElementById('prov-project');
       if (sel && !sel.dataset.filled) {
@@ -1141,6 +1198,20 @@
         });
         sel.dataset.filled = '1';
         sel.addEventListener('change', function() { loadProvenance(sel.value); });
+      }
+      if (dens && !dens.dataset.bound) {
+        dens.dataset.bound = '1';
+        dens.addEventListener('change', function() {
+          loadProvenance(sel ? sel.value : null);
+        });
+      }
+      var reset = document.getElementById('prov-reset');
+      if (reset && !reset.dataset.bound) {
+        reset.dataset.bound = '1';
+        reset.addEventListener('click', function() {
+          var g = document.getElementById('prov-graph');
+          if (g && g.__resetView) g.__resetView();
+        });
       }
       if (sel && data.project) sel.value = data.project;
 
@@ -1163,7 +1234,8 @@
       var sum = document.getElementById('prov-summary');
       if (sum) {
         sum.textContent = (data.nodes || []).length + ' nodes, ' +
-          (data.edges || []).length + ' links shown';
+          (data.edges || []).length + ' links shown of ' +
+          fmt((s.memories || 0)) + ' memories';
       }
       var svg = document.getElementById('prov-graph');
       if (svg) renderProvenanceGraph(svg, data);
