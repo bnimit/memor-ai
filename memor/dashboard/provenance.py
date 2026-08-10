@@ -60,6 +60,7 @@ def build_provenance_graph(store, project: str, limit: int = 60) -> dict:
             "id": r["id"],
             "kind": r["kind"],
             "preview": (r["preview"] or "").strip(),
+            "label": _label(r["preview"]),
             "tokens": r["token_count"],
             "created_at": r["created_at"],
             "active": bool(r["active"]),
@@ -125,3 +126,57 @@ def list_projects_with_provenance(store, limit: int = 20) -> list[dict]:
         (limit,),
     ).fetchall()
     return [{"project": r["project"], "edges": r["edges"]} for r in rows]
+
+
+#: Openings that identify instruction boilerplate rather than content.
+BORING = ("you are ", "this is a", "this is an", "your task", "implement one",
+          "read the brief", "i'll ", "i will ", "let me ", "okay", "sure")
+
+
+def _label(preview: str | None) -> str:
+    """A few readable words for the node itself, not the tooltip.
+
+    An abstract dot forces the reader to hover before the picture means
+    anything. Distilled text often opens with markdown or a role prefix, so
+    strip those rather than render "##" as the label.
+    """
+    text = (preview or "").strip()
+    if not text:
+        return ""
+    for prefix in ("user:", "assistant:", "## ", "# ", "**"):
+        if text.lower().startswith(prefix.lower()):
+            text = text[len(prefix):].strip()
+
+    # Distilled text often opens with instruction boilerplate ("You are doing
+    # a...", "This is a scoped..."), which labels several nodes identically and
+    # says nothing about what the memory holds. Skip to the first line that
+    # carries content rather than render the preamble.
+    lowered = text.lower()
+    if lowered.startswith(BORING):
+        # Section headings ("## Context") are structure, not content, so keep
+        # walking past them to the first line that actually says something.
+        HEADINGS = {"context", "summary", "goal", "verdict", "background",
+                    "what was requested", "task", "findings", "notes"}
+        for line in text.split("\n")[1:]:
+            candidate = line.strip(" #*-`")
+            if len(candidate) <= 12:
+                continue
+            if candidate.lower().rstrip(":").strip() in HEADINGS:
+                continue
+            if candidate.lower().startswith(BORING):
+                continue
+            text = candidate
+            break
+    text = text.replace("`", "").replace("*", "").replace("\n", " ")
+    words = text.split()
+    if not words:
+        return ""
+    # Four words is enough when the text opens with its subject, but a node
+    # whose only text begins with boilerplate needs more of it before the label
+    # distinguishes anything: "You are doing a" labelled several nodes
+    # identically. Fall back to filling the width instead.
+    take = 4
+    if " ".join(words[:4]).lower().startswith(BORING):
+        take = 9
+    out = " ".join(words[:take])
+    return out[:38] + ("…" if len(out) > 38 or len(words) > take else "")

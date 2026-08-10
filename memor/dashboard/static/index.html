@@ -915,51 +915,129 @@
      an inferred entity graph: that was measured and rejected, adding a median
      of 12 candidates for 8 slots while rendering as a hairball. Layout is
      computed here as a pure function so it can be tested without a browser. */
-  function provenanceLayout(graph, width, height) {
+  function provenanceLayout(graph, width, height, opts) {
     var nodes = (graph && graph.nodes) || [];
     var edges = (graph && graph.edges) || [];
     if (!nodes.length) return { nodes: [], edges: [] };
+    opts = opts || {};
+    var iterations = opts.iterations == null ? 260 : opts.iterations;
 
-    // Three columns left to right: raw chunks, live memories, retired memories.
-    // A memory's horizontal position tells its story without any physics sim,
-    // which also keeps the picture stable between refreshes.
-    function laneOf(n) {
-      if (n.kind !== 'memory') return 0;
-      return n.active ? 1 : 2;
+    // Force-directed, run to completion here rather than animated in a ticker.
+    // Seeded deterministically so the same graph always settles into the same
+    // picture: a layout that reshuffles on every refresh cannot honestly show
+    // something growing over time, which is the whole point of this view.
+    var seed = 1;
+    function rand() {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
     }
-    var lanes = [[], [], []];
-    nodes.forEach(function(n) { lanes[laneOf(n)].push(n); });
 
-    var placed = {};
-    var out = [];
-    var colX = [width * 0.16, width * 0.5, width * 0.84];
-    lanes.forEach(function(group, li) {
-      var n = group.length || 1;
-      group.forEach(function(node, i) {
-        var y = height * ((i + 1) / (n + 1));
-        var pos = {
-          id: node.id, kind: node.kind, active: node.active,
-          preview: node.preview, tokens: node.tokens,
-          x: colX[li], y: y, lane: li,
-          r: node.kind === 'memory' ? 7 : 4,
-        };
-        placed[node.id] = pos;
-        out.push(pos);
-      });
+    var byId = {};
+    var sim = nodes.map(function(n, i) {
+      var angle = (i / nodes.length) * Math.PI * 2;
+      // Memories start nearer the middle; they are the hubs of this graph.
+      var radius = (n.kind === 'memory' ? 0.18 : 0.38) * Math.min(width, height);
+      var p = {
+        id: n.id, kind: n.kind, active: n.active, preview: n.preview,
+        label: n.label || '', tokens: n.tokens,
+        x: width / 2 + Math.cos(angle) * radius + (rand() - 0.5) * 40,
+        y: height / 2 + Math.sin(angle) * radius + (rand() - 0.5) * 40,
+        vx: 0, vy: 0,
+        r: n.kind === 'memory' ? (n.active ? 9 : 7) : 4.5,
+        degree: 0
+      };
+      byId[n.id] = p;
+      return p;
     });
 
-    var lines = [];
+    var links = [];
     edges.forEach(function(e) {
-      var a = placed[e.source], b = placed[e.target];
-      if (!a || !b) return;   // never draw a line into a node that is not there
-      lines.push({ x1: b.x, y1: b.y, x2: a.x, y2: a.y, type: e.type });
+      var a = byId[e.source], b = byId[e.target];
+      if (!a || !b) return;      // never draw a line into a node that is absent
+      a.degree++; b.degree++;
+      links.push({ a: a, b: b, type: e.type });
     });
-    return { nodes: out, edges: lines };
+
+    var area = width * height;
+    var kRepel = Math.sqrt(area / sim.length) * 0.9;
+    for (var it = 0; it < iterations; it++) {
+      var cool = 1 - it / iterations;
+      // Repulsion only against neighbours in adjacent grid cells. The naive
+      // all-pairs version is 401*400/2 comparisons per iteration and measured
+      // 1201ms on the real graph, which blocks the UI thread outright; the
+      // cutoff already ignored distant pairs, so this just stops computing them.
+      var cell = kRepel * 1.6;
+      var grid = {};
+      for (var gi = 0; gi < sim.length; gi++) {
+        var nd = sim[gi];
+        var key = Math.floor(nd.x / cell) + ':' + Math.floor(nd.y / cell);
+        (grid[key] || (grid[key] = [])).push(nd);
+      }
+      for (var i = 0; i < sim.length; i++) {
+        var n1 = sim[i];
+        var cx0 = Math.floor(n1.x / cell), cy0 = Math.floor(n1.y / cell);
+        for (var ox = -1; ox <= 1; ox++) {
+          for (var oy = -1; oy <= 1; oy++) {
+            var bucket = grid[(cx0 + ox) + ':' + (cy0 + oy)];
+            if (!bucket) continue;
+            for (var bi = 0; bi < bucket.length; bi++) {
+              var n2 = bucket[bi];
+              if (n2 === n1) continue;
+              var dx = n1.x - n2.x, dy = n1.y - n2.y;
+              var d2 = dx * dx + dy * dy;
+              if (d2 < 1) { d2 = 1; dx = (rand() - 0.5); dy = (rand() - 0.5); }
+              if (d2 > cell * cell) continue;
+              var d = Math.sqrt(d2);
+              var f = (kRepel * kRepel) / d2;
+              n1.vx += (dx / d) * f; n1.vy += (dy / d) * f;
+            }
+          }
+        }
+      }
+      links.forEach(function(l) {
+        var dx = l.b.x - l.a.x, dy = l.b.y - l.a.y;
+        var d = Math.sqrt(dx * dx + dy * dy) || 1;
+        // A superseding link pulls tighter, so a fact and its replacement sit
+        // together instead of drifting to opposite sides of the canvas.
+        var rest = l.type === 'supersedes' ? kRepel * 0.45 : kRepel * 0.8;
+        var f = (d - rest) * 0.06;
+        var ux = dx / d, uy = dy / d;
+        l.a.vx += ux * f; l.a.vy += uy * f;
+        l.b.vx -= ux * f; l.b.vy -= uy * f;
+      });
+      sim.forEach(function(n) {
+        n.vx += (width / 2 - n.x) * 0.004;      // gentle gravity, keeps it framed
+        n.vy += (height / 2 - n.y) * 0.004;
+        n.x += Math.max(-18, Math.min(18, n.vx)) * cool;
+        n.y += Math.max(-18, Math.min(18, n.vy)) * cool;
+        n.vx *= 0.82; n.vy *= 0.82;
+        var pad = 46;                            // labels need room inside the frame
+        n.x = Math.max(pad, Math.min(width - pad, n.x));
+        n.y = Math.max(pad, Math.min(height - pad, n.y));
+      });
+    }
+
+    // Only the best-connected nodes get a visible label; 400 of them at once is
+    // unreadable. The rest keep their text in the tooltip.
+    var labelled = sim.slice().sort(function(a, b) {
+      if (b.degree !== a.degree) return b.degree - a.degree;
+      return (a.kind === 'memory' ? -1 : 1) - (b.kind === 'memory' ? -1 : 1);
+    }).slice(0, opts.maxLabels == null ? 26 : opts.maxLabels);
+    var show = {};
+    labelled.forEach(function(n) { if (n.label) show[n.id] = true; });
+    sim.forEach(function(n) { n.showLabel = !!show[n.id]; });
+
+    return {
+      nodes: sim,
+      edges: links.map(function(l) {
+        return { x1: l.a.x, y1: l.a.y, x2: l.b.x, y2: l.b.y, type: l.type };
+      })
+    };
   }
 
   function renderProvenanceGraph(svg, graph) {
     var width = svg.clientWidth || 900;
-    var height = svg.clientHeight || 520;
+    var height = svg.clientHeight || 560;
     var layout = provenanceLayout(graph, width, height);
     var NS = 'http://www.w3.org/2000/svg';
     while (svg.firstChild) svg.removeChild(svg.firstChild);
@@ -974,39 +1052,80 @@
       return;
     }
 
+    function colour(n) {
+      if (n.kind !== 'memory') return 'var(--text-muted)';
+      return n.active ? 'var(--ok)' : 'var(--warn)';
+    }
+
     layout.edges.forEach(function(e, i) {
-      var line = document.createElementNS(NS, 'line');
-      line.setAttribute('x1', e.x1); line.setAttribute('y1', e.y1);
-      line.setAttribute('x2', e.x2); line.setAttribute('y2', e.y2);
-      line.setAttribute('stroke', e.type === 'supersedes' ? 'var(--warn)' : 'var(--border)');
-      line.setAttribute('stroke-width', e.type === 'supersedes' ? '1.4' : '1');
-      line.setAttribute('opacity', '0');
-      svg.appendChild(line);
-      // Growth over time is the point of the picture, so edges arrive in order
-      // rather than all at once.
+      var path = document.createElementNS(NS, 'path');
+      // A slight curve makes overlapping links separable; straight lines
+      // between clustered nodes collapse into one thick smear.
+      var mx = (e.x1 + e.x2) / 2, my = (e.y1 + e.y2) / 2;
+      var dx = e.x2 - e.x1, dy = e.y2 - e.y1;
+      var norm = Math.sqrt(dx * dx + dy * dy) || 1;
+      var bow = Math.min(26, norm * 0.14);
+      var cx = mx - (dy / norm) * bow, cy = my + (dx / norm) * bow;
+      path.setAttribute('d', 'M' + e.x1 + ',' + e.y1 + ' Q' + cx + ',' + cy + ' ' + e.x2 + ',' + e.y2);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', e.type === 'supersedes' ? 'var(--warn)' : 'var(--border)');
+      path.setAttribute('stroke-width', e.type === 'supersedes' ? '1.5' : '1');
+      if (e.type === 'supersedes') path.setAttribute('stroke-dasharray', '4 3');
+      path.setAttribute('opacity', '0');
+      svg.appendChild(path);
       setTimeout(function() {
-        line.style.transition = 'opacity .5s ease';
-        line.setAttribute('opacity', e.type === 'supersedes' ? '.55' : '.3');
-      }, Math.min(i * 12, 1200));
+        path.style.transition = 'opacity .6s ease';
+        path.setAttribute('opacity', e.type === 'supersedes' ? '.6' : '.32');
+      }, Math.min(i * 9, 1400));
     });
 
     layout.nodes.forEach(function(n, i) {
+      var g = document.createElementNS(NS, 'g');
+      g.setAttribute('opacity', '0');
+
       var c = document.createElementNS(NS, 'circle');
       c.setAttribute('cx', n.x); c.setAttribute('cy', n.y);
-      c.setAttribute('r', 0);
-      c.setAttribute('fill', n.kind !== 'memory' ? 'var(--text-muted)'
-        : (n.active ? 'var(--ok)' : 'var(--warn)'));
-      c.setAttribute('opacity', n.kind === 'memory' ? '.95' : '.5');
+      c.setAttribute('r', n.r);
+      c.setAttribute('fill', colour(n));
+      c.setAttribute('opacity', n.kind === 'memory' ? '.95' : '.45');
+      if (n.kind === 'memory' && n.active) {
+        c.setAttribute('stroke', 'var(--ok)');
+        c.setAttribute('stroke-opacity', '.25');
+        c.setAttribute('stroke-width', '6');
+      }
       var title = document.createElementNS(NS, 'title');
       title.textContent = (n.kind === 'memory'
         ? (n.active ? 'memory' : 'memory (superseded)') : 'session chunk')
-        + ' · ' + (n.tokens || 0) + ' tokens\n' + (n.preview || '');
+        + ' · ' + (n.tokens || 0) + ' tokens\n\n' + (n.preview || '');
       c.appendChild(title);
-      svg.appendChild(c);
+      g.appendChild(c);
+
+      if (n.showLabel && n.label) {
+        // Halo behind the text so a label crossing a link stays readable.
+        [true, false].forEach(function(isHalo) {
+          var label = document.createElementNS(NS, 'text');
+          label.setAttribute('x', n.x + n.r + 6);
+          label.setAttribute('y', n.y + 3.5);
+          label.setAttribute('font-size', n.kind === 'memory' ? '11.5' : '10.5');
+          label.setAttribute('font-family', 'ui-monospace, SFMono-Regular, Menlo, monospace');
+          if (isHalo) {
+            label.setAttribute('stroke', 'var(--bg)');
+            label.setAttribute('stroke-width', '3.5');
+            label.setAttribute('stroke-linejoin', 'round');
+            label.setAttribute('fill', 'none');
+          } else {
+            label.setAttribute('fill', n.kind === 'memory' ? 'var(--text)' : 'var(--text-muted)');
+          }
+          label.textContent = n.label;
+          g.appendChild(label);
+        });
+      }
+
+      svg.appendChild(g);
       setTimeout(function() {
-        c.style.transition = 'r .45s cubic-bezier(.2,.8,.3,1)';
-        c.setAttribute('r', n.r);
-      }, Math.min(i * 8, 900));
+        g.style.transition = 'opacity .5s ease';
+        g.setAttribute('opacity', '1');
+      }, Math.min(i * 7, 1100));
     });
   }
 

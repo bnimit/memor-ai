@@ -36,8 +36,7 @@ def _run_js(node_exe: str, snippet: str) -> str:
     """Run a snippet with the dashboard's provenanceLayout in scope."""
     script = _extract_script()
     # The function is self-contained; pull it out rather than booting a DOM.
-    m = re.search(r"function provenanceLayout\(graph, width, height\) \{[\s\S]*?\n  \}\n",
-                  script)
+    m = re.search(r"function provenanceLayout\([\s\S]*?\n  \}\n", script)
     assert m, "provenanceLayout not found in the dashboard script"
     prog = m.group(0) + "\n" + snippet
     out = subprocess.run([node_exe, "-e", prog], capture_output=True, text=True,
@@ -60,20 +59,45 @@ class TestLayout:
         """)
         assert json.loads(out) == 0
 
-    def test_kinds_are_separated_into_lanes(self, node):
+    def test_linked_nodes_end_up_closer_than_unlinked_ones(self, node):
+        """The point of a force layout: an edge should mean proximity.
+
+        Without this the picture is decorative -- nodes could sit anywhere and
+        the lines would just be drawn between them.
+        """
         out = _run_js(node, """
-          const g = {nodes: [
-            {id:'c1', kind:'session_chunk', active:true},
-            {id:'m1', kind:'memory', active:true},
-            {id:'m2', kind:'memory', active:false}
-          ], edges: []};
-          const r = provenanceLayout(g, 900, 500);
-          const byId = {}; r.nodes.forEach(n => byId[n.id] = n);
-          console.log(JSON.stringify({
-            chunk: byId.c1.lane, live: byId.m1.lane, retired: byId.m2.lane
-          }));
+          const nodes = [
+            {id:'m1', kind:'memory', active:true, label:'a'},
+            {id:'c1', kind:'session_chunk', active:true, label:'b'},
+            {id:'far', kind:'session_chunk', active:true, label:'c'}
+          ];
+          const r = provenanceLayout(
+            {nodes, edges:[{source:'m1', target:'c1', type:'derived_from'}]}, 900, 500);
+          const b = {}; r.nodes.forEach(n => b[n.id] = n);
+          const d = (p,q) => Math.hypot(p.x-q.x, p.y-q.y);
+          console.log(JSON.stringify(d(b.m1,b.c1) < d(b.m1,b.far)));
         """)
-        assert json.loads(out) == {"chunk": 0, "live": 1, "retired": 2}
+        assert json.loads(out) is True
+
+    def test_only_a_readable_number_of_labels_is_shown(self, node):
+        """400 labels at once is unreadable, so most stay in the tooltip."""
+        out = _run_js(node, """
+          const nodes = [];
+          for (let i = 0; i < 200; i++)
+            nodes.push({id:'n'+i, kind:'session_chunk', active:true, label:'label '+i});
+          const r = provenanceLayout({nodes, edges: []}, 900, 500);
+          console.log(JSON.stringify(r.nodes.filter(n => n.showLabel).length));
+        """)
+        assert 0 < json.loads(out) <= 30
+
+    def test_labels_survive_layout(self, node):
+        out = _run_js(node, """
+          const g = {nodes:[{id:'m1', kind:'memory', active:true, label:'the retry decision'}],
+                     edges:[]};
+          const r = provenanceLayout(g, 900, 500);
+          console.log(JSON.stringify(r.nodes[0].label));
+        """)
+        assert json.loads(out) == "the retry decision"
 
     def test_an_edge_to_a_missing_node_is_dropped(self, node):
         """A line into empty space would imply a node that is not there."""
@@ -198,3 +222,100 @@ class TestBuilder:
 
         g = build_provenance_graph(store, "does-not-exist")
         assert g["nodes"] == [] and g["edges"] == []
+
+
+class TestLabels:
+    """A node labelled with prompt boilerplate is no better than a bare dot."""
+
+    def test_instruction_preamble_is_skipped_for_real_content(self):
+        from memor.dashboard.provenance import _label
+
+        got = _label("You are doing a review\nThe coupon resync drops rows on retry")
+        assert "coupon resync" in got
+        assert not got.lower().startswith("you are")
+
+    def test_markdown_and_role_prefixes_are_stripped(self):
+        from memor.dashboard.provenance import _label
+
+        assert not _label("## The vulnerability is real").startswith("#")
+        assert not _label("user: can you review this").startswith("user:")
+
+    def test_backticks_do_not_reach_the_label(self):
+        from memor.dashboard.provenance import _label
+
+        assert "`" not in _label("Confirmed: `Transaction.currency` is nullable")
+
+    def test_empty_and_none_are_safe(self):
+        from memor.dashboard.provenance import _label
+
+        assert _label(None) == ""
+        assert _label("") == ""
+        assert _label("   ") == ""
+
+    def test_label_is_short_enough_to_render(self):
+        from memor.dashboard.provenance import _label
+
+        long = "word " * 80
+        assert len(_label(long)) <= 40
+
+    def test_boilerplate_with_no_alternative_is_left_alone(self):
+        """Better a weak label than an empty one."""
+        from memor.dashboard.provenance import _label
+
+        assert _label("You are an agent") != ""
+
+
+class TestLayoutPerformance:
+    def test_layout_of_a_full_graph_is_fast_enough_not_to_block(self, node):
+        """The naive all-pairs version measured 1201ms on the real 401-node
+        graph, which freezes the tab. Repulsion is now restricted to adjacent
+        grid cells; this guards the regression rather than the exact number."""
+        out = _run_js(node, """
+          const nodes = [];
+          for (let i = 0; i < 400; i++)
+            nodes.push({id:'n'+i, kind: i % 8 ? 'session_chunk' : 'memory',
+                        active: true, label: 'node ' + i});
+          const edges = [];
+          for (let i = 8; i < 400; i++)
+            edges.push({source:'n'+(i - (i % 8)), target:'n'+i, type:'derived_from'});
+          const t0 = Date.now();
+          provenanceLayout({nodes, edges}, 900, 560);
+          console.log(JSON.stringify(Date.now() - t0));
+        """)
+        assert json.loads(out) < 600, f"layout took {out}ms"
+
+    def test_nodes_do_not_land_on_top_of_each_other(self, node):
+        out = _run_js(node, """
+          const nodes = [];
+          for (let i = 0; i < 120; i++)
+            nodes.push({id:'n'+i, kind:'session_chunk', active:true, label:'n'+i});
+          const r = provenanceLayout({nodes, edges: []}, 900, 560);
+          let overlap = 0;
+          for (let i = 0; i < r.nodes.length; i++)
+            for (let j = i + 1; j < r.nodes.length; j++) {
+              const a = r.nodes[i], b = r.nodes[j];
+              if (Math.hypot(a.x-b.x, a.y-b.y) < (a.r+b.r) * 0.8) overlap++;
+            }
+          console.log(JSON.stringify(overlap));
+        """)
+        assert json.loads(out) == 0
+
+    def test_section_headings_are_not_used_as_labels(self):
+        """"## Context" is structure, not content."""
+        from memor.dashboard.provenance import _label
+
+        got = _label("You are doing a review\n\n## Context\n\nTask 2 added 17 unit tests")
+        assert "Context" not in got
+        assert "Task 2" in got
+
+    def test_boilerplate_openings_still_reach_distinguishing_detail(self):
+        """When there is no better line, keep enough words to tell nodes apart.
+
+        Truncating to four words labelled many nodes identically as "You are
+        doing a...", which is a dot with extra steps.
+        """
+        from memor.dashboard.provenance import _label
+
+        a = _label("You are doing a significant refactor on PR #2123 sink paths")
+        b = _label("You are doing a code quality review of Task 2 commit")
+        assert a != b, "boilerplate-prefixed nodes must not share one label"
