@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memor-cli"
-version = "0.12.0"
+version = "0.13.0"
 description = "Local shared memory for coding agents (Claude Code, Cursor, Codex, Copilot, Kimi, Goose) plus opt-in token-savings proxy. Fire and forget — no Memor API key."
 readme = "README.md"
 license = "MIT"
