@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1307%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1309%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -28,7 +28,7 @@ Compression is easy to verify and therefore easy to falsify, so these are measur
 |---|---|---|
 | Tool-output compression, when it fires | **51.9%** saved | 259 of 1,219 real Bash results from live sessions |
 | Tool-output compression, across all Bash output | **13.2%** saved | the same 1,219 results |
-| A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,307-test suite |
+| A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,309-test suite |
 | Proxy, on compressible payloads | **7.3%** | 5,414 real proxied requests |
 | Proxy, blended over all traffic | **0.8%** | the same 5,414 requests |
 

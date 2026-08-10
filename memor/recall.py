@@ -138,6 +138,16 @@ def recall(query: str, project: str, db_path: str, *,
     from memor.store.sqlite_store import SqliteStore
     from memor.retrieve.retriever import Retriever
 
+    if embedder is None:
+        # The signature has always advertised this as optional, but the next
+        # line dereferenced it, so any caller taking the default got
+        # AttributeError: 'NoneType' has no attribute 'dim' rather than a
+        # recall. Every in-tree caller happens to pass one; anyone following
+        # the signature did not.
+        from memor.embed.local import LocalEmbedder
+
+        embedder = LocalEmbedder()
+
     store = SqliteStore(db_path, dim=embedder.dim)
     retriever = Retriever(store, embedder, k=k, min_similarity=min_similarity,
                           use_keys=_use_keys)

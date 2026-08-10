@@ -38,17 +38,36 @@ def _send_to_sidecar(request: dict) -> dict | None:
         return None
 
 
-def _start_sidecar() -> bool:
+#: Longest a prompt will wait for a freshly spawned sidecar. Measured cold
+#: starts land at 532-822 ms, so 3 s clears them with headroom. Shortening it
+#: was tried and made things *worse*: the wait almost always pays off, and
+#: giving up early forces the inline path, which costs ~980 ms against ~130 ms
+#: for a warm socket.
+_SIDECAR_BOOT_BUDGET_S = 3.0
+
+#: How often to check for the socket. The original 100 ms tick meant a sidecar
+#: ready at 532 ms was not noticed until 600 ms, and the granularity is pure
+#: latency: nothing else happens between checks.
+_SIDECAR_POLL_S = 0.01
+
+
+def _start_sidecar(budget: float = _SIDECAR_BOOT_BUDGET_S) -> bool:
+    """Spawn the sidecar and wait, briefly, for it to accept connections.
+
+    The process is detached, so returning False does not abandon it: it keeps
+    starting and serves the next prompt. Only this prompt falls back inline.
+    """
     subprocess.Popen(
         [sys.executable, "-m", "memor.hook_server"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    for _ in range(30):
-        time.sleep(0.1)
+    deadline = time.monotonic() + budget
+    while time.monotonic() < deadline:
         if SOCK_PATH.exists():
             return True
+        time.sleep(_SIDECAR_POLL_S)
     return False
 
 
