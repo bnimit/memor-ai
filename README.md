@@ -26,8 +26,8 @@ Compression is easy to verify and therefore easy to falsify, so these are measur
 
 | Measurement | Result | Measured on |
 |---|---|---|
-| Tool-output compression, when it fires | **51.9%** saved | 259 of 1,219 real Bash results from live sessions |
-| Tool-output compression, across all Bash output | **13.2%** saved | the same 1,219 results |
+| Tool-output compression, when it fires | **52.2%** saved | 167 of 761 real Bash results from live sessions |
+| Tool-output compression, across all Bash output | **12.9%** saved | the same 761 results |
 | A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,312-test suite |
 | Proxy, on compressible payloads | **7.3%** | 5,414 real proxied requests |
 | Proxy, blended over all traffic | **0.8%** | the same 5,414 requests |
@@ -37,7 +37,7 @@ compressor deliberately refuses to rewrite, so the blended figure measures
 coverage rather than compressor quality. Both are shown on the dashboard, side
 by side, because a single number hides which one you are looking at.
 
-**Coverage is capped by safety, on purpose.** The hook fires on 21.2% of large
+**Coverage is capped by safety, on purpose.** The hook fires on 21.9% of large
 Bash results. Nearly all of the rest is held back by the source guard — output
 that is source code, most often a heredoc or a `cat`, and an agent editing
 against a mutilated read is a worse outcome than any token saving is worth.
