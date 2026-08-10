@@ -389,8 +389,9 @@
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
         <select id="prov-project" class="mono" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;"></select>
         <select id="prov-density" class="mono" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;">
-          <option value="24">24 memories — readable</option>
-          <option value="45" selected>45 memories — balanced</option>
+          <option value="18">18 memories — spacious</option>
+          <option value="30" selected>30 memories — balanced</option>
+          <option value="45">45 memories — busy</option>
           <option value="90">90 memories — dense</option>
           <option value="200">200 memories — everything</option>
         </select>
@@ -928,12 +929,16 @@
     var edges = (graph && graph.edges) || [];
     if (!nodes.length) return { nodes: [], edges: [] };
     opts = opts || {};
-    var iterations = opts.iterations == null ? 260 : opts.iterations;
+    var iterations = opts.iterations == null ? 420 : opts.iterations;
 
-    // Force-directed, run to completion here rather than animated in a ticker.
-    // Seeded deterministically so the same graph always settles into the same
-    // picture: a layout that reshuffles on every refresh cannot honestly show
-    // something growing over time, which is the whole point of this view.
+    // Force-directed. Seeded deterministically so the same graph always starts
+    // from the same arrangement: a picture that reshuffles on every refresh
+    // cannot honestly show something growing over time.
+    //
+    // The whole simulation is also exposed as a `tick` the caller can keep
+    // running, so the graph drifts and settles on screen instead of appearing
+    // pre-arranged. Tests call it with iterations set and never tick, which
+    // keeps them deterministic and headless.
     var seed = 1;
     function rand() {
       seed = (seed * 1103515245 + 12345) & 0x7fffffff;
@@ -951,6 +956,8 @@
         x: width / 2 + Math.cos(angle) * radius + (rand() - 0.5) * 40,
         y: height / 2 + Math.sin(angle) * radius + (rand() - 0.5) * 40,
         vx: 0, vy: 0,
+        phase: rand() * Math.PI * 2,
+        wobble: 0.010 + rand() * 0.014,
         r: n.kind === 'memory' ? (n.active ? 9 : 7) : 4.5,
         degree: 0
       };
@@ -967,14 +974,23 @@
     });
 
     var area = width * height;
-    var kRepel = Math.sqrt(area / sim.length) * 0.9;
-    for (var it = 0; it < iterations; it++) {
-      var cool = 1 - it / iterations;
+    // Space per node. 0.9 left a 43px median gap against labels ~150px wide,
+    // so neighbouring labels overlapped even when the nodes did not.
+    //
+    // Capped, because sqrt(area/n) explodes on a small graph: with 3 nodes it
+    // reaches 1267px, giving a spring rest length of 1457px on a canvas whose
+    // diagonal is 1603px. Linked nodes were then pushed *further* apart than
+    // unlinked ones and the edge stopped meaning anything -- caught by the
+    // tests that assert an edge implies proximity.
+    var kRepel = Math.min(Math.sqrt(area / sim.length) * 2.1,
+                          Math.min(width, height) * 0.22);
+    var stepCount = 0;
+    function step(cool, drift) {
       // Repulsion only against neighbours in adjacent grid cells. The naive
       // all-pairs version is 401*400/2 comparisons per iteration and measured
       // 1201ms on the real graph, which blocks the UI thread outright; the
       // cutoff already ignored distant pairs, so this just stops computing them.
-      var cell = kRepel * 1.6;
+      var cell = kRepel * 1.25;
       var grid = {};
       for (var gi = 0; gi < sim.length; gi++) {
         var nd = sim[gi];
@@ -1007,15 +1023,33 @@
         var d = Math.sqrt(dx * dx + dy * dy) || 1;
         // A superseding link pulls tighter, so a fact and its replacement sit
         // together instead of drifting to opposite sides of the canvas.
-        var rest = l.type === 'supersedes' ? kRepel * 0.45 : kRepel * 0.8;
+        var rest = l.type === 'supersedes' ? kRepel * 0.6 : kRepel * 1.15;
         var f = (d - rest) * 0.06;
         var ux = dx / d, uy = dy / d;
         l.a.vx += ux * f; l.a.vy += uy * f;
         l.b.vx -= ux * f; l.b.vy -= uy * f;
       });
       sim.forEach(function(n) {
-        n.vx += (width / 2 - n.x) * 0.004;      // gentle gravity, keeps it framed
-        n.vy += (height / 2 - n.y) * 0.004;
+        // Gravity only reins in genuine outliers. At a flat 0.004 it pulled
+        // every node toward the centre continuously, which packed the graph
+        // into 49% of the canvas at a 43px median gap while the edges sat
+        // unused. Scaling it by distance leaves the interior free to spread.
+        var gdx = width / 2 - n.x, gdy = height / 2 - n.y;
+        var gdist = Math.sqrt(gdx * gdx + gdy * gdy) || 1;
+        var pull = Math.max(0, gdist - Math.min(width, height) * 0.46) * 0.010;
+        n.vx += (gdx / gdist) * pull;
+        n.vy += (gdy / gdist) * pull;
+        if (drift) {
+          // Once the forces balance, a pure simulation stops dead and the
+          // result looks like a still image -- the first version settled to
+          // 3.4px of movement over a second, which reads as static. Each node
+          // gets its own slow orbit so the graph keeps breathing. Amplitude is
+          // well below the spacing between nodes, so this is motion, not noise:
+          // it never reorders anything or pulls a node off its cluster.
+          n.phase += n.wobble;
+          n.vx += Math.cos(n.phase) * 0.55;
+          n.vy += Math.sin(n.phase * 0.9) * 0.55;
+        }
         n.x += Math.max(-18, Math.min(18, n.vx)) * cool;
         n.y += Math.max(-18, Math.min(18, n.vy)) * cool;
         n.vx *= 0.82; n.vy *= 0.82;
@@ -1023,7 +1057,10 @@
         n.x = Math.max(pad, Math.min(width - pad, n.x));
         n.y = Math.max(pad, Math.min(height - pad, n.y));
       });
+      stepCount++;
     }
+
+    for (var it = 0; it < iterations; it++) step(1 - it / iterations, false);
 
     // Only the best-connected nodes get a visible label; 400 of them at once is
     // unreadable. The rest keep their text in the tooltip.
@@ -1031,16 +1068,41 @@
       if (b.degree !== a.degree) return b.degree - a.degree;
       return (a.kind === 'memory' ? -1 : 1) - (b.kind === 'memory' ? -1 : 1);
     }).slice(0, opts.maxLabels == null ? 26 : opts.maxLabels);
+    // Drop a label that would sit on top of one already placed. Ranking by
+    // connectivity alone still let two labels land on the same line -- text is
+    // ~150px wide and nodes are ~70px apart, so proximity, not count, is what
+    // makes labels unreadable.
     var show = {};
-    labelled.forEach(function(n) { if (n.label) show[n.id] = true; });
+    var placed = [];
+    labelled.forEach(function(n) {
+      if (!n.label) return;
+      var clash = placed.some(function(o) {
+        return Math.abs(o.y - n.y) < 14 && Math.abs(o.x - n.x) < 160;
+      });
+      if (clash) return;
+      placed.push(n);
+      show[n.id] = true;
+    });
     sim.forEach(function(n) { n.showLabel = !!show[n.id]; });
 
-    return {
-      nodes: sim,
-      edges: links.map(function(l) {
-        return { x1: l.a.x, y1: l.a.y, x2: l.b.x, y2: l.b.y, type: l.type };
-      })
+    function positions() {
+      return {
+        nodes: sim,
+        edges: links.map(function(l) {
+          return { x1: l.a.x, y1: l.a.y, x2: l.b.x, y2: l.b.y, type: l.type };
+        })
+      };
+    }
+
+    var out = positions();
+    // Never fully freezes: `cool` floors at a small value so the graph keeps
+    // breathing rather than locking into a still image. Callers that want a
+    // settled snapshot (the tests) simply do not call this.
+    out.tick = function() {
+      step(0.5, true);
+      return positions();
     };
+    return out;
   }
 
   function renderProvenanceGraph(svg, graph) {
@@ -1185,7 +1247,7 @@
 
   function loadProvenance(project) {
     var dens = document.getElementById('prov-density');
-    var limit = dens ? dens.value : 45;
+    var limit = dens ? dens.value : 30;
     var url = '/api/provenance?limit=' + encodeURIComponent(limit) +
               (project ? ('&project=' + encodeURIComponent(project)) : '');
     api(url).then(function(data) {

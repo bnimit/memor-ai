@@ -388,3 +388,179 @@ class TestDensity:
         g = build_provenance_graph(store, "proj", limit=5)
         mems = [n for n in g["nodes"] if n["kind"] == "memory"]
         assert mems, "a lineage view with no memories shows nothing"
+
+
+class TestLiveMotion:
+    """The graph must keep moving, and must stay sane while it does.
+
+    The first version pre-computed a layout and painted it once, so it looked
+    pre-arranged rather than alive. Simply running the simulation was not enough
+    either: once the forces balance it settles to about 3px of movement a
+    second, which reads as a still image.
+    """
+
+    def test_tick_moves_every_node(self, node):
+        out = _run_js(node, """
+          const nodes = [], edges = [];
+          for (let i = 0; i < 60; i++)
+            nodes.push({id:'n'+i, kind: i % 5 ? 'session_chunk' : 'memory',
+                        active: true, label: 'n'+i});
+          for (let i = 0; i < 60; i++)
+            if (i % 5) edges.push({source:'n'+(i-(i%5)), target:'n'+i, type:'derived_from'});
+          const L = provenanceLayout({nodes, edges}, 1400, 780);
+          const before = L.nodes.map(n => ({x:n.x, y:n.y}));
+          for (let f = 0; f < 60; f++) L.tick();
+          const moved = L.nodes.filter((n,i) =>
+            Math.hypot(n.x-before[i].x, n.y-before[i].y) > 1).length;
+          console.log(JSON.stringify({moved, total: L.nodes.length}));
+        """)
+        got = json.loads(out)
+        assert got["moved"] == got["total"], f"only {got['moved']}/{got['total']} moved"
+
+    def test_motion_is_visible_not_a_tremor(self, node):
+        """3px over a second is indistinguishable from static."""
+        out = _run_js(node, """
+          const nodes = [];
+          for (let i = 0; i < 60; i++)
+            nodes.push({id:'n'+i, kind:'session_chunk', active:true, label:'n'+i});
+          const L = provenanceLayout({nodes, edges: []}, 1400, 780);
+          const before = L.nodes.map(n => ({x:n.x, y:n.y}));
+          for (let f = 0; f < 60; f++) L.tick();
+          const max = Math.max(...L.nodes.map((n,i) =>
+            Math.hypot(n.x-before[i].x, n.y-before[i].y)));
+          console.log(JSON.stringify(Math.round(max)));
+        """)
+        assert json.loads(out) >= 10
+
+    def test_it_does_not_fly_apart_or_go_non_finite(self, node):
+        """A loop that runs forever must be stable for a long time."""
+        out = _run_js(node, """
+          const nodes = [], edges = [];
+          for (let i = 0; i < 80; i++)
+            nodes.push({id:'n'+i, kind: i % 5 ? 'session_chunk' : 'memory',
+                        active:true, label:'n'+i});
+          for (let i = 0; i < 80; i++)
+            if (i % 5) edges.push({source:'n'+(i-(i%5)), target:'n'+i, type:'derived_from'});
+          const L = provenanceLayout({nodes, edges}, 1400, 780);
+          for (let f = 0; f < 3000; f++) L.tick();
+          const outside = L.nodes.filter(n =>
+            n.x < 0 || n.x > 1400 || n.y < 0 || n.y > 780).length;
+          const nonFinite = L.nodes.filter(n => !isFinite(n.x) || !isFinite(n.y)).length;
+          console.log(JSON.stringify({outside, nonFinite}));
+        """)
+        assert json.loads(out) == {"outside": 0, "nonFinite": 0}
+
+    def test_a_frame_is_cheap_enough_for_60fps(self, node):
+        out = _run_js(node, """
+          const nodes = [], edges = [];
+          for (let i = 0; i < 200; i++)
+            nodes.push({id:'n'+i, kind: i % 5 ? 'session_chunk' : 'memory',
+                        active:true, label:'n'+i});
+          for (let i = 0; i < 200; i++)
+            if (i % 5) edges.push({source:'n'+(i-(i%5)), target:'n'+i, type:'derived_from'});
+          const L = provenanceLayout({nodes, edges}, 1400, 780);
+          const t0 = Date.now();
+          for (let f = 0; f < 120; f++) L.tick();
+          console.log(JSON.stringify((Date.now() - t0) / 120));
+        """)
+        assert json.loads(out) < 8, f"{out}ms per frame will not hold 60fps"
+
+    def test_tick_returns_edge_positions_that_follow_the_nodes(self, node):
+        """Links must track their endpoints, or they detach as things drift."""
+        out = _run_js(node, """
+          const g = {nodes:[
+            {id:'a', kind:'memory', active:true, label:'a'},
+            {id:'b', kind:'session_chunk', active:true, label:'b'}],
+            edges:[{source:'a', target:'b', type:'derived_from'}]};
+          const L = provenanceLayout(g, 900, 600);
+          for (let f = 0; f < 30; f++) L.tick();
+          const frame = L.tick();
+          const byId = {}; L.nodes.forEach(n => byId[n.id] = n);
+          const e = frame.edges[0];
+          const ok = Math.abs(e.x1 - byId.a.x) < 0.001 && Math.abs(e.y2 - byId.b.y) < 0.001;
+          console.log(JSON.stringify(ok));
+        """)
+        assert json.loads(out) is True
+
+
+class TestSpacing:
+    """Nodes need room, and the canvas should be used.
+
+    Measured on the real graph, the first version left a 43px median gap
+    between neighbours while packing into 49% of the canvas -- labels are
+    roughly 150px wide, so neighbouring text overlapped even where the dots did
+    not. Gravity pulled every node toward the centre at a constant rate, so the
+    interior could not spread into the space that was going unused.
+    """
+
+    def _graph_js(self, n_mem=12, fan=4):
+        return f"""
+          const nodes = [], edges = [];
+          for (let m = 0; m < {n_mem}; m++) {{
+            nodes.push({{id:'m'+m, kind:'memory', active:true, label:'memory '+m}});
+            for (let c = 0; c < {fan}; c++) {{
+              nodes.push({{id:'m'+m+'c'+c, kind:'session_chunk', active:true,
+                           label:'chunk '+m+'-'+c}});
+              edges.push({{source:'m'+m, target:'m'+m+'c'+c, type:'derived_from'}});
+            }}
+          }}
+        """
+
+    def test_neighbours_are_not_crowded(self, node):
+        out = _run_js(node, self._graph_js() + """
+          const L = provenanceLayout({nodes, edges}, 1400, 780);
+          const d = L.nodes.map((n,i) => {
+            let best = Infinity;
+            L.nodes.forEach((m,j) => {
+              if (i===j) return;
+              const dd = Math.hypot(n.x-m.x, n.y-m.y);
+              if (dd < best) best = dd;
+            });
+            return best;
+          }).sort((a,b)=>a-b);
+          console.log(JSON.stringify(Math.round(d[Math.floor(d.length/2)])));
+        """)
+        assert json.loads(out) >= 55, f"median nearest-neighbour gap only {out}px"
+
+    def test_the_canvas_is_actually_used(self, node):
+        """Packing into the middle wastes the room that spacing needs."""
+        out = _run_js(node, self._graph_js() + """
+          const W = 1400, H = 780;
+          const L = provenanceLayout({nodes, edges}, W, H);
+          const xs = L.nodes.map(n=>n.x), ys = L.nodes.map(n=>n.y);
+          const used = ((Math.max(...xs)-Math.min(...xs)) *
+                        (Math.max(...ys)-Math.min(...ys))) / (W*H);
+          console.log(JSON.stringify(Math.round(used*100)));
+        """)
+        assert json.loads(out) >= 60, f"only {out}% of the canvas used"
+
+    def test_labels_never_overlap_each_other(self, node):
+        """Ranking by connectivity alone still let two labels share a line."""
+        out = _run_js(node, self._graph_js(n_mem=20, fan=5) + """
+          const L = provenanceLayout({nodes, edges}, 1400, 780);
+          const lab = L.nodes.filter(n => n.showLabel);
+          let clashes = 0;
+          for (let i = 0; i < lab.length; i++)
+            for (let j = i+1; j < lab.length; j++)
+              if (Math.abs(lab[i].y-lab[j].y) < 13 &&
+                  Math.abs(lab[i].x-lab[j].x) < 150) clashes++;
+          console.log(JSON.stringify({clashes, shown: lab.length}));
+        """)
+        got = json.loads(out)
+        assert got["clashes"] == 0, f"{got['clashes']} overlapping labels"
+        assert got["shown"] > 0, "suppression must not remove every label"
+
+    def test_linked_nodes_are_still_closer_than_unlinked(self, node):
+        """Spreading must not destroy the meaning of an edge."""
+        out = _run_js(node, """
+          const nodes = [
+            {id:'m1', kind:'memory', active:true, label:'a'},
+            {id:'c1', kind:'session_chunk', active:true, label:'b'},
+            {id:'far', kind:'session_chunk', active:true, label:'c'}];
+          const L = provenanceLayout(
+            {nodes, edges:[{source:'m1', target:'c1', type:'derived_from'}]}, 1400, 780);
+          const b = {}; L.nodes.forEach(n => b[n.id] = n);
+          const d = (p,q) => Math.hypot(p.x-q.x, p.y-q.y);
+          console.log(JSON.stringify(d(b.m1,b.c1) < d(b.m1,b.far)));
+        """)
+        assert json.loads(out) is True
