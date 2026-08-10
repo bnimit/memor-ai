@@ -454,7 +454,36 @@ def stop() -> str:
 def restart() -> str:
     """Stop and reinstall units — use after `pipx upgrade` to recycle them
     onto the new binary (the running processes keep old code until restarted)."""
-    return "\n".join([stop(), install()])
+    return "\n".join([stop(), _stop_hook_sidecar(), install()])
+
+
+def _stop_hook_sidecar() -> str:
+    """Stop the hook sidecar so it reloads on the next prompt.
+
+    launchd does not own this process: the hook spawns it on demand and it
+    lives until idle timeout. So `service restart` recycled the daemon, the
+    dashboard and the proxy while the sidecar kept serving whatever code it
+    started with -- which is exactly how a fix for silently-disabled memory
+    appeared not to work after a restart that reported success.
+
+    Not an error if it is absent; most of the time it is.
+    """
+    import signal
+
+    pid_file = STATE_DIR / "hook.pid"
+    if not pid_file.exists():
+        return "  hook sidecar: not running"
+    try:
+        pid = int(pid_file.read_text().strip())
+    except (OSError, ValueError):
+        return "  hook sidecar: pid unreadable, left alone"
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return "  hook sidecar: already gone"
+    except OSError as exc:
+        return f"  hook sidecar: could not stop ({exc})"
+    return f"  hook sidecar: stopped (pid {pid}); reloads on the next prompt"
 
 
 def _macos_unit_status(label: str) -> str:

@@ -246,3 +246,58 @@ def test_status_shows_proxy_unit(monkeypatch, tmp_path):
     out = svc.status()
     
     assert "proxy: running (pid 12345)" in out
+
+
+def test_restart_recycles_the_hook_sidecar(tmp_path, monkeypatch):
+    """launchd does not own the sidecar, so restart used to leave it stale.
+
+    `memor service restart` recycled the daemon, dashboard and proxy while the
+    hook sidecar kept serving whatever code it started with. A fix for
+    silently-disabled memory therefore appeared not to work after a restart
+    that reported success -- the binary was new, the process answering the
+    socket was not.
+    """
+    import os
+    import signal
+
+    from memor import service
+
+    monkeypatch.setattr(service, "STATE_DIR", tmp_path)
+    pid_file = tmp_path / "hook.pid"
+    pid_file.write_text("424242")
+
+    killed = {}
+
+    def fake_kill(pid, sig):
+        killed["pid"] = pid
+        killed["sig"] = sig
+
+    monkeypatch.setattr(os, "kill", fake_kill)
+    message = service._stop_hook_sidecar()
+
+    assert killed["pid"] == 424242
+    assert killed["sig"] == signal.SIGTERM
+    assert "stopped" in message
+
+
+def test_restart_is_fine_when_no_sidecar_is_running(tmp_path, monkeypatch):
+    from memor import service
+
+    monkeypatch.setattr(service, "STATE_DIR", tmp_path)
+    assert "not running" in service._stop_hook_sidecar()
+
+
+def test_restart_survives_a_dead_sidecar_pid(tmp_path, monkeypatch):
+    """A stale pid file must not turn a restart into a failure."""
+    import os
+
+    from memor import service
+
+    monkeypatch.setattr(service, "STATE_DIR", tmp_path)
+    (tmp_path / "hook.pid").write_text("999999")
+
+    def fake_kill(pid, sig):
+        raise ProcessLookupError()
+
+    monkeypatch.setattr(os, "kill", fake_kill)
+    assert "already gone" in service._stop_hook_sidecar()
