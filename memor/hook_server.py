@@ -214,7 +214,15 @@ async def _handle_client(reader: asyncio.StreamReader,
     try:
         data = await asyncio.wait_for(reader.read(1_000_000), timeout=10)
         req = json.loads(data.decode())
-        resp = handle_request(req)
+        # Off the event loop. handle_request is fully blocking -- SQLite
+        # scans, vector distance, token counting -- so awaiting it directly
+        # served one recall at a time and queued every other prompt behind it.
+        # Measured through the real socket before this change: 1 concurrent
+        # prompt 87 ms, 16 concurrent 1,395 ms, rising linearly. That is the
+        # shape of the 3.1 s p90 in the recall ledger: head-of-line blocking,
+        # not slow retrieval.
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(_executor(), handle_request, req)
         writer.write(json.dumps(resp).encode())
         await writer.drain()
     except Exception as e:
@@ -233,6 +241,31 @@ async def _idle_watchdog():
         if time.time() - _last_activity > IDLE_TIMEOUT_S:
             _cleanup()
             os._exit(0)
+
+
+#: Workers serving recalls concurrently.
+#:
+#: Deliberately small. Most of a recall runs under the GIL, and CPU-bound
+#: Python threads in one interpreter starve each other badly: a saturating
+#: in-process thread took a 13 ms vector scan to 23 s, while the same load in
+#: separate processes left it at 20 ms. So more workers would not multiply
+#: throughput, and past a handful they would recreate the problem being fixed.
+#: Four is enough to absorb the bursts that cause head-of-line blocking --
+#: parallel subagents submitting prompts together -- without oversubscribing.
+_MAX_WORKERS = 4
+
+_EXECUTOR = None
+
+
+def _executor():
+    """The recall worker pool, created on first use."""
+    global _EXECUTOR
+    if _EXECUTOR is None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        _EXECUTOR = ThreadPoolExecutor(
+            max_workers=_MAX_WORKERS, thread_name_prefix="memor-recall")
+    return _EXECUTOR
 
 
 def _cleanup():

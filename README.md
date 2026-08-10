@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1309%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1312%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -28,7 +28,7 @@ Compression is easy to verify and therefore easy to falsify, so these are measur
 |---|---|---|
 | Tool-output compression, when it fires | **51.9%** saved | 259 of 1,219 real Bash results from live sessions |
 | Tool-output compression, across all Bash output | **13.2%** saved | the same 1,219 results |
-| A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,309-test suite |
+| A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,312-test suite |
 | Proxy, on compressible payloads | **7.3%** | 5,414 real proxied requests |
 | Proxy, blended over all traffic | **0.8%** | the same 5,414 requests |
 
@@ -281,7 +281,7 @@ A single `memor-hook` binary auto-detects which agent is calling it — no separ
 **Background processes** (supervised by `memor service install`):
 
 1. **Daemon** — polls local agent session stores (Claude Code `~/.claude/projects/`, Kimi `~/.kimi/sessions/`, Goose `~/.local/share/goose/sessions/sessions.db`), embeds chunks, runs distillation, analyzes feedback (Claude), promotes cross-project patterns to global scope, compacts duplicates, auto-compacts the vector index when bloated, tracks session-level token usage. Model providers are not ingest sources — only the agent that owns the session. All local. Use `memor backfill` for a one-shot ingest of past sessions.
-2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Works across Claude Code, Cursor, Codex, Copilot, Kimi, and Goose. Measured on 2,285 real recalls that returned hits: median 176 ms, 90th percentile 3.1 s (recent work cut the retrieval path from 76 ms to 60 ms; the ledger figure still averages in older, slower recalls). A recall that finds nothing returns in about 214 ms, because the relevance gate rejects before the lexical channel runs. The embedding itself is well under a millisecond; the time is retrieval and ranking over a store this size.
+2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Works across Claude Code, Cursor, Codex, Copilot, Kimi, and Goose. Measured on 2,285 real recalls that returned hits: median 176 ms, 90th percentile 3.1 s. The tail was concurrent prompts queueing behind one another in the sidecar, now fixed; the ledger figure still includes recalls served before that. A single recall is ~120 ms. A recall that finds nothing returns in about 214 ms, because the relevance gate rejects before the lexical channel runs. The embedding itself is well under a millisecond; the time is retrieval and ranking over a store this size.
 3. **Proxy** (optional) — intercepts Anthropic/OpenAI API calls on `127.0.0.1:8421`, serves recall, compresses tool payloads, forwards to your provider, and writes savings and recall ledgers. Started automatically by `memor install-proxy`.
 
 **No Memor API key required.** Embeddings and compressors run locally. The proxy forwards your existing Anthropic/OpenAI credentials — keys are never stored. Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.

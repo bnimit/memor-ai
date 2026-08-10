@@ -94,3 +94,47 @@ def test_trivial_patterns_are_lowercase():
 
 def test_idle_timeout_is_set():
     assert IDLE_TIMEOUT_S == 600
+
+
+def test_recall_runs_off_the_event_loop():
+    """The sidecar served one recall at a time.
+
+    `_handle_client` awaited `handle_request` directly, but that function is
+    fully blocking -- SQLite scans, vector distance, token counting -- so the
+    event loop could not accept anyone else while it ran. Measured through the
+    real socket: 1 concurrent prompt 116 ms, 16 concurrent 1,488 ms, rising
+    linearly. That is head-of-line blocking, and it is the shape of the 3.1 s
+    p90 in the recall ledger.
+    """
+    import inspect
+
+    from memor import hook_server
+
+    src = inspect.getsource(hook_server._handle_client)
+    assert "run_in_executor" in src, (
+        "blocking recall must not run on the event loop")
+    assert "resp = handle_request(req)" not in src
+
+
+def test_worker_pool_is_small_on_purpose():
+    """More workers would not help and would eventually hurt.
+
+    Most of a recall runs under the GIL. Measured: a CPU-bound thread inside
+    the same interpreter took a 13 ms vector scan to 23 s, while identical load
+    in separate processes left it at 20 ms. The pool absorbs bursts; it does
+    not parallelise CPU work.
+    """
+    from memor import hook_server
+
+    assert 1 < hook_server._MAX_WORKERS <= 8
+
+
+def test_executor_is_created_once():
+    from memor import hook_server
+
+    hook_server._EXECUTOR = None
+    first = hook_server._executor()
+    second = hook_server._executor()
+    assert first is second
+    first.shutdown(wait=False)
+    hook_server._EXECUTOR = None
