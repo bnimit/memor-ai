@@ -99,6 +99,62 @@ def _get_embedder():
     return _embedder
 
 
+#: How recently the proxy must have recorded a recall for the hook to trust it.
+#: One hour is generous: a proxy that is genuinely in the path records on every
+#: prompt, so an hour of silence during active use means it is not serving.
+_PROXY_FRESHNESS_S = 3600.0
+
+#: Cached verdict, so the check costs one query per sidecar lifetime rather
+#: than one per prompt.
+_proxy_serving_cache: tuple[float, bool] | None = None
+
+
+def _proxy_is_serving_recall(db_path: str = None) -> bool:
+    """Has the proxy actually served a recall recently?
+
+    Being configured is not evidence. Claude Code on a subscription ignores
+    ANTHROPIC_BASE_URL, so `proxy_agents.claude = true` can be true while the
+    proxy never sees a single request. The ledger is the only honest signal:
+    the proxy writes a recall_log row for every recall it serves, including
+    misses, so a recent row means it is really in the path.
+
+    Fails toward injecting. If this cannot be answered, the hook does the work
+    itself -- a duplicated recall costs tokens, a skipped one costs the user
+    their memory.
+    """
+    global _proxy_serving_cache
+    import time as _time
+
+    now = _time.time()
+    if _proxy_serving_cache is not None:
+        checked_at, verdict = _proxy_serving_cache
+        if now - checked_at < 60:
+            return verdict
+
+    verdict = False
+    try:
+        import sqlite3
+        from pathlib import Path
+
+        path = Path(db_path or DEFAULT_DB)
+        if path.exists():
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
+            try:
+                row = conn.execute(
+                    "SELECT MAX(timestamp) FROM recall_log "
+                    "WHERE agent = 'claude' AND conversation_key IS NOT NULL "
+                    "AND conversation_key != ''").fetchone()
+            finally:
+                conn.close()
+            last = row[0] if row else None
+            verdict = bool(last) and (now - last) < _PROXY_FRESHNESS_S
+    except Exception:
+        verdict = False
+
+    _proxy_serving_cache = (now, verdict)
+    return verdict
+
+
 def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
                    embedder=_UNSET) -> dict:
     """Process a recall request and return the hook JSON response.
@@ -132,7 +188,16 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
     from memor.config import is_proxy_agent
 
     # Cursor keeps hook inject even when proxied (shared memory across agents).
-    if is_proxy_agent(agent) and agent not in ("cursor", "copilot"):
+    #
+    # The skip is conditional on the proxy actually serving recall, not merely
+    # on it being configured. Claude Code authenticated with a subscription
+    # ignores ANTHROPIC_BASE_URL -- that variable is honoured for API-key
+    # users -- so the proxy never sees the conversation. The hook then stepped
+    # aside for a proxy that was not there, and the user had no memory at all:
+    # on this machine both ledgers went silent for four days while Claude Code
+    # logged thousands of records a day, and nothing reported it.
+    if (is_proxy_agent(agent) and agent not in ("cursor", "copilot")
+            and _proxy_is_serving_recall()):
         return format_hook_response(agent, "")
 
     if embedder is None:

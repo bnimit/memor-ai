@@ -5,8 +5,18 @@ from memor.types import Artifact
 
 
 def test_hook_skips_when_claude_proxied(tmp_path, monkeypatch):
-    """Proxied Claude skips hook inject; memory comes from the proxy path."""
+    """Proxied Claude skips hook inject -- when the proxy is really serving.
+
+    The skip became conditional after an unconditional one cost a real user
+    four days of memory: subscription Claude Code ignores ANTHROPIC_BASE_URL,
+    so the proxy was configured but never in the path. This test covers the
+    deferral, so it states that precondition rather than assuming it.
+    """
     import memor.config as cfg
+    from memor import hook_server
+    monkeypatch.setattr(hook_server, "_proxy_serving_cache", None)
+    monkeypatch.setattr(hook_server, "_proxy_is_serving_recall",
+                        lambda *a, **k: True)
     monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(cfg, "STATE_DIR", tmp_path)
 
@@ -39,8 +49,18 @@ def test_hook_skips_when_claude_proxied(tmp_path, monkeypatch):
 
 
 def test_hook_skips_when_codex_proxied(tmp_path, monkeypatch):
-    """Proxied Codex skips hook inject; memory comes from the proxy path."""
+    """Proxied Codex skips hook inject -- when the proxy is really serving.
+
+    The skip became conditional after an unconditional one cost a real user
+    four days of memory: subscription Claude Code ignores ANTHROPIC_BASE_URL,
+    so the proxy was configured but never in the path. This test covers the
+    deferral, so it states that precondition rather than assuming it.
+    """
     import memor.config as cfg
+    from memor import hook_server
+    monkeypatch.setattr(hook_server, "_proxy_serving_cache", None)
+    monkeypatch.setattr(hook_server, "_proxy_is_serving_recall",
+                        lambda *a, **k: True)
     monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(cfg, "STATE_DIR", tmp_path)
 
