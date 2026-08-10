@@ -484,9 +484,16 @@ class SqliteStore:
               scope.since, scope.since,
               scope.until, scope.until)).fetchall()
         out = []
-        for r in rows[:k]:
+        # Filter by kind BEFORE truncating. Slicing to k first and filtering
+        # after asks a different question: "of the global top k, which are of
+        # this kind", which for a minority kind is usually none. Requesting 3
+        # memories on the real store returned 0, while requesting 200 returned
+        # 13 -- the same query, so the shortfall was the slice, not the corpus.
+        for r in rows:
             if scope.kinds is not None and r["kind"] not in scope.kinds:
                 continue
+            if len(out) >= k:
+                break
             sim = 1.0 - float(r["distance"])
             out.append((self._row_to_artifact(r), sim))
         return out
