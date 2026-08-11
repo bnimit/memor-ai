@@ -79,6 +79,7 @@ EVALUATION
   memor eval-counterfactual --project  Win/tie/loss vs no-memory baseline
   memor bench-embed --project <name>   Compare embedding models
   memor eval-longmemeval               Retrieval accuracy on LongMemEval (ground truth)
+  memor eval-retention                 Does compression keep what the agent used?
   memor eval-proxy                     Proxy compression benchmark (release gate)
 
 CURSOR
@@ -257,6 +258,52 @@ def bench_embed(project: str = typer.Option(...), db: str = "memor.db",
     for r in results:
         typer.echo(f"{r.model_name:<30} {r.dim:>5} {r.recall_at_k:>10.3f} {r.ndcg_at_k:>10.3f} "
                    f"{r.embed_latency_ms:>10.1f} {r.retrieval_latency_ms:>10.1f}")
+
+
+@app.command("eval-retention")
+def eval_retention(
+    limit: int = typer.Option(40, help="Max cases mined per transcript"),
+    transcripts: int = typer.Option(10, help="How many transcripts to scan"),
+):
+    """Answer-critical retention: does compression keep what the agent used?
+
+    Every compression figure is meaningless without this. Cases come from the
+    agent's own behaviour -- a later edit quotes text that must have survived --
+    so the ground truth is what actually happened, not a label.
+    """
+    from memor.compress import compress_text
+    from memor.eval.answer_retention import extract_cases, format_report, score
+
+    root = Path.home() / ".claude" / "projects"
+    if not root.exists():
+        typer.echo(f"No Claude Code transcripts at {root}", err=True)
+        raise typer.Exit(1)
+
+    files = sorted(root.rglob("*.jsonl"), key=lambda p: -p.stat().st_size)[:transcripts]
+    cases = []
+    for f in files:
+        cases.extend(extract_cases(f, limit=limit))
+    if not cases:
+        typer.echo("No grounded cases found. Need transcripts where an edit "
+                   "quotes text from a file the agent read.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Mined {len(cases)} grounded cases from {len(files)} transcripts\n")
+
+    def current(text, path):
+        result = compress_text(text, file_path=path)
+        return result.text if hasattr(result, "text") else str(result)
+
+    def truncate(text, path):
+        lines = text.splitlines()
+        if len(lines) < 10:
+            return text
+        keep = max(1, int(len(lines) * 0.35) // 2)
+        return "\n".join(lines[:keep] + ["... truncated ..."] + lines[-keep:])
+
+    typer.echo(format_report("memor (current settings)", score(cases, current)))
+    typer.echo("")
+    typer.echo(format_report("truncate to 35% (baseline)", score(cases, truncate)))
 
 
 @app.command("eval-longmemeval")

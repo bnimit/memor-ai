@@ -441,6 +441,7 @@ memor distill --project <name>       Run distillation manually
 memor eval <cases.json>              Run eval suite
 memor eval-counterfactual --project  Win/tie/loss vs no-memory baseline
 memor eval-longmemeval               Retrieval accuracy on LongMemEval (ground truth)
+memor eval-retention                 Does compression keep what the agent used?
 memor bench-embed --project <name>   Compare embedding models
 ```
 
