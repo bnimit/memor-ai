@@ -75,6 +75,19 @@ def prepare_request_body(
             agent=agent,
             session_id=session_id,
         )
+
+        # A `[memor:ccr:...]` marker tells the model an original exists. Until
+        # now nothing on this path declared the tool that fetches it, so the
+        # promise depended on an MCP server the user may never have installed.
+        from memor.proxy.pipeline import CCR_MARKER_PREFIX
+        from memor.proxy.retrieve_tool import body_has_marker, inject_retrieve_tool
+
+        body = inject_retrieve_tool(
+            provider, body,
+            has_marker=bool(result.ccr_ids)
+            or body_has_marker(body, CCR_MARKER_PREFIX),
+        )
+
         compressor_state.mode = "compress"
         compressor_state.compressor_ready = True
         return ShimResult(
