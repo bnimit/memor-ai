@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-11
+
+A test-only release. 0.13.0's tag points at a commit whose CI run failed, so
+this exists to give the released version a green tag; the package behaves
+identically.
+
+### Fixed
+- **Four tests asserted one developer's filesystem.** Project resolution decodes a Claude directory name by walking the real filesystem, because a dash in `-Users-nimit-Documents-Eukarya-reearth-flow` may be a path separator or a literal dash and only the filesystem can say which. Four tests hardcoded absolute paths that exist on exactly one machine, so they passed there and failed on a runner, where decoding falls back to splitting every dash and `reearth-flow` becomes `flow`. Not a regression: reimplementing the previous dash-only decoder and running it against a nonexistent tree fails identically, so these would have failed whenever CI first ran them — the workflow was added this cycle, which is why it surfaced now. Each test now builds the directory it describes under `tmp_path`, and the proxy scope test resolves the repo root at run time instead of naming it. Verified from a clean clone outside the developer's tree with an isolated HOME: 1505 passed, 27 skipped.
+
 ## [0.13.0] - 2026-08-11
 
 Upgrade if you use Claude Code with a subscription (not an API key) and ever ran
