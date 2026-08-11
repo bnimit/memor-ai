@@ -7,10 +7,18 @@ any test that sets them would still pass.
 """
 from __future__ import annotations
 
+import pathlib
+
 from memor.proxy.memory import _content_to_text
 from memor.proxy.scope import project_from_body, resolve_request_project
 
-PROJ = "/Users/nimit/Documents/Projects/Memorable"
+# The repo itself, resolved at run time. A hardcoded absolute path passes only
+# on the machine that has it: project resolution consults the filesystem, so on
+# a CI runner this test asserted "Memorable" against a directory that did not
+# exist and got "unknown".
+_REPO = pathlib.Path(__file__).resolve().parent.parent
+PROJ = str(_REPO)
+PROJ_NAME = _REPO.name
 
 
 def _body(last_user_content):
@@ -29,7 +37,7 @@ def _body(last_user_content):
 
 def test_project_resolves_from_the_declared_working_directory():
     """No header, so the system prompt's working directory has to carry it."""
-    assert resolve_request_project("", _body("what did we learn?")) == "Memorable"
+    assert resolve_request_project("", _body("what did we learn?")) == PROJ_NAME
 
 
 def test_project_resolves_from_touched_file_paths_alone():
@@ -40,7 +48,7 @@ def test_project_resolves_from_touched_file_paths_alone():
              "input": {"file_path": f"{PROJ}/memor/daemon.py"}}]},
         {"role": "user", "content": "why is it slow"},
     ]}
-    assert project_from_body(body) == "Memorable"
+    assert project_from_body(body) == PROJ_NAME
 
 
 def test_a_body_with_no_evidence_is_undeterminable():

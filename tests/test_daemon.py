@@ -20,16 +20,36 @@ from memor.daemon import (
 
 # -- project name extraction --------------------------------------------------
 
-def test_project_name_simple():
-    assert _project_name_from_dir("-Users-nimit-Documents-Projects-plirin") == "plirin"
+def _encode(path) -> str:
+    """Mimic Claude's directory encoding: every separator becomes a dash."""
+    return str(path).replace("/", "-")
 
-def test_project_name_nested():
-    assert _project_name_from_dir("-Users-nimit-Documents-Eukarya-reearth-flow") == "reearth-flow"
 
-def test_project_name_worktree():
-    assert _project_name_from_dir(
-        "-Users-nimit-Documents-Eukarya-ygo--claude-worktrees-musing-haibt-701a57"
-    ) == "ygo"
+def test_project_name_simple(tmp_path):
+    repo = tmp_path / "plirin"
+    repo.mkdir()
+    assert _project_name_from_dir(_encode(repo)) == "plirin"
+
+
+def test_project_name_nested(tmp_path):
+    """A dash inside the directory name must survive the round trip.
+
+    This assertion used to hardcode a path on one developer's machine, so it
+    passed there and failed anywhere else: decoding walks the real filesystem to
+    resolve dash ambiguity, and on a CI runner the path does not exist, so the
+    naive fallback split "reearth-flow" into two segments and the project became
+    "flow". Building the directory makes the test true everywhere.
+    """
+    repo = tmp_path / "Eukarya" / "reearth-flow"
+    repo.mkdir(parents=True)
+    assert _project_name_from_dir(_encode(repo)) == "reearth-flow"
+
+
+def test_project_name_worktree(tmp_path):
+    worktree = tmp_path / "ygo" / ".claude" / "worktrees" / "musing-haibt-701a57"
+    worktree.mkdir(parents=True)
+    (tmp_path / "ygo" / ".git").mkdir()
+    assert _project_name_from_dir(_encode(worktree)) == "ygo"
 
 def test_project_name_passthrough():
     assert _project_name_from_dir("simple") == "simple"

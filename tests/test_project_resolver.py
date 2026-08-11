@@ -28,12 +28,23 @@ def test_resolve_project_home_dir(tmp_path, monkeypatch):
     assert resolve_project(str(tmp_path)) == tmp_path.name
 
 
-def test_decode_claude_dir_simple():
-    assert decode_claude_dir("-Users-nimit-Documents-Projects-plirin") == "/Users/nimit/Documents/Projects/plirin"
+def test_decode_claude_dir_simple(tmp_path):
+    repo = tmp_path / "plirin"
+    repo.mkdir()
+    encoded = str(repo).replace("/", "-")
+    assert decode_claude_dir(encoded) == str(repo)
 
 
-def test_decode_claude_dir_nested():
-    assert decode_claude_dir("-Users-nimit-Documents-Eukarya-reearth-flow") == "/Users/nimit/Documents/Eukarya/reearth-flow"
+def test_decode_claude_dir_nested(tmp_path):
+    """Decoding resolves dash ambiguity against the real filesystem.
+
+    So a test that names a path only one machine has will pass there and fail
+    everywhere else, which is what happened the first time CI ran this suite.
+    """
+    repo = tmp_path / "Eukarya" / "reearth-flow"
+    repo.mkdir(parents=True)
+    encoded = str(repo).replace("/", "-")
+    assert decode_claude_dir(encoded) == str(repo)
 
 
 def test_resolve_from_claude_dir(tmp_path):
