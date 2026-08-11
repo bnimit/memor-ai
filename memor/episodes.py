@@ -22,6 +22,8 @@ The comparison is observational, not an experiment — see ``CONFOUND_NOTE``.
 """
 from __future__ import annotations
 
+import math
+
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -620,8 +622,47 @@ def stratified_deltas(
             # Mean, not median: tool calls are small integers, so a median
             # shifting by one reads as a 100-200% swing.
             cell["tool_call_delta_pct"] = _delta_pct_mean(b, a, lambda e: e.tool_calls)
+            # A cell large enough to score is not necessarily large enough to
+            # have a *sign*. Tool calls per episode have a standard deviation
+            # larger than their mean, so a band of 250 episodes can only resolve
+            # a difference of roughly a third. Three of the four real bands sit
+            # in that state, and their signs are coin flips -- which the verdict
+            # below was reading as a genuine reversal and using to veto a
+            # well-powered aggregate. Recording the detectable floor lets that
+            # rule distinguish disagreement from noise.
+            cell["mde_pct"] = _mde_pct(b, a, lambda e: e.tool_calls)
+            delta = cell["tool_call_delta_pct"]
+            floor = cell["mde_pct"]
+            cell["significant"] = (
+                delta is not None and floor is not None and abs(delta) > floor
+            )
+        else:
+            cell["mde_pct"] = None
+            cell["significant"] = False
         out.append(cell)
     return out
+
+
+def _mde_pct(baseline: list[Episode], treated: list[Episode], key) -> float | None:
+    """Smallest difference this cell could detect, as a percent of baseline.
+
+    Two-sample minimum detectable effect at 80% power and alpha 0.05. Reported
+    rather than a p-value because the question here is not "is this difference
+    real" but "could this cell have shown one at all" -- a cell whose floor
+    exceeds any plausible effect is silent, not negative.
+    """
+    if len(baseline) < 2 or len(treated) < 2:
+        return None
+    base_vals = [key(e) for e in baseline]
+    treat_vals = [key(e) for e in treated]
+    base_mean = sum(base_vals) / len(base_vals)
+    if base_mean == 0:
+        return None
+    var_b = sum((v - base_mean) ** 2 for v in base_vals) / len(base_vals)
+    treat_mean = sum(treat_vals) / len(treat_vals)
+    var_t = sum((v - treat_mean) ** 2 for v in treat_vals) / len(treat_vals)
+    se = math.sqrt(var_b / len(base_vals) + var_t / len(treat_vals))
+    return round(100.0 * 2.8 * se / base_mean, 1)
 
 
 def verdict(overall: dict, strata: list[dict]) -> str:
@@ -642,9 +683,16 @@ def verdict(overall: dict, strata: list[dict]) -> str:
     if len(scored) < 2:
         return "insufficient_data"
 
-    signs = {c["tool_call_delta_pct"] > 0 for c in scored}
-    if len(signs) > 1:
-        return "no_effect"  # direction is not stable — aggregate is composition
+    # Only a stratum that could actually detect a difference gets a vote. A
+    # cell whose observed delta sits below its own detectable floor has a sign
+    # by chance, and counting those as disagreement vetoed a well-powered
+    # aggregate: on real data three of four bands were pure noise while the
+    # aggregate showed +22.5% against a 13.5% floor.
+    deciding = [c for c in scored if c.get("significant")]
+    if len(deciding) >= 2:
+        signs = {c["tool_call_delta_pct"] > 0 for c in deciding}
+        if len(signs) > 1:
+            return "no_effect"  # genuine reversal — the aggregate is composition
 
     adjusted = overall.get("project_adjusted") or {}
     if adjusted.get("scored") and not adjusted.get("consistent"):
