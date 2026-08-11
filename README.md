@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1336%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1532%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
@@ -31,7 +31,8 @@ Compression is easy to verify and therefore easy to falsify, so these are measur
 | Answer-critical retention | **96.2%** kept | 132 grounded cases from real edits | `memor eval-retention` |
 | ...against truncation at a comparable budget | **50.3%** kept | the same 132 cases | `memor eval-retention` |
 | Retrieval accuracy | **95.0%** any-hit, 86.7% all-gold | LongMemEval_S, n=120, published ground truth | `memor eval-longmemeval` |
-| Tool-output compression, when it fires | **52.2%** saved | 167 of 761 real Bash results | `memor hook-worth` |
+| Tool-output compression, when it fires | **47.7%** saved | 70 of 291 large Bash results, 60 sessions | `memor hook-worth` |
+| ...across all Bash output | **11.1%** saved | the same 291 results (24.1% coverage) | `memor hook-worth` |
 | Proxy, blended over all traffic | **0.8%** | 5,414 real proxied requests | dashboard |
 
 **Why the blended figure is small, and why that is arithmetic rather than a

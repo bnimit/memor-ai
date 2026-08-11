@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.13.0] - 2026-08-10
+## [0.13.0] - 2026-08-11
 
 Upgrade if you use Claude Code with a subscription (not an API key) and ever ran
 `memor install-proxy --agent claude`: recall was silently disabled for you, and
