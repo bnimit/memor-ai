@@ -80,6 +80,7 @@ EVALUATION
   memor bench-embed --project <name>   Compare embedding models
   memor eval-longmemeval               Retrieval accuracy on LongMemEval (ground truth)
   memor eval-retention                 Does compression keep what the agent used?
+  memor request-anatomy                Where a request's tokens go, and the ceiling
   memor eval-proxy                     Proxy compression benchmark (release gate)
 
 CURSOR
@@ -258,6 +259,30 @@ def bench_embed(project: str = typer.Option(...), db: str = "memor.db",
     for r in results:
         typer.echo(f"{r.model_name:<30} {r.dim:>5} {r.recall_at_k:>10.3f} {r.ndcg_at_k:>10.3f} "
                    f"{r.embed_latency_ms:>10.1f} {r.retrieval_latency_ms:>10.1f}")
+
+
+@app.command("request-anatomy")
+def request_anatomy(
+    transcripts: int = typer.Option(5, help="How many of the largest transcripts to read"),
+    rate: float = typer.Option(0.433, help="Observed saving rate on tool output"),
+):
+    """What a request is made of, and the ceiling that puts on compression."""
+    from memor.eval.request_anatomy import Anatomy, analyse, format_report, load_messages
+
+    root = Path.home() / ".claude" / "projects"
+    if not root.exists():
+        typer.echo(f"No Claude Code transcripts at {root}", err=True)
+        raise typer.Exit(1)
+
+    files = sorted(root.rglob("*.jsonl"), key=lambda p: -p.stat().st_size)[:transcripts]
+    combined = Anatomy()
+    for f in files:
+        part = analyse(load_messages(f))
+        combined.tokens.update(part.tokens)
+        combined.images += part.images
+        combined.messages += part.messages
+    typer.echo(f"Read {len(files)} transcripts\n")
+    typer.echo(format_report(combined, rate=rate))
 
 
 @app.command("eval-retention")

@@ -24,18 +24,37 @@ Two things, in one install:
 
 Compression is easy to verify and therefore easy to falsify, so these are measured on real traffic rather than favourable fixtures:
 
-| Measurement | Result | Measured on |
-|---|---|---|
-| Tool-output compression, when it fires | **52.2%** saved | 167 of 761 real Bash results from live sessions |
-| Tool-output compression, across all Bash output | **12.9%** saved | the same 761 results |
-| A `pytest -v` run | **1,975 → 222 tokens** (88.8%) | 1 run of this repo's 1,336-test suite |
-| Proxy, on compressible payloads | **7.3%** | 5,414 real proxied requests |
-| Proxy, blended over all traffic | **0.8%** | the same 5,414 requests |
+| Measurement | Result | Measured on | Reproduce |
+|---|---|---|---|
+| Compression on tool output | **43.3%** saved | 6 large real sessions, production rules | `memor request-anatomy` |
+| Answer-critical retention | **96.2%** kept | 132 grounded cases from real edits | `memor eval-retention` |
+| ...against truncation at a comparable budget | **50.3%** kept | the same 132 cases | `memor eval-retention` |
+| Retrieval accuracy | **95.0%** any-hit, 86.7% all-gold | LongMemEval_S, n=120, published ground truth | `memor eval-longmemeval` |
+| Tool-output compression, when it fires | **52.2%** saved | 167 of 761 real Bash results | `memor hook-worth` |
+| Proxy, blended over all traffic | **0.8%** | 5,414 real proxied requests | dashboard |
 
-That last pair is the honest part. Most of a request is conversation history the
-compressor deliberately refuses to rewrite, so the blended figure measures
-coverage rather than compressor quality. Both are shown on the dashboard, side
-by side, because a single number hides which one you are looking at.
+**Why the blended figure is small, and why that is arithmetic rather than a
+weak compressor.** A coding-agent request is mostly things memor must not touch:
+
+| Slice of a request | Share | Why |
+|---|---|---|
+| Tool-use arguments | **42.7%** | the code being written; eliding it corrupts edits |
+| Tool results | **33.0%** | the only slice memor rewrites |
+| Conversation text | **23.9%** | rewriting it re-forms the provider's cached prefix |
+| Images | 0.4% | billed by dimensions, not bytes |
+
+At 43.3% on the compressible third, the ceiling for a whole request is **14.3%**.
+Any product claiming more than that on this shape of traffic is measuring a
+different denominator — typically log-heavy or document-heavy workloads where
+tool output is most of the request. `memor request-anatomy` prints this
+breakdown for your own sessions.
+
+> Beware the image trap. A base64 screenshot tokenises as a vast string — a
+> 161 KB PNG counts as 113,367 tokens if you feed the encoded text to a
+> tokenizer — but providers bill an image by its dimensions. Counting the base64
+> put images at 31% of a session and made them look like the biggest prize
+> available; they are 0.4%. If an estimate implies more tokens than the provider
+> ever billed, the estimate is wrong.
 
 **Coverage is capped by safety, on purpose.** The hook fires on 21.9% of large
 Bash results. Nearly all of the rest is held back by the source guard — output
@@ -441,6 +460,7 @@ memor distill --project <name>       Run distillation manually
 memor eval <cases.json>              Run eval suite
 memor eval-counterfactual --project  Win/tie/loss vs no-memory baseline
 memor eval-longmemeval               Retrieval accuracy on LongMemEval (ground truth)
+memor request-anatomy                Where a request's tokens go, and the ceiling
 memor eval-retention                 Does compression keep what the agent used?
 memor bench-embed --project <name>   Compare embedding models
 ```

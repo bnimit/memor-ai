@@ -108,8 +108,11 @@ def test_readme_quotes_only_figures_this_repo_can_reproduce():
 
     for row in rows:
         cells = [c.strip() for c in row.strip().strip("|").split("|")]
-        assert len(cells) == 3, row
-        measurement, result, source = cells
+        # A fourth column naming the command that reproduces the figure is
+        # allowed and encouraged: provenance is stronger when a reader can rerun
+        # it rather than take the population on trust.
+        assert len(cells) in (3, 4), row
+        measurement, result, source = cells[0], cells[1], cells[2]
         assert measurement and result, row
         # The third column is the whole point: a result with no stated
         # population is not a measurement, it is an assertion.
