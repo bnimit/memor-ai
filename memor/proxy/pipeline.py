@@ -117,14 +117,34 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
     # Older payloads are where the tokens are: the whole trajectory is resent on
     # every step, so a file dumped early is re-read on each one. Opt-in until
     # measured, because it changes what the model sees.
-    from memor.config import is_compress_older_turns
+    from memor.config import is_compress_older_turns, is_compress_source
 
     skeleton_ok = is_compress_older_turns()
-    payloads = (
-        extract_all_tool_payloads(provider, body)
-        if skeleton_ok
-        else extract_latest_tool_payloads(provider, body)
-    )
+    compress_source = is_compress_source()
+
+    if skeleton_ok:
+        payloads = extract_all_tool_payloads(provider, body)
+    elif compress_source:
+        # Source skeletonization needs to know whether a payload is the newest
+        # read of its file, and that is only decidable by looking at the whole
+        # request. So extract everything to establish recency, then narrow to
+        # the newest turn plus the superseded file reads.
+        #
+        # Narrowing matters: rewriting a payload sent uncompressed in an earlier
+        # request re-forms the cached prefix, and this workload is 99.7% cache
+        # reads against a 29.3% break-even. Compressing on arrival appends
+        # instead, which is why the ledger shows 51,271 cache writes against
+        # 166,257,239 reads.
+        every = extract_all_tool_payloads(provider, body)
+        latest_ids = {
+            id(p.text) for p in extract_latest_tool_payloads(provider, body)
+        }
+        payloads = [
+            p for p in every
+            if id(p.text) in latest_ids or not p.is_latest_for_file
+        ]
+    else:
+        payloads = extract_latest_tool_payloads(provider, body)
 
     if not payloads:
         # No payloads to compress
@@ -151,7 +171,9 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
         if already_compressed(payload.text):
             continue
 
-        result = _compress_payload(payload, skeleton_ok=skeleton_ok)
+        result = _compress_payload(
+            payload, skeleton_ok=skeleton_ok or compress_source
+        )
 
         total_tokens_before += result.tokens_before
         

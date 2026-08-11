@@ -27,11 +27,35 @@ def open_store(db_path: str | None = None) -> SqliteStore:
     return SqliteStore(resolved, dim=read_dim(resolved, 384))
 
 
+def normalise_blob_id(blob_id: str) -> str:
+    """Accept the id in whatever form the model copied it out of the marker.
+
+    A real model, shown `[memor:ccr:b5992...]`, called retrieve with
+    `ccr:b5992...` -- it split on the first colon, which is a fair reading of
+    the marker's own syntax. The lookup missed, and it spent six turns retrying
+    before giving up without an answer.
+
+    Of five plausible readings of that marker, only two match the stored id
+    exactly. Rejecting the other three punishes the model for our punctuation,
+    and the failure is silent: a miss returns prose, so the model proceeds with
+    a shortened file and no indication it was denied the original.
+    """
+    text = (blob_id or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    for prefix in ("memor:ccr:", "memor:", "ccr:"):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    return text.strip()
+
+
 def retrieve(blob_id: str, store: SqliteStore) -> str:
     """Retrieve CCR blob by ID or return miss message."""
-    text = store.ccr_get(blob_id)
+    resolved = normalise_blob_id(blob_id)
+    text = store.ccr_get(resolved)
     if text is None:
-        return f"memor: CCR miss for {blob_id} (expired or unknown)"
+        return f"memor: CCR miss for {resolved} (expired or unknown)"
     return text
 
 

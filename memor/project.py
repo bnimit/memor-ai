@@ -83,12 +83,23 @@ def _fs_decode(tokens: list[str]) -> str | None:
         # Try to match a segment by joining increasing numbers of tokens with dashes
         matched = False
         for end in range(len(remaining), 0, -1):
-            candidate = "-".join(remaining[:end])
-            candidate_path = path / candidate
-            if candidate_path.exists():
-                path = candidate_path
-                remaining = remaining[end:]
-                matched = True
+            # A dash in the encoded name may stand for a path separator, a
+            # literal dash, or a space: Claude encodes "Gesture App" and
+            # "Gesture-App" identically. Trying only the dash form sent every
+            # transcript from "/Users/.../Projects/Gesture App" to a project
+            # called "App", so 131 prompts in a day recalled against an empty
+            # store while the real project held nothing.
+            #
+            # Dash first, because a literal dash is the commoner case and
+            # "seo-team" must not be mistaken for a "seo team" directory.
+            for joiner in ("-", " "):
+                candidate_path = path / joiner.join(remaining[:end])
+                if candidate_path.exists():
+                    path = candidate_path
+                    remaining = remaining[end:]
+                    matched = True
+                    break
+            if matched:
                 break
         if not matched:
             # No filesystem match found; give up and return None to trigger fallback

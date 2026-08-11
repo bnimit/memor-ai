@@ -162,7 +162,7 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
 
     Pass embedder=None to explicitly indicate no embedder is available (returns
     the no_embedder status message). Omit embedder (default) to auto-discover."""
-    from memor.recall import recall, _status_message
+    from memor.recall import DEFAULT_MIN_SIMILARITY, recall, _status_message
     from memor.project import resolve_project
 
     agent = detect_agent(req)
@@ -229,9 +229,20 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
         env_max = 0
     max_tokens = env_max if env_max > 0 else tier.max_tokens
     try:
-        min_similarity = float(os.environ.get("MEMOR_MIN_SIMILARITY", "0.0"))
+        # Fall back to recall()'s own default rather than a literal 0.0. The
+        # floor was lowered to -0.05 because these static embeddings score a
+        # good match near 0.05, putting a zero floor inside the noise band --
+        # but this hardcoded default never followed, so the hook has been
+        # applying a stricter gate than every other caller.
+        #
+        # The effect is silent and total on a young project: recall() found 6
+        # hits at 0.789 for a real prompt while the hook reported "no relevant
+        # memories yet" for the same query against the same store.
+        min_similarity = float(
+            os.environ.get("MEMOR_MIN_SIMILARITY", str(DEFAULT_MIN_SIMILARITY))
+        )
     except (ValueError, TypeError):
-        min_similarity = 0.0
+        min_similarity = DEFAULT_MIN_SIMILARITY
     retrieval_query = _session_ctx.enrich(query, session_id) if session_id else query
     # The prompt is a thin query; what the agent just read and just broke is a
     # thicker one. No-op unless MEMOR_TRAJECTORY_QUERY is set, and it swallows

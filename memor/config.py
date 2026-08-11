@@ -93,6 +93,31 @@ def is_compress_older_turns() -> bool:
     return bool(load_config().get("compress_older_turns", False))
 
 
+def is_compress_source() -> bool:
+    """Whether to skeletonize file contents the agent has already moved past.
+
+    Source is 46.2% of tool-payload mass and `compress_text` has never touched
+    it, which is the single largest reason realized compression sits at 7.3%.
+    The reason it was withheld is real: an agent editing against elided lines
+    corrupts code. Two findings make it safe to enable deliberately.
+
+    The newest read of each file stays byte-exact, and that is the copy agents
+    actually edit — of 3,664 real edits in local transcripts, 3,660 targeted a
+    file whose read at edit time was the latest one.
+
+    The original remains retrievable. A live model, shown a skeleton and asked
+    for a value only present in an omitted body, called ``memor_retrieve`` and
+    answered correctly; 300 of 300 real source payloads round-tripped
+    byte-exact.
+
+    ``MEMOR_COMPRESS_SOURCE`` overrides config so it can be flipped per run.
+    """
+    env = os.environ.get("MEMOR_COMPRESS_SOURCE")
+    if env is not None and env.strip():
+        return env.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(load_config().get("compress_source", False))
+
+
 def set_compress_older_turns(enabled: bool) -> None:
     """Flip the flag and stamp when, so the change has a measurable boundary.
 
