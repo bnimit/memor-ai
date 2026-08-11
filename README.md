@@ -26,7 +26,8 @@ Compression is easy to verify and therefore easy to falsify, so these are measur
 
 | Measurement | Result | Measured on | Reproduce |
 |---|---|---|---|
-| Compression on tool output | **43.3%** saved | 6 large real sessions, production rules | `memor request-anatomy` |
+| Compression on tool output | **11.7%** saved | all tool output across 6 large real sessions | `memor request-anatomy` |
+| ...on the payloads it engages | **43.3%** saved | the subset it does not decline, same 6 sessions | `memor request-anatomy` |
 | Answer-critical retention | **96.2%** kept | 132 grounded cases from real edits | `memor eval-retention` |
 | ...against truncation at a comparable budget | **50.3%** kept | the same 132 cases | `memor eval-retention` |
 | Retrieval accuracy | **95.0%** any-hit, 86.7% all-gold | LongMemEval_S, n=120, published ground truth | `memor eval-longmemeval` |
@@ -43,7 +44,10 @@ weak compressor.** A coding-agent request is mostly things memor must not touch:
 | Conversation text | **23.9%** | rewriting it re-forms the provider's cached prefix |
 | Images | 0.4% | billed by dimensions, not bytes |
 
-At 43.3% on the compressible third, the ceiling for a whole request is **14.3%**.
+At 11.7% across all tool output, a whole request comes down by **3.9%**. Even
+at the 43.3% rate achieved on payloads the compressor engages, the ceiling for a
+whole request is 14.3% — and that higher figure describes a subset, not your
+bill.
 Any product claiming more than that on this shape of traffic is measuring a
 different denominator — typically log-heavy or document-heavy workloads where
 tool output is most of the request. `memor request-anatomy` prints this
