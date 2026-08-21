@@ -148,3 +148,18 @@ def test_failure_footer_survives():
 
     r = compress_text(text, content_type="search")
     assert "1 failed" in r.text
+
+
+def test_footer_survives_through_real_detection():
+    """As above: exercise detection rather than pinning the content type."""
+    from memor.compress import compress_text
+
+    lines = [f"docs/guide_{i % 3}.md:{i}: the quick brown fox jumps over it"
+             for i in range(60)]
+    lines.append("Completed: 2 succeeded, 0 failed")
+    text = "\n".join(lines)
+
+    r = compress_text(text)          # no content_type
+    assert r.content_type == "search"
+    assert "Completed: 2 succeeded, 0 failed" in r.text
+    assert r.tokens_after < r.tokens_before

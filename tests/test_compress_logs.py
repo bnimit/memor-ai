@@ -71,3 +71,29 @@ def test_run_summary_survives_even_when_not_in_last_lines():
     assert "Test Files  5 passed (5)" in r.text
     assert "Tests  15 passed (15)" in r.text
     assert r.tokens_after < r.tokens_before
+
+
+def test_run_summary_survives_through_real_detection():
+    """The committed verdict test pins ``content_type="log"``.
+
+    That skips ``detect_content_type``, so it cannot catch a payload being
+    routed to a different compressor than the one under test. An end-to-end
+    check over the installed hook found exactly that: a prose-shaped vitest
+    run classifies as ``text`` (lossless tidy, nothing removed) rather than
+    ``log``, so the earlier test proved less than it appeared to.
+    """
+    lines = [f"2026-01-01 10:00:00 INFO vitest chatter line {i}" for i in range(120)]
+    lines += [
+        " Test Files  5 passed (5)",
+        "      Tests  15 passed (15)",
+        "   Duration  1.60s",
+        "",
+        "--- Command finished with exit code: 0 ---",
+    ]
+    text = "\n".join(lines)
+
+    r = compress_text(text)          # no content_type: let detection decide
+    assert r.content_type == "log"
+    assert "Test Files  5 passed (5)" in r.text
+    assert "Tests  15 passed (15)" in r.text
+    assert r.tokens_after < r.tokens_before
