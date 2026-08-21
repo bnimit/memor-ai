@@ -48,17 +48,20 @@ requirement in the dependency tree.
 
 ## Wiring memor into it
 
-`memor-jcode-filter.py` translates between the two contracts: jcode passes raw
-tool output on stdin and reads the replacement from stdout, while memor's hook
-speaks the Claude Code PostToolUse JSON shape.
+Two files ship here. `memor-jcode-filter.py` translates between the contracts:
+jcode passes raw tool output on stdin and reads the replacement from stdout,
+while memor's hook speaks the Claude Code PostToolUse JSON shape.
+`memor-jcode-filter.sh` is the wrapper jcode invokes.
 
 ```toml
 # ~/.jcode/config.toml
 [hooks]
-post_tool = "/path/to/filter.sh"     # sh wrapper: exec python filter.py
+post_tool = "/path/to/memor/docs/jcode-patch/memor-jcode-filter.sh"
 post_tool_filter = true
 post_tool_timeout_ms = 15000
 ```
+
+Set `MEMOR_PYTHON` if memor lives in a virtualenv rather than on `python3`.
 
 Silence plus exit 0 means "no opinion", which is what makes the safety
 defaults compose: memor declines `read`/`edit`, failed commands and small
@@ -95,6 +98,44 @@ result. Each mode was run through the real fork and the transcript inspected:
 | crash mid-write (`kill -9`) | 17,136 chars (original) |
 
 15 `hooks::` tests cover the same paths at unit level.
+
+### Applied to a clean checkout
+
+The patch itself was verified as an artifact, not just as a working tree:
+`git apply --check` is clean against a fresh `--depth 1` clone of
+`1jehuang/jcode` at `a63dbc4`, applies to 6 files / 377 insertions, and the
+resulting binary builds (exit 0).
+
+Everything in the table below was then run against **that** binary using the
+two scripts shipped here, so it exercises the delivered artifacts rather than
+the working copy they came from:
+
+| configuration | stored `tool_result` | marker |
+|---|---|---|
+| baseline, `post_tool_filter = false` | 17,136 chars | absent |
+| `post_tool_filter = true` | **370 chars** | present |
+| `JCODE_HOOK_POST_TOOL_FILTER=1` (config says false) | **370 chars** | present |
+| `JCODE_HOOK_POST_TOOL_FILTER=0` (config says true) | 17,136 chars | absent |
+| `post_tool_filter = true`, no `post_tool` command | 17,136 chars | absent |
+
+The env override works in both directions, and enabling the flag without
+configuring a hook is a no-op rather than an error.
+
+### Filter edge cases
+
+Driven through `memor-jcode-filter.sh` as jcode invokes it. Every case exits 0
+with empty stdout, which is the "no opinion" signal that makes jcode keep the
+original:
+
+- empty stdin
+- output below memor's size floor
+- `read` tool (memor refuses: its results feed edits)
+- `JCODE_HOOK_TOOL_NAME` unset
+- binary / invalid UTF-8 input
+- **memor not importable at all** (wrong interpreter, missing install)
+
+The last one matters most for packaging: a user who configures the hook and
+then breaks their memor install still gets working tool output.
 
 ## What it is worth
 
