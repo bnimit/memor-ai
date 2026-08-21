@@ -22,9 +22,21 @@ _ERROR_PATTERN = re.compile(r'(error|fail|exception|fatal|critical)', re.IGNOREC
 
 #: Keys whose values are never truncated regardless of length. A diff or a
 #: traceback is the payload, not padding around it.
+#:
+#: ``content``/``stdout``/``stderr``/``output`` are here for the same reason,
+#: learned from a browser scrape: jcode's ``browser`` tool returns the whole
+#: page under ``content``, and truncating it to a 280-character stub reported
+#: a 98% saving while deleting the only thing the agent navigated in order to
+#: read.
+#:
+#: ``body`` is deliberately *not* here. A PR body or review comment is prose
+#: around the payload and is the case value truncation was built for; a page
+#: under ``content`` is the payload itself. The distinction is which one the
+#: agent asked for.
 _VERBATIM_KEYS = frozenset({
     "diff", "diff_hunk", "patch", "traceback", "stack", "stacktrace",
     "error", "errors", "message", "reason",
+    "content", "stdout", "stderr", "output",
 })
 
 

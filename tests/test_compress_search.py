@@ -113,3 +113,38 @@ def test_search_type_routes_here():
     result = compress_text(MANY)
     assert result.content_type == "search"
     assert result.tokens_after < result.tokens_before
+
+
+def test_trailing_status_footer_survives():
+    """A footer after the matches is a result, not a header.
+
+    Real regression: jcode's `batch` tool appends `Completed: 2 succeeded, 0
+    failed` as the final line of grep-shaped output. Only non-result lines
+    seen *before* the first match were kept, so the one line reporting whether
+    the batch actually succeeded was dropped from every payload.
+    """
+    from memor.compress import compress_text
+
+    # Repeated paths so there is genuine structure to fold; without a real
+    # saving the compressor correctly returns the input untouched and the
+    # test would pass for the wrong reason.
+    lines = ["Searching for commit=True:"]
+    lines += [f"path/to/repeated.py:{i}: some matching line" for i in range(30)]
+    lines += ["", "Completed: 2 succeeded, 0 failed"]
+    text = "\n".join(lines)
+
+    r = compress_text(text, content_type="search")
+    assert "Completed: 2 succeeded, 0 failed" in r.text
+    assert r.tokens_after < r.tokens_before
+
+
+def test_failure_footer_survives():
+    """The failing case matters more than the passing one."""
+    from memor.compress import compress_text
+
+    lines = [f"src/mod.rs:{i}: fn handler()" for i in range(30)]
+    lines += ["Completed: 1 succeeded, 1 failed"]
+    text = "\n".join(lines)
+
+    r = compress_text(text, content_type="search")
+    assert "1 failed" in r.text

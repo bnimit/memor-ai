@@ -26,6 +26,14 @@ MIN_LINES = 8
 #: Non-result lines (headers, summaries) kept from the top of the payload.
 _PREAMBLE_KEPT = 3
 
+#: Non-result lines kept from the *end* of the payload. A run's verdict is
+#: appended after the matches, not before them: jcode's ``batch`` tool ends
+#: grep-shaped output with ``Completed: 2 succeeded, 0 failed``, and keeping
+#: only leading non-result lines dropped the one line saying whether the work
+#: succeeded. Blank lines are ignored so a trailing newline does not consume
+#: the budget.
+_EPILOGUE_KEPT = 2
+
 
 def compress_search(text: str) -> str:
     """Fold repeated paths and duplicate match text; keep every location."""
@@ -35,6 +43,7 @@ def compress_search(text: str) -> str:
 
     by_file: OrderedDict[str, OrderedDict[str, list[str]]] = OrderedDict()
     preamble: list[str] = []
+    epilogue: list[str] = []
     matched = 0
 
     for line in lines:
@@ -43,8 +52,14 @@ def compress_search(text: str) -> str:
             matched += 1
             path, number, content = m.group(1), m.group(2), m.group(3).rstrip()
             by_file.setdefault(path, OrderedDict()).setdefault(content, []).append(number)
-        elif line.strip() and not by_file:
-            preamble.append(line)
+            # A non-result line seen earlier was a header, not a footer: the
+            # matches continue past it.
+            epilogue.clear()
+        elif line.strip():
+            if not by_file:
+                preamble.append(line)
+            else:
+                epilogue.append(line)
 
     # Not actually structured search output — leave it alone rather than guess.
     if matched < MIN_LINES:
@@ -57,6 +72,7 @@ def compress_search(text: str) -> str:
             # Every line number is kept: locations are what the caller asked
             # for, and they cost a few characters against a repeated line.
             out.append(f"  {','.join(numbers)}: {content}")
+    out.extend(epilogue[-_EPILOGUE_KEPT:])
 
     result = "\n".join(out)
     return result if len(result) < len(text) else text

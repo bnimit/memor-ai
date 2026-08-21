@@ -131,3 +131,24 @@ def test_truncated_values_keep_the_payload_parseable():
     out = compress_json(payload)
     parsed = json.loads(out)          # must not raise
     assert "body" in parsed and "items" in parsed
+
+
+def test_page_content_is_not_elided_to_a_stub():
+    """`content` is the payload for a page scrape, not padding around it.
+
+    Real regression: jcode's `browser` tool returns
+    ``{"content": {"content": "<page text>", "url": ...}}``. The long-value
+    rule truncated the page text to a 280-character stub, reporting a 98%
+    "saving" while deleting the entire thing the agent navigated in order to
+    read. A saving that removes the answer is a wrong answer, not a saving.
+    """
+    import json
+
+    from memor.compress.json_crush import compress_json
+
+    page = "Prices start at 29 EUR per seat. " * 400
+    payload = json.dumps({"content": {"content": page, "url": "http://x/"}})
+    parsed = json.loads(compress_json(payload))
+    kept = parsed["content"]["content"]
+    assert "29 EUR per seat" in kept
+    assert len(kept) > len(page) * 0.5, "page content was gutted"
