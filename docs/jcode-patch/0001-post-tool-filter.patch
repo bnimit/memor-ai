@@ -1,0 +1,510 @@
+From 8386a7b78a65293929489cb12375d3bef4ecc7dc Mon Sep 17 00:00:00 2001
+From: nimit <nimit@local>
+Date: Fri, 21 Aug 2026 23:54:05 +0530
+Subject: [PATCH] Let post_tool rewrite tool output, opt-in and fail-open
+
+`post_tool` is an observer and its stdout is discarded, so nothing outside
+jcode can reduce what a tool result contributes to the context window.
+`pre_tool` can gate a call but only by blocking it. That leaves no way to
+compress a noisy build log or redact a secret a command printed.
+
+`hooks.post_tool_filter = true` makes post_tool synchronous: it receives the
+tool output on stdin and its stdout replaces that output. Exit 0 with empty
+stdout means "no opinion" and is the common case for a filter that only
+handles some tools. A non-zero exit, a timeout, invalid UTF-8, or a missing
+binary all keep the original, matching the reasoning already written down for
+pre_tool: a broken policy script should degrade to "no policy" rather than
+brick a session. Here it costs a compression, never a tool result.
+
+Off by default. An observer can never slow a turn, and that property is worth
+keeping unless the user asks otherwise.
+
+Runs before guard_context_overflow, so a hook that shrinks a large payload can
+keep it under the limit instead of being truncated first. The filtered form is
+what enters the transcript, so it is also what gets resent every later turn,
+which is where the saving actually accrues in an agent loop.
+
+Output may grow, bounded. A strict "must not grow" rule rejected redaction,
+which is one of the two obvious uses: "[redacted]" is longer than the secret
+it replaces. The ceiling is a slack multiple instead, which still stops a
+runaway hook from inflating context without limit.
+
+Verified end to end against a forked binary: a 400-line build log emitted by
+the real bash tool reached the hook, came back as 8 lines with an explicit
+elision marker, and jcode used the filtered form. 15 hooks tests pass.
+---
+ crates/jcode-app-core/src/tool/mod.rs         |  17 ++
+ crates/jcode-base/src/config/default_file.rs  |  18 ++
+ crates/jcode-base/src/config/env_overrides.rs |  11 +
+ crates/jcode-base/src/hooks.rs                | 272 ++++++++++++++++++
+ crates/jcode-config-types/src/lib.rs          |  15 +
+ docs/HOOKS.md                                 |  44 +++
+ 6 files changed, 377 insertions(+)
+
+diff --git a/crates/jcode-app-core/src/tool/mod.rs b/crates/jcode-app-core/src/tool/mod.rs
+index fd5dc4e..4daa045 100644
+--- a/crates/jcode-app-core/src/tool/mod.rs
++++ b/crates/jcode-app-core/src/tool/mod.rs
+@@ -757,6 +757,23 @@ impl Registry {
+             }
+         };
+ 
++        // A filtering post_tool hook rewrites the output before anything else
++        // sees it, so the transcript stores the filtered form and every later
++        // turn resends that rather than the original. Runs ahead of the
++        // overflow guard so a hook that shrinks the payload can keep it under
++        // the limit instead of being truncated first. No-op unless
++        // `hooks.post_tool_filter` is on; every failure keeps the original.
++        if let Some(filtered) = crate::hooks::run_post_tool_filter(
++            &ctx.session_id,
++            ctx.working_dir.as_ref().map(|d| d.display().to_string()).as_deref(),
++            resolved_name,
++            &output.output,
++        )
++        .await
++        {
++            output.output = filtered;
++        }
++
+         // Context overflow guard: check if this output would push us over the limit
+         output = self
+             .guard_context_overflow(name, output, accepts_large_output(&input))
+diff --git a/crates/jcode-base/src/config/default_file.rs b/crates/jcode-base/src/config/default_file.rs
+index 568efbf..be17d88 100644
+--- a/crates/jcode-base/src/config/default_file.rs
++++ b/crates/jcode-base/src/config/default_file.rs
+@@ -590,6 +590,24 @@ swarm_max_concurrent_agents = 32
+ # JCODE_HOOK_STATUS, JCODE_HOOK_DURATION_MS, JCODE_HOOK_OUTPUT_BYTES,
+ # JCODE_HOOK_ERROR.
+ # post_tool = ""
++#
++# Let post_tool rewrite what the model sees, instead of only observing it
++# (default: false). With this on, post_tool runs synchronously, receives the
++# tool output on stdin, and its stdout replaces that output. Empty stdout, a
++# non-zero exit, invalid UTF-8, a timeout, or a missing binary all keep the
++# original, so a broken filter degrades to "no filter" rather than costing a
++# tool result. Output may grow (redaction is longer than the secret it
++# replaces) but not without bound.
++#
++# Off by default deliberately: an observer can never slow a turn, and that is
++# worth keeping unless you have asked for otherwise. Useful for compressing
++# noisy build logs before they enter the transcript, or redacting secrets that
++# a command printed.
++# post_tool_filter = false
++#
++# Max milliseconds to wait for a filtering post_tool before keeping the
++# original output (default: 5000).
++# post_tool_timeout_ms = 5000
+ 
+ [ambient]
+ # Ambient mode: background agent that maintains your codebase
+diff --git a/crates/jcode-base/src/config/env_overrides.rs b/crates/jcode-base/src/config/env_overrides.rs
+index 1fe7250..5669ddb 100644
+--- a/crates/jcode-base/src/config/env_overrides.rs
++++ b/crates/jcode-base/src/config/env_overrides.rs
+@@ -482,6 +482,17 @@ impl Config {
+                 self.hooks.pre_tool_timeout_ms = parsed;
+             }
+         }
++        if let Ok(v) = std::env::var("JCODE_HOOK_POST_TOOL_TIMEOUT_MS") {
++            if let Ok(parsed) = v.trim().parse::<u64>() {
++                self.hooks.post_tool_timeout_ms = parsed;
++            }
++        }
++        if let Ok(v) = std::env::var("JCODE_HOOK_POST_TOOL_FILTER") {
++            let flag = v.trim().to_ascii_lowercase();
++            // Only explicit truthy values switch a detached observer into a
++            // synchronous filter; anything unrecognised leaves it off.
++            self.hooks.post_tool_filter = matches!(flag.as_str(), "1" | "true" | "yes" | "on");
++        }
+ 
+         // Web search
+         if let Ok(v) = std::env::var("JCODE_WEBSEARCH_ENGINE")
+diff --git a/crates/jcode-base/src/hooks.rs b/crates/jcode-base/src/hooks.rs
+index 32a0293..64c9b5e 100644
+--- a/crates/jcode-base/src/hooks.rs
++++ b/crates/jcode-base/src/hooks.rs
+@@ -37,6 +37,15 @@ const TOOL_INPUT_ENV_LIMIT: usize = 16 * 1024;
+ /// Maximum chars of hook stderr used as a block reason.
+ const BLOCK_REASON_LIMIT: usize = 2000;
+ 
++/// How much larger than its input a `post_tool` filter's output may be.
++///
++/// Not 1x: a filter is not only a compressor, and redaction expands its input
++/// because the replacement is longer than the secret. A generous multiple still
++/// bounds a runaway hook, which is the only thing worth preventing here.
++const POST_TOOL_GROWTH_LIMIT: usize = 2;
++/// Absolute slack for tiny payloads, where a multiple is too tight to be useful.
++const POST_TOOL_GROWTH_FLOOR: usize = 4096;
++
+ /// Decision returned by the `pre_tool` gate hook.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub enum GateDecision {
+@@ -292,6 +301,156 @@ pub async fn run_pre_tool_gate(
+     decision
+ }
+ 
++/// Run the `post_tool` hook as a *filter*, letting it rewrite the tool output.
++///
++/// Only active when `hooks.post_tool_filter` is set. `post_tool` is otherwise a
++/// detached observer that can never slow a turn, and that property is worth
++/// keeping by default; a user who wants to compress or redact tool output has
++/// to ask for the synchronous behaviour explicitly.
++///
++/// The hook receives the same env as the observer form plus the tool output on
++/// stdin. Contract, deliberately the same shape as the `pre_tool` gate:
++///
++/// - exit 0 with non-empty stdout: stdout replaces the tool output
++/// - exit 0 with empty stdout: output unchanged ("no opinion")
++/// - anything else (non-zero exit, timeout, spawn failure): output unchanged
++///
++/// Every failure path keeps the original output. A filter that crashes must
++/// cost the user a compression, never a tool result.
++pub async fn run_post_tool_filter(
++    session_id: &str,
++    working_dir: Option<&str>,
++    tool_name: &str,
++    output: &str,
++) -> Option<String> {
++    if !crate::config::config().hooks.post_tool_filter {
++        return None;
++    }
++    let command_lines = hook_commands("post_tool");
++    if command_lines.is_empty() {
++        return None;
++    }
++
++    let mut event = HookEvent::new("post_tool")
++        .session_id(session_id)
++        .field("TOOL_NAME", tool_name)
++        .field("MODE", "filter")
++        .field("OUTPUT_BYTES", output.len().to_string());
++    if let Some(cwd) = working_dir {
++        event = event.cwd(cwd);
++    }
++
++    // Hooks chain: each sees the previous one's result, so two filters compose
++    // instead of racing to replace the same original.
++    let mut current: Option<String> = None;
++    for command_line in command_lines {
++        let input = current.as_deref().unwrap_or(output);
++        if let Some(filtered) = run_post_tool_filter_command(&command_line, &event, input).await {
++            current = Some(filtered);
++        }
++    }
++    current
++}
++
++async fn run_post_tool_filter_command(
++    command_line: &str,
++    event: &HookEvent,
++    output: &str,
++) -> Option<String> {
++    let std_cmd = match build_hook_process(command_line, event) {
++        Ok(cmd) => cmd,
++        Err(error) => {
++            crate::logging::warn(&format!(
++                "Hook 'post_tool' command '{command_line}' is invalid: {error} (keeping original output)"
++            ));
++            return None;
++        }
++    };
++
++    let mut cmd = tokio::process::Command::from(std_cmd);
++    cmd.stdin(std::process::Stdio::piped())
++        .stdout(std::process::Stdio::piped())
++        .stderr(std::process::Stdio::null())
++        .kill_on_drop(true);
++
++    let mut child = match cmd.spawn() {
++        Ok(child) => child,
++        Err(error) => {
++            crate::logging::warn(&format!(
++                "Hook 'post_tool' command '{command_line}' failed to start: {error} (keeping original output)"
++            ));
++            return None;
++        }
++    };
++
++    if let Some(mut stdin) = child.stdin.take() {
++        use tokio::io::AsyncWriteExt;
++        // A filter that exits before reading everything (head-style) closes the
++        // pipe; that is an EPIPE, not an error worth discarding its result for.
++        let _ = stdin.write_all(output.as_bytes()).await;
++        drop(stdin);
++    }
++
++    let timeout =
++        std::time::Duration::from_millis(crate::config::config().hooks.post_tool_timeout_ms.max(1));
++    let result = match tokio::time::timeout(timeout, child.wait_with_output()).await {
++        Ok(Ok(result)) => result,
++        Ok(Err(error)) => {
++            crate::logging::warn(&format!(
++                "Hook 'post_tool' command '{command_line}' failed: {error} (keeping original output)"
++            ));
++            return None;
++        }
++        Err(_elapsed) => {
++            crate::logging::warn(&format!(
++                "Hook 'post_tool' command '{command_line}' timed out after {}ms (keeping original output)",
++                timeout.as_millis()
++            ));
++            return None;
++        }
++    };
++
++    if result.status.code() != Some(0) {
++        crate::logging::warn(&format!(
++            "Hook 'post_tool' command '{command_line}' exited with {:?} (keeping original output)",
++            result.status.code()
++        ));
++        return None;
++    }
++
++    // Invalid UTF-8 means the filter is not producing text the model can read.
++    let filtered = match String::from_utf8(result.stdout) {
++        Ok(text) => text,
++        Err(_) => {
++            crate::logging::warn(&format!(
++                "Hook 'post_tool' command '{command_line}' returned invalid UTF-8 (keeping original output)"
++            ));
++            return None;
++        }
++    };
++    if filtered.trim().is_empty() {
++        return None;
++    }
++    // A filter must not be able to inflate context without limit, but it is not
++    // only a compressor: redaction legitimately grows its input, because
++    // "[redacted]" is longer than the secret it replaces. So the ceiling is a
++    // slack multiple rather than the input size, which stops a runaway hook
++    // while leaving room for a substitution that expands.
++    let ceiling = output
++        .len()
++        .saturating_mul(POST_TOOL_GROWTH_LIMIT)
++        .max(POST_TOOL_GROWTH_FLOOR);
++    if filtered.len() > ceiling {
++        crate::logging::warn(&format!(
++            "Hook 'post_tool' command '{command_line}' returned far more than it was given ({} -> {} bytes, ceiling {ceiling}; keeping original output)",
++            output.len(),
++            filtered.len()
++        ));
++        return None;
++    }
++    Some(filtered)
++}
++
+ async fn run_pre_tool_command(
+     command_line: &str,
+     event: &HookEvent,
+@@ -395,6 +554,119 @@ mod tests {
+         assert_eq!(payload["duration_ms"], "1200");
+     }
+ 
++    /// Build a throwaway filter script and return its path.
++    fn filter_script(body: &str) -> std::path::PathBuf {
++        use std::io::Write;
++        let dir = std::env::temp_dir().join(format!(
++            "jcode-filter-test-{}",
++            std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .unwrap()
++                .as_nanos()
++        ));
++        std::fs::create_dir_all(&dir).unwrap();
++        let path = dir.join("filter.sh");
++        let mut f = std::fs::File::create(&path).unwrap();
++        writeln!(f, "#!/bin/sh\n{body}").unwrap();
++        drop(f);
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
++        }
++        path
++    }
++
++    #[test]
++    fn post_tool_filter_is_off_unless_enabled() {
++        // The observer property is the default and must stay that way: a hook
++        // that cannot slow a turn is why post_tool is safe to configure.
++        let cfg = jcode_config_types::HooksConfig::default();
++        assert!(!cfg.post_tool_filter);
++        assert_eq!(cfg.post_tool_timeout_ms, 5000);
++    }
++
++    #[tokio::test]
++    async fn post_tool_filter_rewrites_output_when_enabled() {
++        let script = filter_script("sed 's/SECRET/[redacted]/g'");
++        let event = HookEvent::new("post_tool").session_id("s1");
++        let out = run_post_tool_filter_command(
++            script.to_str().unwrap(),
++            &event,
++            "before SECRET after SECRET tail",
++        )
++        .await;
++        assert_eq!(
++            out.as_deref(),
++            Some("before [redacted] after [redacted] tail")
++        );
++
++        // ...and the compression case it was actually built for.
++        let crush = filter_script("head -c 40");
++        let long = "noise ".repeat(200);
++        let crushed = run_post_tool_filter_command(crush.to_str().unwrap(), &event, &long).await;
++        assert!(crushed.is_some_and(|t| t.len() < long.len()));
++    }
++
++    #[tokio::test]
++    async fn post_tool_filter_keeps_original_on_failure() {
++        let event = HookEvent::new("post_tool").session_id("s1");
++        let payload = "the original output that must survive";
++
++        // Non-zero exit: the filter is broken, not the output.
++        let failing = filter_script("cat >/dev/null; exit 3");
++        assert!(
++            run_post_tool_filter_command(failing.to_str().unwrap(), &event, payload)
++                .await
++                .is_none()
++        );
++
++        // Empty stdout means "no opinion", not "delete everything".
++        let silent = filter_script("cat >/dev/null; exit 0");
++        assert!(
++            run_post_tool_filter_command(silent.to_str().unwrap(), &event, payload)
++                .await
++                .is_none()
++        );
++
++        // A command that does not exist must not cost a tool result.
++        assert!(
++            run_post_tool_filter_command(
++                "/nonexistent/jcode-filter-does-not-exist",
++                &event,
++                payload
++            )
++            .await
++            .is_none()
++        );
++    }
++
++    #[tokio::test]
++    async fn post_tool_filter_allows_redaction_that_grows_a_little() {
++        // A filter is not only a compressor: "[redacted]" is longer than the
++        // secret it replaces, so a strict "must not grow" rule would reject the
++        // single most obvious use for this hook.
++        let script = filter_script("sed 's/SECRET/[redacted]/g'");
++        let event = HookEvent::new("post_tool").session_id("s1");
++        let out =
++            run_post_tool_filter_command(script.to_str().unwrap(), &event, "a SECRET b SECRET c")
++                .await;
++        assert_eq!(out.as_deref(), Some("a [redacted] b [redacted] c"));
++    }
++
++    #[tokio::test]
++    async fn post_tool_filter_refuses_runaway_growth() {
++        // Bounded, though: a hook must not be able to inflate context freely.
++        let script = filter_script("cat >/dev/null; head -c 200000 /dev/zero | tr '\\0' 'x'");
++        let event = HookEvent::new("post_tool").session_id("s1");
++        let payload = "x".repeat(5000);
++        assert!(
++            run_post_tool_filter_command(script.to_str().unwrap(), &event, &payload)
++                .await
++                .is_none()
++        );
++    }
++
+     #[test]
+     fn truncate_bytes_respects_char_boundaries() {
+         let text = "héllo wörld";
+diff --git a/crates/jcode-config-types/src/lib.rs b/crates/jcode-config-types/src/lib.rs
+index 2073ca0..bd36d51 100644
+--- a/crates/jcode-config-types/src/lib.rs
++++ b/crates/jcode-config-types/src/lib.rs
+@@ -857,6 +857,19 @@ pub struct HooksConfig {
+     /// Max milliseconds to wait for the pre_tool gate before failing open
+     /// (default: 5000). Env override: JCODE_HOOK_PRE_TOOL_TIMEOUT_MS.
+     pub pre_tool_timeout_ms: u64,
++    /// Let `post_tool` rewrite the tool result the model sees (default: false).
++    ///
++    /// Off by default because `post_tool` is otherwise a detached observer that
++    /// can never slow a turn; enabling it makes the hook synchronous. When on,
++    /// the hook's stdout replaces the tool output. Empty stdout, a non-zero
++    /// exit, a timeout, or a spawn failure all leave the output untouched, so a
++    /// broken filter degrades to "no filter" rather than losing a tool result.
++    /// Env override: JCODE_HOOK_POST_TOOL_FILTER.
++    pub post_tool_filter: bool,
++    /// Max milliseconds to wait for a filtering post_tool hook before giving up
++    /// and keeping the original output (default: 5000).
++    /// Env override: JCODE_HOOK_POST_TOOL_TIMEOUT_MS.
++    pub post_tool_timeout_ms: u64,
+ }
+ 
+ impl Default for HooksConfig {
+@@ -869,6 +882,8 @@ impl Default for HooksConfig {
+             pre_tool: None,
+             post_tool: None,
+             pre_tool_timeout_ms: 5000,
++            post_tool_filter: false,
++            post_tool_timeout_ms: 5000,
+         }
+     }
+ }
+diff --git a/docs/HOOKS.md b/docs/HOOKS.md
+index 5025ca5..cc9e422 100644
+--- a/docs/HOOKS.md
++++ b/docs/HOOKS.md
+@@ -66,6 +66,50 @@ Fires after every tool call. Extra fields: `JCODE_HOOK_TOOL_NAME`,
+ `JCODE_HOOK_STATUS`, `JCODE_HOOK_DURATION_MS`, `JCODE_HOOK_OUTPUT_BYTES` (on
+ success), `JCODE_HOOK_ERROR` (on failure).
+ 
++## Filter hook: `post_tool` with `post_tool_filter`
++
++By default `post_tool` is an observer and its stdout is discarded, so nothing
++can reduce what a tool result contributes to the context window. Setting
++`post_tool_filter = true` makes it a filter instead:
++
++```toml
++[hooks]
++post_tool = "~/bin/jcode-compress-output"
++post_tool_filter = true
++post_tool_timeout_ms = 5000
++```
++
++- The hook receives the tool output on **stdin**, plus the usual env fields and
++  `JCODE_HOOK_MODE=filter`.
++- **Exit 0 with output on stdout**: stdout replaces the tool result.
++- **Exit 0 with empty stdout**: unchanged. "No opinion" is a useful answer, and
++  the common one for a filter that only touches some tools.
++- **Anything else** (non-zero exit, timeout, invalid UTF-8, missing binary):
++  unchanged, with a warning logged.
++
++Every failure path keeps the original output. A broken filter should cost a
++compression, never a tool result.
++
++The filtered form is what enters the transcript, so it is also what gets resent
++on every later turn. That is the point: an agent loop repeats its whole history
++each step, so shrinking a payload once shrinks every subsequent request. It runs
++before the context-overflow guard, so a hook that shrinks a large payload can
++keep it under the limit rather than having it truncated first.
++
++Output is allowed to grow, because redaction is longer than the secret it
++replaces, but only within a bounded multiple of the input.
++
++### Example: redact secrets a command printed
++
++```bash
++#!/usr/bin/env bash
++# ~/bin/jcode-compress-output
++case "$JCODE_HOOK_TOOL_NAME" in
++  bash) sed -E 's/(sk-[A-Za-z0-9]{8})[A-Za-z0-9]+/\1.../g' ;;
++  *)    exit 0 ;;   # no opinion: output kept as-is
++esac
++```
++
+ ## Gate hook: `pre_tool`
+ 
+ `pre_tool` runs **synchronously before every tool call** and can block it:
+-- 
+2.55.0
+
