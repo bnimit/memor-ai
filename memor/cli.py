@@ -752,18 +752,28 @@ POSTTOOL_HOOK_MARKER = "memor-posttool-compress"
 def _install_posttool_compress(settings_path: Path, hook_command: str) -> None:
     """Register the PostToolUse output compressor for Claude Code.
 
-    Matched to Bash only. The hook itself re-checks the tool name, but keeping
-    the matcher narrow means no process is spawned for the Read and Edit calls
-    it would refuse anyway, which is most of them.
+    The matcher is derived from ``COMPRESSIBLE_TOOLS`` rather than hardcoded.
+    It was pinned to ``Bash`` while the hook's own allowlist grew, and the two
+    disagreeing silently is the worst outcome: the wider allowlist becomes dead
+    code, and nothing reports that the tools added are never reached.
+
+    It stays an allowlist rather than ``.*`` for the reason it always was: the
+    hook re-checks the tool name anyway, and a narrow matcher means no process
+    is spawned for the Read and Edit calls it would refuse, which is most of
+    them.
     """
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+
     if settings_path.exists():
         data = json.loads(settings_path.read_text())
     else:
         data = {}
     hooks = data.setdefault("hooks", {})
     post_hooks = hooks.setdefault("PostToolUse", [])
+    # Case-insensitive so one matcher serves agents that disagree on
+    # capitalisation for the same tool (`Bash` in Claude Code, `bash` in jcode).
     entry = {
-        "matcher": "Bash",
+        "matcher": f"(?i)({'|'.join(sorted(COMPRESSIBLE_TOOLS))})",
         "hooks": [{"type": "command", "command": hook_command, "timeout": 10}],
     }
     for i, group in enumerate(post_hooks):

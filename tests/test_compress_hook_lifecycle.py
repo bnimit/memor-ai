@@ -77,7 +77,16 @@ def test_install_use_measure_lifecycle(sandbox_home, monkeypatch):
 
     config = json.loads(settings.read_text())
     group = config["hooks"]["PostToolUse"][0]
-    assert group["matcher"] == "Bash"
+    # The matcher must admit every tool the hook is willing to rewrite, or the
+    # two disagree silently and the wider allowlist is dead code.
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+    import re as _re
+    for tool in COMPRESSIBLE_TOOLS:
+        assert _re.fullmatch(group["matcher"], tool, _re.IGNORECASE), (
+            f"matcher {group['matcher']!r} excludes {tool!r}")
+    # ...and must not spawn a process for the ones it always refuses.
+    for tool in ("Read", "Edit", "Grep", "Glob", "Write"):
+        assert not _re.fullmatch(group["matcher"], tool, _re.IGNORECASE), tool
 
     # 2. Use. Claude Code runs a build and fires the hook with the result.
     original = _noisy_build_log()
@@ -221,7 +230,11 @@ def test_cli_install_command_runs(sandbox_home, monkeypatch):
     assert result.exit_code == 0, result.output
     assert result.exception is None
     config = json.loads((sandbox_home / ".claude" / "settings.json").read_text())
-    assert config["hooks"]["PostToolUse"][0]["matcher"] == "Bash"
+    import re as _re
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+    matcher = config["hooks"]["PostToolUse"][0]["matcher"]
+    for tool in COMPRESSIBLE_TOOLS:
+        assert _re.fullmatch(matcher, tool, _re.IGNORECASE), tool
 
 
 def test_cli_uninstall_command_runs(sandbox_home, monkeypatch):

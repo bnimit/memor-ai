@@ -241,15 +241,30 @@ def test_running_the_hook_never_writes_to_the_real_home(tmp_path):
 
 # --- install / uninstall ----------------------------------------------------
 
-def test_install_registers_bash_matched_posttool_hook(tmp_path):
+def test_install_registers_matcher_covering_the_allowlist(tmp_path):
+    """The matcher and the allowlist must not drift apart.
+
+    The matcher was pinned to `Bash` while the hook's own allowlist grew.
+    Claude Code never spawns the hook for a tool the matcher excludes, so the
+    additions were unreachable and nothing said so.
+    """
+    import re
+
     from memor.cli import _install_posttool_compress
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS
 
     settings = tmp_path / "settings.json"
     _install_posttool_compress(settings, "/usr/local/bin/memor-posttool-compress")
 
     data = json.loads(settings.read_text())
     group = data["hooks"]["PostToolUse"][0]
-    assert group["matcher"] == "Bash"
+    for tool in COMPRESSIBLE_TOOLS:
+        assert re.fullmatch(group["matcher"], tool), tool
+    # Claude Code capitalises; jcode does not. One matcher serves both.
+    assert re.fullmatch(group["matcher"], "Bash")
+    # Still an allowlist: no process spawned for what it always refuses.
+    for tool in ("Read", "Edit", "Grep", "Glob", "batch", "browser"):
+        assert not re.fullmatch(group["matcher"], tool), tool
     assert "memor-posttool-compress" in group["hooks"][0]["command"]
 
 
