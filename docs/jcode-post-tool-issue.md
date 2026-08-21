@@ -51,7 +51,7 @@ Mirroring the existing `pre_tool` machinery:
 ## What it is worth, measured
 
 I replayed a compressor over **71 real jcode sessions (7.15M tokens)** rather
-than estimating. Request anatomy:
+than estimating. Request anatomy, measured on transcript content:
 
 | slice | share |
 |---|---|
@@ -60,23 +60,43 @@ than estimating. Request anatomy:
 | reasoning | 5.7% |
 | conversation | 5.2% |
 
-Result of compressing only tool output that is safe to touch:
+Compressing only the tool output that is safe to touch:
 
 ```
 fired on 181 results   233,459 -> 105,739 tokens
 saved 127,720          (54.7% when it fires)
-whole-request saving   1.79%
-answer-critical retention  94.7%
 ```
 
-**1.79% of a turn** is the honest figure, not a headline number. It is worth
-having on a flat-rate plan, where the currency is context before the 5-hour
-window closes rather than dollars, but I would not oversell it.
+The rate when it fires is high; the realized figure is not, and the gap is
+coverage rather than compressor quality:
 
-Two things that constrain it, both of which argue the hook must be *allowed* to
-be conservative rather than encouraged to be aggressive:
+```
+tool_result tokens total  4,550,619   (10,947 results)
+the hook engages on         233,459   (181 results)
+coverage                        5.1% of tool output, 1.7% by count
+```
 
-- Most tool output must not be rewritten. Read/Grep/Glob feed edits directly.
+Most tool output is declined on purpose: `read`/`edit` feed edits, failed
+commands are what the user is debugging, and anything under ~2 KB is not worth
+the risk of eliding something.
+
+**The realized saving is ~1%.** Reconstructing every request as the transcript
+prefix before each assistant turn (10,903 requests, mean 132K tokens, which
+matches the mean of 3,992 real proxied requests in my own ledger) gives
+**0.98%**. A resend-weighted estimate over the same corpus gives 0.96%. A
+naive per-session figure gives 1.68%, and that one is optimistic: it counts
+each payload once, while a real agent resends the whole transcript every turn,
+and the resent mass is dominated by tool-use arguments, which are the code being
+written and must never be touched.
+
+So: worth having on a flat-rate plan, where the currency is context before the
+5-hour window closes rather than dollars. Not a rate-limit fix, and I would
+rather say so than have this closed as oversold.
+
+Two constraints that argue the hook must be *allowed* to be conservative rather
+than encouraged to be aggressive:
+
+- Read/Grep/Glob results feed edits directly and must stay byte-exact.
 - `batch` looked like the single best target (76% compressible) until I checked
   what it runs: 383 `bash` calls but also **171 `read`** on the same corpus. Its
   result embeds file reads, so compressing it would launder exactly the payload
