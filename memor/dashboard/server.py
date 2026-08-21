@@ -419,8 +419,24 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.get("/api/version")
     def version():
+        """Version, plus a fingerprint of the page currently on disk.
+
+        The dashboard polls data every 30s but never re-fetches its own HTML,
+        so a tab left open across an upgrade keeps rendering the old markup
+        indefinitely. A new section can be shipped, serving correctly, and
+        still be invisible to the person who has had the page open all week.
+        The fingerprint lets the page notice that and reload itself once.
+        """
         from memor import __version__
-        return {"version": __version__}
+
+        asset = "?"
+        try:
+            html_path = STATIC_DIR / "index.html"
+            stat = html_path.stat()
+            asset = f"{int(stat.st_mtime)}-{stat.st_size}"
+        except OSError:
+            pass
+        return {"version": __version__, "asset": asset}
 
     @app.get("/api/health")
     def health():

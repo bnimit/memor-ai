@@ -325,3 +325,24 @@ def test_savings_periods_rejects_out_of_range_days(tmp_path):
     client = TestClient(create_app(db_path=str(tmp_path / "m.db")))
     assert client.get("/api/savings-periods?days=0").status_code == 422
     assert client.get("/api/savings-periods?days=99999").status_code == 422
+
+
+def test_version_endpoint_fingerprints_the_served_page(tmp_path):
+    """A stale tab must be able to notice it is stale.
+
+    The dashboard polls data every 30s but never re-fetches its own HTML, so a
+    tab left open across an upgrade renders the old markup indefinitely. That
+    is how a shipped, correctly-serving section stays invisible to the person
+    who has had the page open all week.
+    """
+    from fastapi.testclient import TestClient
+
+    from memor.dashboard.server import create_app
+
+    client = TestClient(create_app(db_path=str(tmp_path / "m.db")))
+    first = client.get("/api/version").json()
+    assert "version" in first
+    assert first.get("asset"), "no asset fingerprint to compare against"
+    # Stable across calls: a fingerprint that changed on its own would reload
+    # the page in a loop.
+    assert client.get("/api/version").json()["asset"] == first["asset"]

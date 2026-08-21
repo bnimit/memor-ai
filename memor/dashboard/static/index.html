@@ -2234,13 +2234,25 @@
     var id = (location.hash || '').replace(/^#/, '') || 'overview';
     if (id !== activePane && isValidPane(id)) switchPane(id);
   });
-  (async function() {
+  // The 30s poll refreshes data but never the page's own markup, so a tab left
+  // open across an upgrade keeps rendering the old HTML forever: a new section
+  // can ship, serve correctly, and still be invisible to whoever has had the
+  // dashboard open all week. Reload once when the served page changes.
+  var LOADED_ASSET = null;
+  async function checkForNewBuild() {
     try {
       var v = await api('/api/version');
       document.getElementById('version-badge').textContent = 'v' + v.version;
+      if (LOADED_ASSET === null) { LOADED_ASSET = v.asset; return; }
+      if (v.asset && v.asset !== LOADED_ASSET) location.reload();
     } catch (e) {}
+  }
+
+  (async function() {
+    await checkForNewBuild();
     switchPane(activePane);
     setInterval(refresh, 30000);
+    setInterval(checkForNewBuild, 30000);
   })();
 })();
 </script>
