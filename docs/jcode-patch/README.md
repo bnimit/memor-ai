@@ -81,8 +81,20 @@ where the saving has to survive:
 
 **97.6% on this payload**, and the flag is the only thing that differs.
 
-15 `hooks::` tests pass, including fail-open on non-zero exit, empty stdout,
-missing binary, timeout, and runaway growth.
+### Fail-open, checked against the running binary
+
+The safety property is that a broken filter costs a compression, never a tool
+result. Each mode was run through the real fork and the transcript inspected:
+
+| broken filter | stored `tool_result` |
+|---|---|
+| non-zero exit | 17,136 chars (original) |
+| empty stdout | 17,136 chars (original) |
+| timeout (sleep past the limit) | 17,136 chars (original) |
+| invalid UTF-8 | 17,136 chars (original) |
+| crash mid-write (`kill -9`) | 17,136 chars (original) |
+
+15 `hooks::` tests cover the same paths at unit level.
 
 ## What it is worth
 
