@@ -468,6 +468,37 @@
       </div>
     </section>
 
+    <section id="savings-periods-section" style="display:none;">
+      <div class="section-label"><span class="dot"></span> Token savings over time</div>
+      <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">
+        Hook and proxy kept apart: blended, a change in traffic mix reads as a change in performance.
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button class="sp-tab" data-period="daily">Daily</button>
+        <button class="sp-tab" data-period="weekly">Weekly</button>
+        <button class="sp-tab" data-period="monthly">Monthly</button>
+      </div>
+      <div class="agent-compare" id="savings-periods-totals"></div>
+      <div class="table-card" style="margin-top:12px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Period</th>
+              <th style="text-align:right">Hook saved</th>
+              <th style="text-align:right">Hook rate</th>
+              <th style="text-align:right">Proxy saved</th>
+              <th style="text-align:right">Proxy rate</th>
+              <th style="text-align:right">Total saved</th>
+            </tr>
+          </thead>
+          <tbody id="savings-periods-body"></tbody>
+        </table>
+      </div>
+      <div class="metric-sub" id="savings-periods-note"
+           style="margin-top:8px;color:var(--text-muted);font-size:11px;"></div>
+    </section>
+
+
     <section>
       <div class="chart-panel" id="recall-worth-panel">
         <div class="chart-head">
@@ -572,36 +603,6 @@
           </div>
         </div>
       </div>
-    </section>
-
-    <section id="savings-periods-section" style="display:none;">
-      <div class="section-label"><span class="dot"></span> Token savings over time</div>
-      <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">
-        Hook and proxy kept apart: blended, a change in traffic mix reads as a change in performance.
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:12px;">
-        <button class="sp-tab" data-period="daily">Daily</button>
-        <button class="sp-tab" data-period="weekly">Weekly</button>
-        <button class="sp-tab" data-period="monthly">Monthly</button>
-      </div>
-      <div class="agent-compare" id="savings-periods-totals"></div>
-      <div class="table-card" style="margin-top:12px;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Period</th>
-              <th style="text-align:right">Hook saved</th>
-              <th style="text-align:right">Hook rate</th>
-              <th style="text-align:right">Proxy saved</th>
-              <th style="text-align:right">Proxy rate</th>
-              <th style="text-align:right">Total saved</th>
-            </tr>
-          </thead>
-          <tbody id="savings-periods-body"></tbody>
-        </table>
-      </div>
-      <div class="metric-sub" id="savings-periods-note"
-           style="margin-top:8px;color:var(--text-muted);font-size:11px;"></div>
     </section>
 
     <section id="proxy-savings-section" style="display:none;">
