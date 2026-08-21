@@ -66,18 +66,23 @@ payloads, and jcode keeps the original in every one of those cases.
 
 ## Verified
 
-End to end against the forked binary, using a local SSE stub as the model so
-no subscription quota was involved (jcode always streams, so a plain-JSON stub
-is not enough):
+Controlled A/B against the forked binary, same command both times, using a
+local SSE stub as the model so no subscription quota was involved. (jcode
+always streams, `lib.rs:1224`, so a plain-JSON stub is not enough.)
 
-```
-tool=bash mode=filter in=17090 out=412
-```
+Measured from jcode's own persisted session JSON, not from hook-side logging,
+because the transcript is what gets resent on every later turn and therefore
+where the saving has to survive:
 
-A 400-line build log emitted by the real `bash` tool reached the hook and came
-back as 8 lines with `... [memor: omitted 392 lines] ...`. 15 `hooks::` tests
-pass, including fail-open on non-zero exit, empty stdout, missing binary,
-timeout, and runaway growth.
+| `post_tool_filter` | stored `tool_result` | lines | memor marker |
+|---|---|---|---|
+| `false` | 17,136 chars | 402 | absent |
+| `true`  | **412 chars** | 11 | `[memor: omitted 392 lines]` |
+
+**97.6% on this payload**, and the flag is the only thing that differs.
+
+15 `hooks::` tests pass, including fail-open on non-zero exit, empty stdout,
+missing binary, timeout, and runaway growth.
 
 ## What it is worth
 

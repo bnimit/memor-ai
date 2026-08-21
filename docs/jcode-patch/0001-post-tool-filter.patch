@@ -1,4 +1,4 @@
-From 8386a7b78a65293929489cb12375d3bef4ecc7dc Mon Sep 17 00:00:00 2001
+From 95645eb7accc27a2517194480c2546a7796f6893 Mon Sep 17 00:00:00 2001
 From: nimit <nimit@local>
 Date: Fri, 21 Aug 2026 23:54:05 +0530
 Subject: [PATCH] Let post_tool rewrite tool output, opt-in and fail-open
@@ -29,9 +29,11 @@ which is one of the two obvious uses: "[redacted]" is longer than the secret
 it replaces. The ceiling is a slack multiple instead, which still stops a
 runaway hook from inflating context without limit.
 
-Verified end to end against a forked binary: a 400-line build log emitted by
-the real bash tool reached the hook, came back as 8 lines with an explicit
-elision marker, and jcode used the filtered form. 15 hooks tests pass.
+Verified by controlled A/B on a forked binary, reading the stored session
+JSON rather than trusting the hook's own logging. Same command, one flag
+different: with the filter off the transcript keeps 17,136 chars over 402
+lines; with it on, 412 chars over 11, carrying the compressor's explicit
+elision marker. 15 hooks tests pass.
 ---
  crates/jcode-app-core/src/tool/mod.rs         |  17 ++
  crates/jcode-base/src/config/default_file.rs  |  18 ++
