@@ -80,9 +80,15 @@ where the saving has to survive:
 | `post_tool_filter` | stored `tool_result` | lines | memor marker |
 |---|---|---|---|
 | `false` | 17,136 chars | 402 | absent |
-| `true`  | **412 chars** | 11 | `[memor: omitted 392 lines]` |
+| `true`  | **370 chars** | 11 | `[memor: omitted 392 lines]` |
 
-**97.6% on this payload**, and the flag is the only thing that differs.
+**97.8% on this payload**, and the flag is the only thing that differs.
+
+(An earlier draft of this file reported 412 against the same 17,136-char
+baseline, which was inconsistent. 412 is what memor returns for the bare
+command output; jcode appends a `--- Command finished with exit code: 0 ---`
+footer before the hook sees it, and the real input yields 370. Reproduce with
+`build_response` over `seq 1 400 | sed ...` plus that footer line.)
 
 ### Fail-open, checked against the running binary
 
