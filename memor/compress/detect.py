@@ -49,6 +49,49 @@ _TEST_PROGRESS = re.compile(
 #: *dominated* by these lines; a document that merely quotes some is not.
 _TEST_PROGRESS_MIN_RATIO = 0.15
 
+#: A line that is essentially just a filesystem path, optionally with the
+#: decoration `git --stat` and friends add (` path/to/x.py | 12 +++--`), a
+#: leading bullet, or a tree-drawing prefix. Deliberately anchored: a path
+#: mentioned mid-sentence is prose, a path *as* the line is a manifest entry.
+_MANIFEST_LINE = re.compile(
+    r"^\s*[-*+|`\u2502\u251c\u2514\u2500\s]*"      # bullets / tree glyphs
+    r"[\w.@~][\w.@+\-]*(?:[/\\][\w.@+\-]+)+"        # a path with a separator
+    r"\s*(?:\|[^|]*)?[,;]?\s*$"                     # optional ` | 12 +++` tail
+)
+
+#: Fraction of lines that must look like manifest entries before a payload is
+#: treated as a file list rather than a log.
+#:
+#: Same lesson as ``_TEST_PROGRESS_MIN_RATIO``, learned from the opposite
+#: direction: `gh pr view --files` output carried an ISO date on 3 of 84 lines,
+#: which was enough to classify 70 filenames as a log. The crusher then kept
+#: the first and last five and deleted 66 paths — and for a manifest the list
+#: *is* the answer, so the agent received a confident, wrong, shorter answer.
+#: A manifest is *dominated* by path lines; a log that mentions a few files is
+#: not.
+_MANIFEST_MIN_RATIO = 0.5
+
+#: Below this a "manifest" is too short for the distinction to matter, and the
+#: log crusher's first/last-five rule already preserves it whole.
+_MANIFEST_MIN_LINES = 12
+
+
+def looks_like_manifest(text: str) -> bool:
+    """True when a payload is predominantly a list of paths.
+
+    Manifests (``git log --stat``, ``gh pr view --files``, ``find``, ``ls -R``)
+    are structurally indistinguishable from logs to a keyword sniffer, because
+    build logs also name files. The difference is density: in a manifest almost
+    every line *is* a path, and dropping the middle destroys the payload's
+    entire content rather than trimming noise from it.
+    """
+    lines = [ln for ln in text.split("\n") if ln.strip()]
+    if len(lines) < _MANIFEST_MIN_LINES:
+        return False
+    hits = sum(1 for ln in lines if _MANIFEST_LINE.match(ln))
+    return hits / len(lines) >= _MANIFEST_MIN_RATIO
+
+
 #: Extension -> content type. When a payload came from a file we know the type
 #: for certain, and guessing from bytes is strictly worse: `var(--warn)` in a
 #: stylesheet is enough to make a heuristic call it a log and crush it. The
@@ -184,6 +227,13 @@ def detect_content_type(text: str, file_path: str | None = None) -> str:
         if log_pattern.search(line) or timestamp_pattern.search(line):
             log_indicators += 1
             if log_indicators >= 3:
+                # A manifest is not a log, however many dates it carries. Commit
+                # listings and PR file lists pair timestamps with paths, and the
+                # log crusher keeps only the first and last five lines — which
+                # for a file list deletes the answer and returns a shorter one
+                # that looks complete.
+                if looks_like_manifest(text):
+                    return "text"
                 return "log"
 
     return "text"

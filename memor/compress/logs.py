@@ -13,12 +13,25 @@ def compress_log(text: str) -> str:
         r'(?i)(error|fatal|traceback|exception|failed|CRITICAL)',
         re.IGNORECASE
     )
-    
+
+    # A run's verdict is the one line the agent is actually reading for, and it
+    # is not always inside the last five lines: vitest prints `Test Files 5
+    # passed` above a duration line, trailing blanks and a wrapper footer, so a
+    # positional rule alone dropped it 20 lines from the end. Keeping it is
+    # worth more than the handful of tokens it costs, and unlike the error
+    # pattern it must match *successful* runs too.
+    summary_pattern = re.compile(
+        r'(?i)^\s*(?:test files|tests|suites?)\s+\d+\s+(?:passed|failed)'
+        r'|\b\d+\s+(?:passed|failed|skipped|error|errors|warnings?)\b'
+        r'|^\s*(?:ok|FAIL)\s+\S+\s+[\d.]+m?s'
+        r'|\b(?:test|build|suite)s?\s+(?:passed|failed|succeeded|complete)\b'
+    )
+
     important_indices = set()
-    
+
     # Find important lines
     for i, line in enumerate(lines):
-        if important_pattern.search(line):
+        if important_pattern.search(line) or summary_pattern.search(line):
             # Keep the important line and ±2 lines of context
             for offset in range(-2, 3):
                 idx = i + offset
