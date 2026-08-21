@@ -231,3 +231,97 @@ def test_insufficient_data_says_so(tmp_path):
         "n_before": 3, "n_after": 1,
     }), tmp_path)
     assert "not enough episodes" in out["cx-note"]
+
+
+def test_savings_by_period_splits_hook_from_proxy(tmp_path):
+    """Daily/weekly/monthly savings, with the two paths kept apart.
+
+    A blended rate across both paths is a denominator artifact, not a trend:
+    on the development ledger the same data reads 95.8% over one day and 0.8%
+    over thirty, purely because recent traffic is hook-path (small payloads,
+    high rates) while the 30-day window is dominated by 284M proxied tokens.
+    Reporting one number for both makes a change in traffic mix look like a
+    collapse in performance.
+    """
+    import time
+
+    from memor.store.sqlite_store import SqliteStore
+
+    store = SqliteStore(str(tmp_path / "m.db"), dim=8)
+    now = time.time()
+    # hook path: small payload, high rate, today
+    store.record_proxy_savings({"agent": "claude", "provider": "hook",
+                                "tokens_before": 1000, "tokens_after": 100,
+                                "timestamp": now - 3600})
+    # proxy path: huge payload, low rate, today
+    store.record_proxy_savings({"agent": "claude", "provider": "anthropic",
+                                "tokens_before": 100_000, "tokens_after": 99_000,
+                                "timestamp": now - 3600})
+    # older proxy row, 40 days back: only the monthly window should see it
+    store.record_proxy_savings({"agent": "claude", "provider": "anthropic",
+                                "tokens_before": 50_000, "tokens_after": 49_000,
+                                "timestamp": now - 40 * 86400})
+
+    out = store.get_savings_by_period(days=90)
+    assert {"daily", "weekly", "monthly"} <= set(out)
+
+    today = out["daily"][-1]
+    assert today["hook"]["tokens_saved"] == 900
+    assert today["proxy"]["tokens_saved"] == 1000
+    # The blended figure is still available, but the split is what is honest.
+    assert today["hook"]["pct_saved"] == 90.0
+    assert today["proxy"]["pct_saved"] < 2.0
+
+    # The 40-day-old row must appear in a monthly bucket.
+    monthly_saved = sum(m["proxy"]["tokens_saved"] for m in out["monthly"])
+    assert monthly_saved == 2000
+
+
+def test_savings_by_period_handles_empty_ledger(tmp_path):
+    from memor.store.sqlite_store import SqliteStore
+
+    store = SqliteStore(str(tmp_path / "m.db"), dim=8)
+    out = store.get_savings_by_period(days=30)
+    assert out["daily"] == [] and out["weekly"] == [] and out["monthly"] == []
+
+
+def test_savings_periods_endpoint_serves_all_three_buckets(tmp_path, monkeypatch):
+    """The endpoint the UI consumes, exercised through FastAPI."""
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from memor.dashboard.server import create_app
+    from memor.store.sqlite_store import SqliteStore
+
+    db = str(tmp_path / "m.db")
+    store = SqliteStore(db, dim=8)
+    now = time.time()
+    store.record_proxy_savings({"agent": "claude", "provider": "hook",
+                                "tokens_before": 2000, "tokens_after": 200,
+                                "timestamp": now - 3600})
+    store.record_proxy_savings({"agent": "claude", "provider": "anthropic",
+                                "tokens_before": 500_000, "tokens_after": 495_000,
+                                "timestamp": now - 200 * 86400})
+
+    client = TestClient(create_app(db_path=db))
+    r = client.get("/api/savings-periods?days=365")
+    assert r.status_code == 200
+    data = r.json()
+    assert {"daily", "weekly", "monthly", "totals", "note"} <= set(data)
+    # A 200-day-old row must be reachable: the old endpoint capped at 90 days.
+    assert data["totals"]["proxy"]["tokens_saved"] == 5000
+    assert data["totals"]["hook"]["tokens_saved"] == 1800
+    # The two paths keep their own rates rather than being averaged.
+    assert data["totals"]["hook"]["pct_saved"] == 90.0
+    assert data["totals"]["proxy"]["pct_saved"] == 1.0
+
+
+def test_savings_periods_rejects_out_of_range_days(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from memor.dashboard.server import create_app
+
+    client = TestClient(create_app(db_path=str(tmp_path / "m.db")))
+    assert client.get("/api/savings-periods?days=0").status_code == 422
+    assert client.get("/api/savings-periods?days=99999").status_code == 422

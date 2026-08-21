@@ -172,6 +172,52 @@ def create_app(db_path: str | None = None) -> FastAPI:
             })
         return result
 
+    @app.get("/api/savings-periods")
+    def savings_periods(days: int = Query(365, ge=1, le=3650)):
+        """Token savings by day, week and month, hook path apart from proxy.
+
+        The existing savings endpoints cap at 90 days and blend both paths, so
+        a monthly view was not reachable and the single percentage they report
+        moves with traffic mix rather than with performance.
+        """
+        store = _store()
+        periods = store.get_savings_by_period(days=days)
+
+        def totals(key: str) -> dict:
+            hook_b = sum(b["hook"]["tokens_before"] for b in periods[key])
+            hook_a = sum(b["hook"]["tokens_after"] for b in periods[key])
+            prox_b = sum(b["proxy"]["tokens_before"] for b in periods[key])
+            prox_a = sum(b["proxy"]["tokens_after"] for b in periods[key])
+            return {
+                "hook": {
+                    "tokens_before": hook_b, "tokens_after": hook_a,
+                    "tokens_saved": max(0, hook_b - hook_a),
+                    "pct_saved": round((hook_b - hook_a) / hook_b * 100, 1) if hook_b else 0.0,
+                },
+                "proxy": {
+                    "tokens_before": prox_b, "tokens_after": prox_a,
+                    "tokens_saved": max(0, prox_b - prox_a),
+                    "pct_saved": round((prox_b - prox_a) / prox_b * 100, 1) if prox_b else 0.0,
+                },
+            }
+
+        return {
+            "days": days,
+            "daily": periods["daily"],
+            "weekly": periods["weekly"],
+            "monthly": periods["monthly"],
+            "totals": totals("daily"),
+            "note": (
+                "Hook and proxy savings are reported separately on purpose. A "
+                "hook rewrite happens before the payload enters the transcript, "
+                "so it carries no cache risk and saves 80-95% of a small "
+                "payload. A proxy rewrite edits conversation history, most of "
+                "which must not be touched, so it saves under 1% of a very "
+                "large one. Blended, a change in traffic mix reads as a change "
+                "in performance."
+            ),
+        }
+
     @app.get("/api/session-efficiency")
     def session_efficiency():
         store = _store()

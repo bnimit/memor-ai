@@ -40,6 +40,16 @@ MIN_AGENT_SAMPLE = 30
 NEUTRAL_QUALITY = 0.5
 
 
+def _empty_path_stats() -> dict:
+    """Zeroed savings stats for a path with no rows in a bucket.
+
+    Present rather than omitted so a caller can render a bucket without
+    checking which of the two paths carried traffic that period.
+    """
+    return {"tokens_before": 0, "tokens_after": 0, "tokens_saved": 0,
+            "requests": 0, "pct_saved": 0.0}
+
+
 def clamp_quality(score: float | None) -> float:
     """Force a quality score into [0, 1].
 
@@ -1588,6 +1598,69 @@ class SqliteStore:
                 "cumulative_saved": cum,
             })
         return series
+
+    def get_savings_by_period(self, days: int = 90) -> dict:
+        """Token savings bucketed by day, week and month, hook path apart from proxy.
+
+        The two paths must not be blended. A hook rewrite happens once, before
+        the payload enters the transcript, so it carries no cache risk and
+        routinely saves 80-95% of a small payload. A proxy rewrite edits
+        conversation history, which is mostly things the compressor must not
+        touch, so it saves under 1% of a very large one.
+
+        Reported as one number, a shift in traffic mix reads as a change in
+        performance: the development ledger shows 95.8% over one day and 0.8%
+        over thirty from the *same* rows, purely because the long window is
+        dominated by 284M proxied tokens. Splitting them is the only way the
+        figure means anything.
+        """
+        import time as _time
+
+        cutoff = _time.time() - (days * 86400)
+        buckets = {
+            "daily": "%Y-%m-%d",
+            "weekly": "%Y-W%W",
+            "monthly": "%Y-%m",
+        }
+        out: dict[str, list] = {}
+        for name, fmt in buckets.items():
+            rows = self.db.execute(
+                f"""
+                SELECT strftime('{fmt}', timestamp, 'unixepoch', 'localtime') AS bucket,
+                       CASE WHEN provider = 'hook' THEN 'hook' ELSE 'proxy' END AS path,
+                       SUM(tokens_before) AS tokens_before,
+                       SUM(tokens_after)  AS tokens_after,
+                       COUNT(*)           AS requests
+                FROM proxy_savings
+                WHERE timestamp >= ? AND passthrough = 0
+                GROUP BY bucket, path
+                ORDER BY bucket
+                """,
+                (cutoff,),
+            ).fetchall()
+
+            merged: dict[str, dict] = {}
+            for row in rows:
+                bucket = row["bucket"]
+                if bucket is None:
+                    continue
+                entry = merged.setdefault(bucket, {
+                    "bucket": bucket,
+                    "hook": _empty_path_stats(),
+                    "proxy": _empty_path_stats(),
+                })
+                before = row["tokens_before"] or 0
+                after = row["tokens_after"] or 0
+                saved = max(0, before - after)
+                entry[row["path"]] = {
+                    "tokens_before": before,
+                    "tokens_after": after,
+                    "tokens_saved": saved,
+                    "requests": row["requests"] or 0,
+                    "pct_saved": round(saved / before * 100, 1) if before else 0.0,
+                }
+            out[name] = [merged[k] for k in sorted(merged)]
+        return out
 
     def get_proxy_savings_by_agent(self, days: int = 30) -> list[dict]:
         import time as _time

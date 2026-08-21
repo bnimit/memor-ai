@@ -305,6 +305,12 @@
   .side-stat-value { font-family: var(--mono); font-size: 18px; font-weight: 600; margin-top: 4px; }
   .side-stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
+  .sp-tab {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 14px; font-size: 12px; cursor: pointer;
+    font-family: inherit; transition: opacity .15s, border-color .15s;
+  }
+  .sp-tab:hover { border-color: var(--text-muted); }
   .agent-compare {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px;
   }
@@ -566,6 +572,36 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <section id="savings-periods-section" style="display:none;">
+      <div class="section-label"><span class="dot"></span> Token savings over time</div>
+      <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">
+        Hook and proxy kept apart: blended, a change in traffic mix reads as a change in performance.
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button class="sp-tab" data-period="daily">Daily</button>
+        <button class="sp-tab" data-period="weekly">Weekly</button>
+        <button class="sp-tab" data-period="monthly">Monthly</button>
+      </div>
+      <div class="agent-compare" id="savings-periods-totals"></div>
+      <div class="table-card" style="margin-top:12px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Period</th>
+              <th style="text-align:right">Hook saved</th>
+              <th style="text-align:right">Hook rate</th>
+              <th style="text-align:right">Proxy saved</th>
+              <th style="text-align:right">Proxy rate</th>
+              <th style="text-align:right">Total saved</th>
+            </tr>
+          </thead>
+          <tbody id="savings-periods-body"></tbody>
+        </table>
+      </div>
+      <div class="metric-sub" id="savings-periods-note"
+           style="margin-top:8px;color:var(--text-muted);font-size:11px;"></div>
     </section>
 
     <section id="proxy-savings-section" style="display:none;">
@@ -1512,6 +1548,58 @@
     });
   }
 
+  var SAVINGS_PERIODS = null;
+  var SAVINGS_PERIOD = 'daily';
+
+  function renderSavingsPeriods(data) {
+    var section = document.getElementById('savings-periods-section');
+    if (data) SAVINGS_PERIODS = data;
+    if (!SAVINGS_PERIODS) { section.style.display = 'none'; return; }
+    var rows = SAVINGS_PERIODS[SAVINGS_PERIOD] || [];
+    var totals = SAVINGS_PERIODS.totals || {};
+    if (!rows.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+
+    // Totals: one tile per path. Never summed into a single rate, because the
+    // two denominators differ by three orders of magnitude.
+    var grid = document.getElementById('savings-periods-totals');
+    grid.innerHTML = '';
+    [['hook', 'Hook path', 'before it enters the transcript'],
+     ['proxy', 'Proxy path', 'rewrites conversation history']].forEach(function(spec) {
+      var t = totals[spec[0]] || {};
+      var tile = el('div', { class: 'agent-tile' });
+      tile.innerHTML =
+        '<div class="name">' + esc(spec[1]) + '</div>' +
+        '<div class="val" style="color:var(--ok)">' + (t.pct_saved != null ? t.pct_saved : 0) + '%</div>' +
+        '<div class="sub">' + fmt(t.tokens_saved || 0) + ' tokens saved · ' + esc(spec[2]) + '</div>';
+      grid.appendChild(tile);
+    });
+
+    var body = document.getElementById('savings-periods-body');
+    body.innerHTML = '';
+    rows.slice().reverse().forEach(function(r) {
+      var h = r.hook || {}, p = r.proxy || {};
+      var total = (h.tokens_saved || 0) + (p.tokens_saved || 0);
+      var tr = el('tr');
+      // A rate with no traffic behind it is not zero, it is absent.
+      var hRate = h.tokens_before ? h.pct_saved + '%' : '–';
+      var pRate = p.tokens_before ? p.pct_saved + '%' : '–';
+      tr.innerHTML =
+        '<td>' + esc(r.bucket) + '</td>' +
+        '<td style="text-align:right">' + fmt(h.tokens_saved || 0) + '</td>' +
+        '<td style="text-align:right;color:var(--ok)">' + hRate + '</td>' +
+        '<td style="text-align:right">' + fmt(p.tokens_saved || 0) + '</td>' +
+        '<td style="text-align:right;color:var(--ok)">' + pRate + '</td>' +
+        '<td style="text-align:right"><strong>' + fmt(total) + '</strong></td>';
+      body.appendChild(tr);
+    });
+
+    document.getElementById('savings-periods-note').textContent = SAVINGS_PERIODS.note || '';
+    Array.prototype.forEach.call(document.querySelectorAll('.sp-tab'), function(btn) {
+      btn.style.opacity = (btn.dataset.period === SAVINGS_PERIOD) ? '1' : '0.5';
+    });
+  }
+
   function renderProxySavingsByAgent(data) {
     var section = document.getElementById('proxy-savings-section');
     var grid = document.getElementById('proxy-savings-grid');
@@ -1841,6 +1929,10 @@
   async function loadAgentBreakdown() { try { renderAgentBreakdown(await api('/api/agent-breakdown')); } catch (e) { console.warn(e); } }
   async function loadSavingsHero() { try { renderSavingsHero(await api('/api/savings-ledger?days=30')); } catch (e) { console.warn(e); } }
   async function loadProxyStatus() { try { renderProxyStatus(await api('/api/proxy-status')); } catch (e) { console.warn(e); } }
+  async function loadSavingsPeriods() {
+    try { renderSavingsPeriods(await api('/api/savings-periods?days=365')); }
+    catch (e) { console.warn(e); }
+  }
   async function loadProxySavingsByAgent() { try { renderProxySavingsByAgent(await api('/api/proxy-savings-by-agent?days=30')); } catch (e) { console.warn(e); } }
   async function loadRecalls() {
     try {
@@ -2100,6 +2192,7 @@
       loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(),
       loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(),
       loadProxySavingsByAgent(), loadRecallWorth(), loadRecallBaseline(), loadCompression(),
+      loadSavingsPeriods(),
     ]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
   }
@@ -2123,6 +2216,15 @@
   window.addEventListener('resize', function() {
     if (activePane === 'overview') loadSavingsHero();
     else loadAgentPane(activePane);
+  });
+
+  // Period tabs re-render from data already fetched: switching daily/weekly/
+  // monthly is a view change, not a reason to hit the API again.
+  Array.prototype.forEach.call(document.querySelectorAll('.sp-tab'), function(btn) {
+    btn.addEventListener('click', function() {
+      SAVINGS_PERIOD = btn.dataset.period;
+      renderSavingsPeriods(null);
+    });
   });
 
   activePane = readStoredPane();
