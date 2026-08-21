@@ -31,10 +31,33 @@ from __future__ import annotations
 import json
 import sys
 
-#: Tools whose output may be rewritten. Bash only, deliberately: its output is
-#: machine chatter that the agent has already acted on, and it is where the
-#: repetitive bulk lives. Read/Grep/Glob results feed edits.
-COMPRESSIBLE_TOOLS = frozenset({"Bash"})
+#: Tools whose output may be rewritten. Bash is the original and still the
+#: bulk of it: machine chatter the agent has already acted on, where the
+#: repetitive mass lives. Read/Grep/Glob are absent by design, because their
+#: results feed edits.
+#:
+#: The additions are tools other agents have that Claude Code does not.
+#: Measured across 70 real jcode sessions, restricting to Bash declined 1.65M
+#: tokens of tool output, more than Bash itself contains. Each addition keeps
+#: 100% of answer-critical lines on that corpus.
+#:
+#: Three exclusions are deliberate, and each was checked rather than assumed:
+#:
+#: * `batch` is a fan-out, and on the same corpus its calls were 383 bash but
+#:   also **171 read**. Its result therefore embeds file reads, so compressing
+#:   it launders exactly the payload the Read exclusion exists to protect. It
+#:   is the largest single block of savings given up here, and it is given up
+#:   on purpose.
+#: * `browser` and `webfetch` return a fetched page. There is nothing safely
+#:   separable in prose, and the 98% "saving" once measured for `browser` was
+#:   the JSON crusher eliding the page itself.
+#:
+#: Matching is case-insensitive on the caller's side, because agents disagree
+#: on capitalisation for the same tool (`Bash` in Claude Code, `bash` in
+#: jcode).
+COMPRESSIBLE_TOOLS = frozenset({
+    "bash", "bg", "todo", "ls", "agentgrep",
+})
 
 #: Below this, compression cannot pay for the risk of eliding something.
 MIN_CHARS = 2_000
@@ -59,7 +82,7 @@ def _tool_response_text(response) -> tuple[str, str] | None:
 
 def should_compress(request: dict) -> bool:
     """Whether this tool result is safe and worth rewriting."""
-    if request.get("tool_name") not in COMPRESSIBLE_TOOLS:
+    if str(request.get("tool_name") or "").lower() not in COMPRESSIBLE_TOOLS:
         return False
     response = request.get("tool_response")
     if not isinstance(response, dict):

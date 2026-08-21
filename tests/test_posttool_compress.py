@@ -432,3 +432,49 @@ def test_failing_test_run_keeps_every_diagnostic():
         "tests/test_math.py:12",
     ):
         assert needle in result.text, needle
+
+
+def test_read_and_grep_are_still_never_compressed():
+    """The safety property the hook rests on, restated after widening.
+
+    Read/Grep/Glob feed edits directly. A mutilated read is indistinguishable
+    from the real file, and the agent edits against content that was never on
+    disk.
+    """
+    from memor.posttool_compress import build_response
+
+    for tool in ("Read", "read", "Grep", "grep", "Glob", "glob", "Edit"):
+        req = {"tool_name": tool,
+               "tool_response": {"stdout": "log line\n" * 900, "exit_code": 0}}
+        assert build_response(req) == {}, f"{tool} must never be rewritten"
+
+
+def test_tool_name_matching_is_case_insensitive():
+    """Agents disagree on capitalisation for the same tool."""
+    from memor.posttool_compress import build_response
+
+    payload = "\n".join(f"2026-01-01 INFO step {i}" for i in range(400))
+    for tool in ("Bash", "bash", "BASH"):
+        out = build_response({"tool_name": tool,
+                              "tool_response": {"stdout": payload, "exit_code": 0}})
+        assert out, f"{tool} should compress"
+
+
+def test_fetched_pages_and_fanout_are_not_rewritten():
+    """Three exclusions that each protect something specific.
+
+    `browser`/`webfetch` return a page: the 98% saving once measured for
+    `browser` was the JSON crusher eliding the page itself. `batch` is a
+    fan-out whose calls were 383 bash but also 171 read on the measured
+    corpus, so compressing its result launders exactly the payload the Read
+    exclusion exists to protect.
+    """
+    import json
+
+    from memor.posttool_compress import build_response
+
+    page = json.dumps({"content": {"content": "Pricing is 29 EUR. " * 500}})
+    for tool in ("browser", "webfetch", "WebFetch", "batch"):
+        out = build_response({"tool_name": tool,
+                              "tool_response": {"stdout": page, "exit_code": 0}})
+        assert out == {}, f"{tool} must not be rewritten"
