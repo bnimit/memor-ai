@@ -4,6 +4,11 @@ Written after a day in which three separate estimates came in at a third to a
 tenth of their first guess. Everything here is measured; where it is not, it
 says so.
 
+**Revised** after measuring against the 2,465-session Claude corpus
+(82.5M tokens) rather than the 84-session local one. Three of the four
+recommendations below did not survive it. The corrections are kept in place
+rather than deleted, because the pattern that produced them keeps recurring.
+
 ## Where "46%" came from, in plain terms
 
 Every token in a jcode request, 7,414,755 across 84 local sessions:
@@ -22,101 +27,140 @@ what we are allowed to rewrite, assuming every touchable token vanished
 entirely. Nothing compresses to zero, so 46% is not a target and never was. It
 only says the work is not finished.
 
-## What is actually reachable
+## The larger corpus
 
-Running the real compressors bucket by bucket rather than assuming a rate:
+82,543,693 tokens over 2,465 sessions:
 
-| | tokens | of context | basis |
-|---|---|---|---|
-| **C.** what memor removes today | 510,024 | 6.88% | measured |
-| **A.** exact duplicate payloads → pointer | 131,890 | 1.78% | measured |
-| **B.** drop the 2KB floor | 45,491 | 0.61% | measured |
-| **D.** fetched pages | 79,818 | 1.08% | measured |
-| **combined** | **767,223** | **10.35%** | |
-
-So the honest next milestone is **7% → ~10%** of total context, not 46%.
-
-### On (D), and why the number moved
-
-I first estimated fetched pages at 40%, which would have been 5.58% of context
-and the largest single win available. Then I implemented a conservative squeeze
-— collapse blank runs, drop short lines that repeat four or more times in one
-page (nav, footers, chrome) — and ran it over all 825 payloads:
-
-```
-before  1,083,786
-after   1,003,968
-saved      79,818   (7.4%)
-```
-
-7.4%, not 40%. Fetched pages arriving through `webfetch` are already rendered
-to text by the fetcher, so the boilerplate a real HTML extractor would strip is
-mostly gone before memor sees it. The same mistake as the earlier `html` and
-`csv` claims: pattern presence is not compressibility.
-
-## The source slice is not as untouchable as the table says
-
-The 17.0% "source in tool results" row above is not one thing:
-
-| | tokens | of context |
+| slice | tokens | share |
 |---|---|---|
-| superseded file reads (older copy of a re-read file) | 420,701 | 5.67% |
-| ...skeletonizing them saves | 28,724 | 0.39% |
-| source-looking payloads with **no** `file_path` | 1,118,513 | 15.08% |
+| tool_result | 50,091,394 | 60.7% |
+| tool_use args | 19,554,337 | 23.7% |
+| everything else | 12,897,962 | 15.6% |
 
-The skeletonizer only fires when the payload can be tied to a file, and 770,784
-of those unattributed tokens come from `bash`, not from a file read. Inspecting
-the 524 blocked bash payloads:
+Running the real compressors over a 400-session sample (7.9M tool-result
+tokens), bucket by bucket:
+
+| bucket | payloads | tokens | saved | rate | share |
+|---|---|---|---|---|---|
+| source (refused) | 1,739 | 3,861,944 | 0 | — | 48.8% |
+| under the 2KB floor | 10,421 | 1,432,204 | 0 | — | 18.1% |
+| text | 878 | 1,172,858 | 16,643 | 1.4% | 14.8% |
+| **log** | 451 | 1,025,469 | **719,422** | **70.2%** | 13.0% |
+| search | 197 | 232,769 | 80,069 | 34.4% | 2.9% |
+| diff | 110 | 178,589 | 118 | 0.1% | 2.3% |
+| json | 6 | 7,302 | 4,948 | 67.8% | 0.1% |
+
+**10.38% of tool-result tokens, and 88% of it is the log crusher.** Everything
+else combined is 1.2%. That single fact should drive the next decision more
+than any of the rankings below.
+
+## Corrections to the ranking
+
+### Exact duplicate elision: 1.78% → 0.53%, and it has no mechanism
+
+Measured on the large corpus: 11,409 exactly-repeated payloads, 441,187
+recoverable tokens, **0.53% of total context** — and only 0.09% if the 2KB
+floor is respected. The repeats are overwhelmingly small payloads.
+
+Worse, the stated justification was wrong. "CCR already stores originals, so
+the machinery exists" is true of the **proxy** path only: `ccr_put` is called
+in exactly one place, `memor/proxy/pipeline.py:202`. The hook path never
+stores an original, never emits a `[memor:ccr:...]` marker, and is stateless
+per payload — it cannot even tell that it has seen a payload before. And the
+hook is the path that matters now: `ccr_blobs` currently holds **0 rows**.
+
+So this is not "the safest thing on the list, machinery already exists". It is
+0.53% *plus* building cross-payload state in the hook. It drops to last place.
+
+### Superseded file reads: 15.77% naive → 0.79% safe
+
+The largest number measured all session, and almost all of it is an artifact.
+
+When one file is read twice, the older copy looks redundant: 24.7% of all
+Read-tool tokens, 15.77% of tool-result tokens. It is not one pathological
+file either (365 distinct files, the top 8 only 18% of the mass), which is
+usually the sign of a real effect.
+
+But `Read` takes `offset`/`limit`, and **96% of those "stale" tokens are a
+different region of the same file**, not an older copy of the same region.
+Eliding them deletes content the newer read never contained — exactly the
+corruption the source guard exists to prevent, reintroduced from a direction
+the guard does not watch.
+
+Safe subset: the newest read used the same arguments, or is a whole-file read
+that demonstrably covers the earlier one. That is 62,701 tokens, **0.79%**.
+
+### A better classifier is worth 0.03%–4.04%, and the range is the finding
+
+Of the 3,861,944 tokens the source guard refuses, 87.7% are genuinely
+line-numbered file reads that must stay protected. A perfect classifier could
+release the other 12.3% (476,129 tokens).
+
+What that is worth depends entirely on which compressor receives them:
 
 ```
-look like an actual code dump: 272,205 tokens
-look like command output:      280,570 tokens
-   e.g. '# Review package: 663b7f62..HEAD'
-        'commit 22377770b85322ea019554728b9d4e5cb6a0ba29'
-        'diff --git a/apps/backend/...'
+released to the log crusher : 319,248 saved (67.1%)  = 4.04% of tool-result tokens
+released to plain text      :   2,719 saved ( 0.6%)  = 0.03%
 ```
 
-Roughly half is `git log`, `git diff` and review reports that the guard
-classifies as source because they *contain* code. That is the guard doing its
-job conservatively, but it is also ~280K tokens (3.8% of context) held back by
-a classification, not by a real risk of corrupting an edit. A diff-aware
-compressor is the specific unlock, which is the same conclusion
-`compression-gap-analysis.md` reached from the other direction.
+**The classifier is not the bottleneck; the receiving compressor is.** This is
+the third time today the same shape appeared: releasing a payload grants
+permission to compress it, and the compressor then declines on merit. The
+fetched-document work shipped and returned 0.10% against a projected 5.39% for
+precisely this reason.
 
-This does not change the 10.35% figure, because none of it is implemented. It
-does mean the 46% "untouchable" split is softer than stated: part of the 17%
-is reachable with a better classifier rather than with more risk.
+So "build a better classifier" is the wrong next step. The right question is
+which released payloads are *log-like*, because that is where the 67% lives.
 
-## Ranking by value per unit of risk
+### The embedding model is not this classifier
 
-1. **Exact duplicate elision — 1.78%, and the safest thing on this list.**
-   Byte-identical payloads already sent. Replacing a repeat with a pointer to
-   the first copy cannot lose information, because the content is verbatim
-   earlier in the same context. CCR already stores originals, so the machinery
-   exists. This is the clearest remaining win.
+Worth stating because the names collide. `model2vec` / `potion-base-8M`
+(`memor/embed/local.py`) is the **retrieval** embedder: it scores memories for
+recall. The compression classifier is `detect_content_type`
+(`memor/compress/detect.py`), which is pure regex and structure heuristics.
+Nothing in `memor/compress/` imports an embedder.
 
-2. **Fetched-page squeeze — 1.08%.** Lossless-ish and self-contained, but small,
-   and dropping repeated short lines needs the same answer-critical retention
-   probe used on the log compressor before it ships.
+Swapping the embedding model would not change compression at all. And an
+embedding model is a poor fit for this job regardless: the decision is
+"is this payload a file the agent will edit against", which turns on
+provenance and structure (line-number prefixes, fence ratios, `file_path`),
+not on semantic similarity. The signals that work are cheap and exact; the
+failures today were logic-ordering bugs, not weak features.
 
-3. **Lower the 2KB floor — 0.61%.** One constant. The floor was a guess, and the
-   measurement says the content beneath it is genuinely thin, so this is a
-   cheap tidy rather than a milestone.
+## Revised ranking
 
-4. **Diff compressor — ~16% of diff payloads (~145K tokens).** Measured
-   separately in `compression-gap-analysis.md`. Overlaps bucket B/D partly.
+1. **Widen what reaches the log crusher.** It is 88% of realised savings at a
+   70.2% rate, and 4.04% more sits in source-classified payloads that are
+   log-like. Everything else on this list is under 1%.
+2. **Lower the 2KB floor — 0.61%.** 18.1% of tool-result tokens are below it
+   and currently untouched. One constant, already measured.
+3. **Superseded file reads — 0.79%**, with the region check above. Needs the
+   same integrity probe the log crusher has.
+4. **Fetched-page squeeze — 1.08% on the local corpus**, unverified on the
+   large one.
+5. **Exact duplicate elision — 0.53%**, and it needs hook-side state first.
 
 ## What is not worth doing
 
-- **Session-start compression** — 4.5%, and it needs resume frequency measured
-  first (`session-start-analysis.md`).
-- **Output shaping** — fires on 1.3% of turns, and output is 0.2% of this
-  machine's bill. Seven months to measure.
+- **Session-start compression** — 4.5%, needs resume frequency measured first
+  (`session-start-analysis.md`).
+- **Output shaping** — fires on 1.3% of turns; ~211 days to conclude.
 - **Tabular / HTML compressors** — retracted, no workload.
+- **A smarter classifier as such** — see above; the constraint is downstream.
+- **Diff compressor improvements** — shipped at 0.1%. `git diff` emits 3 lines
+  of context per side, so runs are too short to elide. Its value was the
+  reclassification, not its own savings.
 
 ## The honest summary
 
-The product is not near a limit: it captures 15% of what it is permitted to
-touch. But the remaining work is several 1-2% wins rather than one large one,
-and the largest untouchable slice (31.3%, the code being written) will stay
-untouchable for as long as correctness matters more than tokens.
+The product captures roughly 10% of tool-result tokens, and one compressor
+does nearly all of it. The remaining ideas are 0.5–1% each, several are
+smaller than first measured, and two of them (duplicates, superseded reads)
+carry correctness hazards that only appear when you look at the tool arguments
+rather than the payload text.
+
+The recurring error this session has a single shape: **counting mass that
+matches a pattern, instead of what a compressor actually removes from it.**
+Six estimates collapsed that way. The seventh, superseded reads, collapsed for
+a related reason — counting payloads that *look* redundant without checking
+whether they hold the same bytes.
