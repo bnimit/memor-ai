@@ -121,6 +121,12 @@ memories came from the other tool.
 
 The mechanism works. The thesis is delivered.
 
+**Validated through the public interface, not only from production data.** Driving
+the real `hook_server.handle_request` against an isolated store holding one
+jcode-written memory, each of `goose`, `jcode` and `claude` received it
+(§7, P0). Cross-tool retrieval is a working, reproducible property of the system,
+not an artifact of how the production rows happen to be joined.
+
 ### 2.3 The differentiator is passive capture, not the shared store
 
 The shared store on its own is **not** a defensible niche. Mem0's OpenMemory MCP
@@ -542,14 +548,50 @@ Ranked by (impact on the shared-layer thesis × confidence).
 
 **What.** Extend the feedback loop past Claude. `memor/daemon.py:372` skips every
 non-Claude session, so neither `analyze_session_feedback` nor
-`correlate_with_recalls` ever runs for jcode, cursor, goose or kimi. Transcript
-parsers for these agents already exist (`memor/ingest/jcode.py`, `goose.py`,
-`kimi.py`); the work is wiring them into the feedback path.
+`correlate_with_recalls` ever runs for jcode, cursor, goose or kimi.
 
-**Also required, and easy to miss.** `correlate_with_recalls` joins on
-`session_id` (`memor/turn_metrics.py:95-99`), and **100% of jcode recalls record
-none** (31 of 31). Lifting the guard alone would leave jcode uncorrelated. The
-identifier has to be populated at recall time as well.
+**Scoped by an end-to-end test rather than by reading the code**, which changed
+the answer. Driving the real `hook_server.handle_request` against an isolated
+store seeded with a jcode-written memory:
+
+```
+goose   recall -> memory delivered: True
+jcode   recall -> memory delivered: True
+claude  recall -> memory delivered: True
+all three verdicts: pending
+```
+
+Cross-tool *retrieval* is confirmed working through the public interface. Then,
+feeding the analyzer a goose recall plus a transcript in which the assistant
+reuses the memory:
+
+```
+before: [('jc-1', 'pending')]
+analyze_session_feedback -> 1
+after : [('jc-1', 'used')]
+```
+
+**The analyzer is already agent-agnostic.** It resolved a *goose* recall to
+`used` and wrote `use_count`. Nothing in the scoring logic is Claude-specific.
+
+But it is fed by `feedback._extract_texts`, and on 80 lines of a real jcode
+journal that returns **0 assistant and 0 user texts** — jcode writes
+`{append_messages, meta}` records, and the parser expects Claude's
+`{type, message}` shape. `memor/ingest/jcode.py:94` parses the same file into 28
+messages.
+
+So P0 is three things, not one:
+
+1. Remove the `agent != "claude"` guard (`daemon.py:372`).
+2. Give `feedback.py` a per-agent transcript reader. **The logic already exists**
+   in `memor/ingest/jcode.py:94`, `goose.py` and `kimi.py`; this is reuse, not
+   new parsing work.
+3. Populate `session_id` on the jcode recall path — 100% of jcode recalls record
+   none (31 of 31), and `correlate_with_recalls` joins on it
+   (`memor/turn_metrics.py:95-99`).
+
+Had this been scoped from the code alone it would have been filed as "delete a
+guard clause" and failed silently on step 2.
 
 **Why first.** All 37 cross-tool recalls are `pending`, and only 1.3% of
 `session_stats` rows carry a recall correlation. Until this lands, every
@@ -562,9 +604,8 @@ review had to be withdrawn for the same reason.
 the cross-tool use rate is comparable against the same-tool 100%-of-judged
 baseline.
 
-**Effort.** Small-to-moderate. Parsers exist; the loop is one guard clause, a
-transcript-path resolution per agent, and a session-id fix on the jcode recall
-path.
+**Effort.** Small-to-moderate, and better understood now: one guard clause, a
+transcript-reader indirection reusing existing parsers, and a session-id fix.
 
 **Risk.** Low. It adds measurement, changes no retrieval behaviour.
 
@@ -635,11 +676,13 @@ breakage is the default failure mode.
 `memor service status` and the dashboard.
 
 **Why.** §6.3 identifies passive artifact capture as the one genuinely hard-to-copy
-property, and its stated weakness is that it **breaks silently**: a harness
-changes its transcript layout, the parser yields nothing, and the source goes
-quiet with no error. Searched `memor/ingest/` and `memor/daemon.py` for staleness
-or drift detection; **none found**. Today the failure presents as "memory got
-worse over the last month" with no diagnosis.
+property, and its stated weakness is that it **breaks silently**. Confirmed by
+experiment rather than assumed: feeding `parse_session` a transcript whose
+top-level key was renamed from `messages` to `turns` yields **0 artifacts, no
+exception and no warning**, while the current format yields 1. Searched
+`memor/ingest/` and `memor/daemon.py` for staleness or drift detection; **none
+found**. Today the failure presents as "memory got worse over the last month"
+with no diagnosis.
 
 This is cheap insurance on the moat. A moat maintained by reverse-engineering
 needs a tripwire when the terrain moves.
@@ -742,6 +785,10 @@ That framing is defensible in a way that "11.7% saved" is not.
 | Claim | Method |
 |---|---|
 | Store is tool-agnostic | `Scope` has no agent field (`types.py:34-46`); grepped retrieval path for agent filters |
+| **Cross-tool retrieval works** | **End-to-end through `hook_server.handle_request` on an isolated store: a jcode-written memory delivered to goose, jcode and claude** |
+| **Feedback analyzer is agent-agnostic** | **Fed a goose recall plus a reusing transcript; resolved `pending`→`used` and wrote `use_count`** |
+| **jcode transcripts unreadable by feedback** | **`feedback._extract_texts` on 80 real journal lines returns 0/0; `ingest/jcode.py:94` reads the same file as 28 messages** |
+| **Ingest drift is silent** | **Renaming the transcript's top-level key yields 0 artifacts, no exception, no warning** |
 | 5.6% / 28.7% cross-tool | Joined `recall_outcomes` → `recall_log` → `artifacts`, comparing reader agent to writer source |
 | All cross-tool recalls pending | Same join, grouped by `outcome` |
 | Feedback is Claude-only | `memor/daemon.py:367-372` |
