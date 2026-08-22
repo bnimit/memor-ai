@@ -127,7 +127,7 @@ then declines on merit.
 
 Two things were still worth it:
 
-- **150 real file reads keep protection**, verified, and no file read in the
+- **148 real file reads keep protection**, verified, and no file read in the
   corpus carries a fetch header, so the signal does not collide with the case
   the guard exists for.
 - The remaining prose is now *reachable*. A prose compressor with real savings
@@ -185,3 +185,22 @@ hand back a marker -- rather than a plain elision.
 Recommended shape if built: dedupe repeated lines (8.69%, the safe majority of
 the win), skip URL shortening unless it goes through CCR, and skip blank
 collapsing at 0.32% since `compress_plain_text` already does it losslessly.
+
+
+## Re-checked after the hook fix
+
+Two figures in this document were measured before the guard deferred to the
+classifier, and one label was wrong. Corrected:
+
+- The protect bucket is **148**, not 150. Two `jcode_docs` payloads were filed
+  as file reads because their tool input carried a path; provenance now decides.
+- Source-held mass is now **12.8% of context**, down from the 14.5% measured
+  when this was written, because diffs and fetched documents route elsewhere.
+- 0 of 148 file reads leak through the hook after the guard change.
+
+The hook-path defect this document's fix originally had is worth recording as a
+pattern rather than an incident. `detect_content_type` is not the only gate:
+`posttool_compress` runs `looks_like_source` first, so routing a type correctly
+was not enough to make it reachable. It happened twice in one session -- once
+for fetched documents, once for diffs -- and is now fixed at the root by having
+the guard ask the classifier instead of keeping its own exemption list.
