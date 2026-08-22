@@ -201,6 +201,16 @@ def detect_content_type(text: str, file_path: str | None = None) -> str:
     if search_matches >= 3:
         return "search"
 
+    # A diff before the source guard. Diff bodies are full of code, so the
+    # guard claims them, and on the local corpus that held back ~280K tokens of
+    # `git log -p` and review output. A diff is safer than plain source: its
+    # lines declare their role, so unchanged context can go while every +/-
+    # line stays byte-exact.
+    from memor.compress.diff import looks_like_diff
+
+    if looks_like_diff(text):
+        return "diff"
+
     # Test-runner output before the source guard: `--- PASS: TestX (0.00s)` is
     # unambiguous, but its trailing `)` reads as code to the structural check.
     if sum(1 for line in lines if _TEST_RESULT.search(line)) >= 3:

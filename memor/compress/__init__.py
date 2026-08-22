@@ -4,6 +4,7 @@ from memor.compress.detect import detect_content_type
 from memor.compress.logs import compress_log
 from memor.compress.json_crush import compress_json
 from memor.compress.search import compress_search
+from memor.compress.diff import compress_diff
 from memor.compress.text import compress_plain_text
 from memor.tokencount import count_tokens
 
@@ -24,7 +25,9 @@ def compress_text(
     
     try:
         # Apply appropriate compressor
-        if content_type == "log":
+        if content_type == "diff":
+            compressed = compress_diff(text)
+        elif content_type == "log":
             compressed = compress_log(text)
         elif content_type == "json":
             compressed = compress_json(text)
