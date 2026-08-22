@@ -271,9 +271,41 @@ Both paths write to the same recall ledger, including recalls that return nothin
 | **Copilot CLI** | Yes | No — hooks only |
 | **Kimi CLI** | Yes | Yes — `memor install-proxy --agent kimi` |
 | **Goose** | Yes | Yes — `memor install-proxy --agent goose` (auto-detects common Desktop custom providers like `custom_deepseek`; use `--upstream-url` if yours is custom) |
-| **Jcode** | Ingest via hooks; recall via MCP — `memor install-hook --agent jcode` then `memor install-mcp --agent jcode` | No — hooks + MCP only |
+| **Jcode** | Ingest via hooks; recall via MCP — `memor install-hook --agent jcode` then `memor install-mcp --agent jcode` | Yes — via a `PATH` shim, see [Jcode compression](#jcode-compression) |
 | **Cline** | No | Yes — `memor install-proxy --agent cline` |
 | **OpenCode** | No | Yes — `memor install-proxy --agent opencode` |
+
+### Jcode compression
+
+Jcode has no hook that can rewrite tool output — `post_tool` is a detached
+observer whose stdout is discarded — and it ignores `ANTHROPIC_BASE_URL` when
+the credential is OAuth, so neither of memor's usual paths reaches it.
+
+What does reach it is the shell. Jcode's bash tool resolves `bash` through
+`PATH`, so a shim earlier on `PATH` sees tool output before jcode stores it,
+with the official binary untouched and still upgradable:
+
+```bash
+mkdir -p ~/.memor/shim
+cp docs/jcode-patch/memor-jcode-shim.sh ~/.memor/shim/bash
+cp docs/jcode-patch/memor-jcode-filter.{sh,py} ~/.memor/shim/
+chmod +x ~/.memor/shim/bash ~/.memor/shim/memor-jcode-filter.sh
+PATH="$HOME/.memor/shim:$PATH" jcode
+```
+
+Measured on stock `jcode v0.79.1`, reading the stored transcript: a 400-line
+build log lands as 17,136 characters without the shim and 370 with it. Set
+`MEMOR_SHIM_OFF=1` to disable it without editing `PATH`.
+
+The shim is byte-exact for everything else — `seq`, `echo`, `printf` without a
+trailing newline and a full source file all hash identically to real bash, and
+exit codes and stderr pass through. Only `bash -c` and `bash -lc` are
+intercepted, so interactive and login shells are untouched, and if memor is
+not importable it execs the real shell unchanged.
+
+`docs/jcode-patch/` also carries a patch adding a proper mutating `post_tool`
+hook to jcode, for anyone willing to build from source. The shim exists because
+running a fork means giving up upstream upgrades.
 
 ### Hook install details
 
