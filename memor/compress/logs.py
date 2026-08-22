@@ -27,7 +27,22 @@ def compress_log(text: str) -> str:
         r'|\b(?:test|build|suite)s?\s+(?:passed|failed|succeeded|complete)\b'
     )
 
-    important_indices = set()
+    # A ``` fence is an explicit "this is verbatim" marker. Background-task
+    # reports and design notes embed snippets and test output in fences, and
+    # the repetition rules below cannot tell one from a log line: a retention
+    # probe over real sessions found 345 fenced lines being elided. Everything
+    # between a pair of fences is kept.
+    fenced: set[int] = set()
+    inside = False
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("```"):
+            fenced.add(i)
+            inside = not inside
+            continue
+        if inside:
+            fenced.add(i)
+
+    important_indices = set(fenced)
 
     # Find important lines
     for i, line in enumerate(lines):

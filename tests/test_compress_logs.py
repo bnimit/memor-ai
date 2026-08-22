@@ -97,3 +97,31 @@ def test_run_summary_survives_through_real_detection():
     assert "Test Files  5 passed (5)" in r.text
     assert "Tests  15 passed (15)" in r.text
     assert r.tokens_after < r.tokens_before
+
+
+def test_fenced_code_inside_a_log_is_not_crushed():
+    """A log that quotes code in a fence must keep the fenced lines.
+
+    Found by a retention probe over real sessions: 345 fenced lines were being
+    elided across log-classified payloads. Background-task reports and design
+    notes embed test output and snippets in ``` fences, and the crusher's
+    repetition rules do not know a fence from a log line. The fence is an
+    explicit "this is verbatim" marker and has to be honoured.
+    """
+    lines = [f"2026-01-01 10:00:00 INFO step {i}" for i in range(80)]
+    lines += [
+        "```python",
+        "amount_remaining = invoice_total",
+        "for payment in payments:",
+        "    amount_remaining -= payment.amount",
+        "```",
+    ]
+    lines += [f"2026-01-01 10:00:00 INFO step {i}" for i in range(80, 160)]
+    text = "\n".join(lines)
+
+    r = compress_text(text, content_type="log")
+    for line in ("amount_remaining = invoice_total",
+                 "for payment in payments:",
+                 "    amount_remaining -= payment.amount"):
+        assert line in r.text, f"crusher ate fenced code: {line!r}"
+    assert r.tokens_after < r.tokens_before
