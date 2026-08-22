@@ -821,7 +821,43 @@ Research agents: `arch-map2`, `memory-qual2`, `landscape`, `product-pos`,
 `ctx-frontier`. Full reports in `docs/competitive-landscape-2026-08.md` and
 `docs/research/context-quality-2026-08.md`.
 
-## Appendix C: research provenance
+## Appendix C: re-audit of every figure
+
+Most of this review was measured in ad-hoc scripts before the regression suite
+existed, so those numbers never faced the checks written at the end. Re-running
+all of them against the live system afterwards, plus the public surfaces:
+
+| Group | Result |
+|---|---|
+| Cross-tool counts (657 served, 37 cross, 5.6%, 37 pending) | reproduce exactly |
+| Token ledger (2,453,627 saved / 1,146,846 injected / 1,306,781 net) | reproduces exactly |
+| L2 metric and the 0.449 gate | re-derived through sqlite-vec, not the formula |
+| Store composition (46.3% ephemeral, 52.4% rationale in recalled) | reproduce exactly |
+| `no_hits` 1,543; `disputes` 0; `validity` all 1.0 | reproduce exactly |
+| Code facts (271 dead lines, `cli.py` 1,871, 4 shelved tags) | reproduce exactly |
+
+Two things the re-audit caught, both worth recording.
+
+**Raw artifact totals drift, because the store is live.** `jcode` read 1,249
+during the review and 1,270 an hour later; the daemon ingested this very session
+while it was being written about. The counts were right when taken and are stale
+by construction. The review's structural claims — which tools write, which read,
+whether anything crosses — do not depend on the totals.
+
+**My re-audit query was wrong, not the review.** A simplified predicate
+(`source != agent`) reported 44 cross-tool recalls against the review's 37. The
+difference is 7 rows of `jcode` reading `distill` output. `distill` is the
+shared distiller, not a rival tool, so the review's per-agent ownership sets
+correctly treat it as every agent's own. The audit was corrected, not the
+finding.
+
+**Public surfaces exercised**, since the review's thesis depends on them:
+`memor service status` reports daemon, dashboard and proxy all running;
+`/api/savings-periods` returns HTTP 200; and the MCP server — the read path for
+agents that cannot run hooks — completes a handshake, lists `memor_recall` and
+`memor_retrieve`, and returns real project-scoped memories on a live call.
+
+## Appendix D: research provenance
 
 Six research agents were run. The first five were commissioned under the
 compression framing and are reported here only where their findings survived

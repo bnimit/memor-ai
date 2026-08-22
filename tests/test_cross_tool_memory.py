@@ -229,3 +229,41 @@ def _jcode_journal() -> Path:
         "append_messages": [{"role": "assistant", "content": DECISION}],
     }))
     return path
+
+
+def test_distill_is_not_a_rival_tool():
+    """Guards the definition the cross-tool measurement depends on.
+
+    ``distill`` is the distiller writing back into the store, not another
+    harness. Counting a recall as cross-tool merely because its writer differs
+    from its reader inflates the figure -- it reported 44 against the correct
+    37 during a re-audit of this review, the difference being seven rows of
+    jcode reading distilled output.
+
+    Pinned as an assertion about ownership rather than a count, because counts
+    move whenever the daemon ingests.
+    """
+    from memor.ingest.sources import default_local_source_paths
+
+    harnesses = set(default_local_source_paths())
+    assert not any("distill" in name for name in harnesses), (
+        "distill is now an ingest source -- revisit whether it counts as a "
+        "distinct tool in the cross-tool measurement"
+    )
+
+
+def test_mcp_exposes_recall_but_not_write():
+    """The read-only MCP surface is the architectural claim of the review.
+
+    Competitors expose ``add_memories`` and depend on the model choosing to
+    call it. memor's write path is passive ingestion, so its MCP surface offers
+    retrieval only. If a write tool is ever added, the differentiator in the
+    review's strategy section changes and should be re-argued.
+    """
+    from memor.proxy.mcp_retrieve import handle_tools_list
+
+    names = {tool["name"] for tool in handle_tools_list()["tools"]}
+    assert names == {"memor_recall", "memor_retrieve"}, (
+        f"MCP surface changed: {names}. If a write tool was added, memor now "
+        "shares the opt-in capture model it is differentiated against."
+    )
