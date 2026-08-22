@@ -54,6 +54,39 @@ to text by the fetcher, so the boilerplate a real HTML extractor would strip is
 mostly gone before memor sees it. The same mistake as the earlier `html` and
 `csv` claims: pattern presence is not compressibility.
 
+## The source slice is not as untouchable as the table says
+
+The 17.0% "source in tool results" row above is not one thing:
+
+| | tokens | of context |
+|---|---|---|
+| superseded file reads (older copy of a re-read file) | 420,701 | 5.67% |
+| ...skeletonizing them saves | 28,724 | 0.39% |
+| source-looking payloads with **no** `file_path` | 1,118,513 | 15.08% |
+
+The skeletonizer only fires when the payload can be tied to a file, and 770,784
+of those unattributed tokens come from `bash`, not from a file read. Inspecting
+the 524 blocked bash payloads:
+
+```
+look like an actual code dump: 272,205 tokens
+look like command output:      280,570 tokens
+   e.g. '# Review package: 663b7f62..HEAD'
+        'commit 22377770b85322ea019554728b9d4e5cb6a0ba29'
+        'diff --git a/apps/backend/...'
+```
+
+Roughly half is `git log`, `git diff` and review reports that the guard
+classifies as source because they *contain* code. That is the guard doing its
+job conservatively, but it is also ~280K tokens (3.8% of context) held back by
+a classification, not by a real risk of corrupting an edit. A diff-aware
+compressor is the specific unlock, which is the same conclusion
+`compression-gap-analysis.md` reached from the other direction.
+
+This does not change the 10.35% figure, because none of it is implemented. It
+does mean the 46% "untouchable" split is softer than stated: part of the 17%
+is reachable with a better classifier rather than with more risk.
+
 ## Ranking by value per unit of risk
 
 1. **Exact duplicate elision — 1.78%, and the safest thing on this list.**
