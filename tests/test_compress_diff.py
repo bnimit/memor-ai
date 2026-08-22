@@ -126,3 +126,47 @@ def test_end_to_end_through_compress_text():
     assert r.passthrough is False
     assert r.tokens_after < r.tokens_before
     assert "+    the one change" in r.text
+
+
+def test_hook_path_compresses_diffs_too():
+    """The hook gates on `looks_like_source` before `compress_text`.
+
+    A diff body is full of code, so the guard claims it, and the diff
+    compressor never runs on the path that does the real work. Same defect
+    class as the fetched-document release: routing a content type correctly in
+    `detect_content_type` is not enough when a caller has its own gate.
+    """
+    from memor.posttool_compress import build_response
+
+    lines = ["diff --git a/x.py b/x.py", "@@ -1,120 +1,121 @@"]
+    lines += [f"     stable_{i} = compute()" for i in range(120)]
+    lines.append("+    added = True")
+    out = build_response({
+        "tool_name": "bash",
+        "tool_response": {"stdout": "\n".join(lines), "exit_code": 0},
+    })
+    assert out, "hook declined a diff"
+    text = out["hookSpecificOutput"]["updatedToolOutput"]["stdout"]
+    assert "+    added = True" in text
+    assert "@@ -1,120 +1,121 @@" in text
+
+
+def test_hook_still_refuses_a_plain_source_dump():
+    """The guard must keep protecting a bare file dump on the hook path."""
+    from memor.posttool_compress import build_response
+
+    src = "\n".join([
+        "import json",
+        "from typing import Any",
+        "",
+        "class Handler:",
+        "    def __init__(self, config: dict[str, Any]) -> None:",
+        "        self.config = config",
+        "    def process(self, payload: str) -> dict:",
+        "        return json.loads(payload)",
+    ] * 20)
+    out = build_response({
+        "tool_name": "bash",
+        "tool_response": {"stdout": src, "exit_code": 0},
+    })
+    assert out == {}, "hook rewrote a plain source dump"

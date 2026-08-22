@@ -121,15 +121,19 @@ def build_response(request: dict, *, ledger: bool = False) -> dict:
     # crusher deletes lines it considers repetitive, which is right for build
     # output and catastrophic for a heredoc'd file or a `cat` of a module.
     #
-    # A fetched document is exempt. It announces its own provenance, nobody
-    # edits a docs page, and holding it back cost ~5% of context because any
-    # page carrying a fenced sample trips the guard's two-marker rule. Checked
-    # here as well as in `detect_content_type` because this gate runs *before*
-    # `compress_text`, so a classifier fix that only reached the proxy would be
-    # dead code on the path that does 83.5% of the real work.
-    from memor.compress.detect import looks_like_fetched_document
+    # This gate runs *before* `compress_text`, so anything `detect_content_type`
+    # learns to route safely is dead code here unless the guard defers to it.
+    # Two content types have earned that: a diff, whose +/- lines and hunk
+    # headers stay byte-exact while only on-disk-recoverable context goes, and
+    # a fetched document, which announces its own provenance and which nobody
+    # edits. Both are full of code and so are claimed by the guard.
+    #
+    # Asking the classifier rather than listing exemptions keeps this in step
+    # with `detect_content_type`: a future safe type is handled by adding it
+    # there, not by remembering to patch this line too.
+    from memor.compress import detect_content_type
 
-    if looks_like_source(text) and not looks_like_fetched_document(text):
+    if looks_like_source(text) and detect_content_type(text) == "source":
         return {}
 
     result = compress_text(text)
