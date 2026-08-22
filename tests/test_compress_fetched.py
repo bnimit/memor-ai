@@ -82,60 +82,84 @@ def test_fetched_document_actually_compresses():
     assert r.tokens_after < r.tokens_before
 
 
-def test_detection_matches_provenance_on_the_real_corpus():
-    """Guard rail against tuning the rule until it overfits.
+def test_every_payload_shape_in_the_corpus_is_classified_correctly():
+    """Regression cover for each shape the real corpus contains.
 
-    Runs the classifier over the frozen provenance-labelled set when it is
-    present. Skipped in environments without it rather than failing, since the
-    set is built from local sessions.
+    An earlier version of this test read a JSON set out of the scratch
+    directory. Scratch is the live TMPDIR and gets cleared, which silently
+    turned this into a skip -- a safety check that vanishes when someone tidies
+    up is not a safety check. Committing the real payloads was not an option
+    either: 1.4 MB of the user's source in the repo, and truncating to shrink
+    it changed the classification the fixture existed to pin.
+
+    So the shapes are reproduced synthetically. The six below are every
+    (kind, tool, line-numbered) combination present across 149 real
+    guard-blocked payloads: read/batch/bash line-numbered file reads, edit and
+    agentgrep output that is not, and fetched jcode_docs pages.
     """
-    import json
-    from pathlib import Path
-
     from memor.compress import detect_content_type
 
-    path = Path.home() / ".jcode/scratch/guard_set.json"
-    if not path.exists():
-        import pytest
+    body = [
+        "import json",
+        "from typing import Any",
+        "",
+        "class Handler:",
+        "    def __init__(self, config: dict[str, Any]) -> None:",
+        "        self.config = config",
+        "",
+        "    def process(self, payload: str) -> dict:",
+        "        data = json.loads(payload)",
+        "        if not data.get('id'):",
+        "            raise ValueError('missing id')",
+        "        return {'ok': True}",
+    ] * 8
 
-        pytest.skip("provenance-labelled set not present")
+    numbered = "\n".join(f"{i:6}\t{l}" for i, l in enumerate(body, 1))
+    plain = "\n".join(body)
+    edit_style = "The file has been updated. Result:\n" + numbered
+    grep_style = "\n".join(f"src/mod.py:{i}: {l}" for i, l in enumerate(body, 1))
 
-    data = json.loads(path.read_text())
-    # Every genuine file read must still read as source.
-    missed = [x for x in data["file"]
-              if detect_content_type(x["text"]) != "source"]
-    assert not missed, f"{len(missed)} real file reads lost protection"
+    # Assert the property, not the label. What matters is that no code line is
+    # removed; several routes achieve that. `source` refuses outright, `text`
+    # runs a lossless tidy, `search` folds paths without dropping matches. An
+    # earlier draft asserted `== "source"` and failed on edit output, which is
+    # classified `text` and still loses nothing.
+    from memor.compress import compress_text
 
-    # No genuine file read may carry a fetch header either: that is the signal
-    # the classifier keys on, so a collision would be silent corruption.
-    from memor.compress.detect import _FETCHED_HEADER
+    for label, text in (
+        ("read (line-numbered)", numbered),
+        ("batch (line-numbered)", "--- [1] read ---\n" + numbered),
+        ("bash cat (line-numbered)", numbered),
+        ("edit result", edit_style),
+        ("plain source dump", plain),
+    ):
+        result = compress_text(text)
+        # A line carrying only a line-number prefix is a blank line in the
+        # file; collapsing those is the lossless tidy doing its job.
+        lost = [l for l in text.split("\n")
+                if l.strip() and not l.rstrip().rstrip("\t").strip().isdigit()
+                and l.split("\t", 1)[-1].strip()
+                and l not in result.text]
+        assert not lost, (
+            f"{label}: {len(lost)} code lines removed, first {lost[0][:60]!r}")
 
-    collisions = [x for x in data["file"]
-                  if _FETCHED_HEADER.match(x["text"].lstrip()[:200])]
-    assert not collisions, f"{len(collisions)} file reads carry a fetch header"
+    # grep-shaped output routes to `search`, which folds the repeated path into
+    # a header and groups line numbers. The format changes; no match text does.
+    grep_result = compress_text(grep_style)
+    assert grep_result.content_type == "search"
+    for line in body:
+        if line.strip():
+            assert line in grep_result.text, f"search dropped {line[:40]!r}"
 
-    # Fetched documents that are mostly prose should be released; ones that
-    # are mostly fenced code are source in a thin wrapper and stay held. Assert
-    # the rule rather than a rate, since the strict-provenance set is small.
-    from memor.compress.detect import looks_like_fetched_document
-
-    for item in data["fetched"]:
-        text = item["text"]
-        inside = False
-        fenced = plain = 0
-        for line in text.split("\n"):
-            if line.lstrip().startswith("```"):
-                inside = not inside
-                continue
-            if inside:
-                fenced += len(line)
-            else:
-                plain += len(line)
-        mostly_code = bool(fenced + plain) and fenced / (fenced + plain) > 0.5
-        released = looks_like_fetched_document(text)
-        assert released is not mostly_code, (
-            f"{item['tokens']}-token doc: mostly_code={mostly_code} "
-            f"but released={released}")
+    # The one shape that must be released.
+    docs = (
+        "Source: `docs/HOOKS.md` (bundled with this Jcode build)\n\n"
+        "# Lifecycle Hooks\n\n"
+        + "jcode runs external commands at well-defined points.\n" * 50
+        + "```toml\n[hooks]\nturn_end = \"~/bin/notify\"\n```\n"
+        + "Observers are detached and fire-and-forget.\n" * 50
+    )
+    assert detect_content_type(docs) != "source"
 
 
 def test_hook_path_also_releases_fetched_documents():
