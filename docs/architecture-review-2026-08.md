@@ -574,24 +574,38 @@ after : [('jc-1', 'used')]
 **The analyzer is already agent-agnostic.** It resolved a *goose* recall to
 `used` and wrote `use_count`. Nothing in the scoring logic is Claude-specific.
 
-But it is fed by `feedback._extract_texts`, and on 80 lines of a real jcode
-journal that returns **0 assistant and 0 user texts** — jcode writes
-`{append_messages, meta}` records, and the parser expects Claude's
-`{type, message}` shape. `memor/ingest/jcode.py:94` parses the same file into 28
-messages.
+But the reader that feeds it, `_extract_stamped_texts` (`feedback.py:245`),
+returns **0 assistant and 0 user texts** on a real jcode journal — jcode writes
+`{append_messages, meta}` records, and the reader expects Claude's
+`{type, message}` shape with ISO timestamps. On a real Claude transcript the
+same function returns 4,584 and 1,230. `memor/ingest/jcode.py:94` parses the
+jcode file into 28 messages.
+
+A second obstacle sits behind that one: `analyze_session_feedback` takes a
+`transcript_path: Path`, and **Goose has no per-session transcript file at all**
+— its sessions live in SQLite. So the signature assumes a file-per-session model
+that one supported agent does not use.
 
 So P0 is three things, not one:
 
 1. Remove the `agent != "claude"` guard (`daemon.py:372`).
-2. Give `feedback.py` a per-agent transcript reader. **The logic already exists**
-   in `memor/ingest/jcode.py:94`, `goose.py` and `kimi.py`; this is reuse, not
-   new parsing work.
+2. Give the feedback path a per-agent reader, and an interface that does not
+   assume a file per session. **The reading logic already exists** in
+   `memor/ingest/jcode.py:94`, `goose.py` and `kimi.py`; the work is reuse plus
+   a source abstraction, not new parsing.
 3. Populate `session_id` on the jcode recall path — 100% of jcode recalls record
    none (31 of 31), and `correlate_with_recalls` joins on it
    (`memor/turn_metrics.py:95-99`).
 
 Had this been scoped from the code alone it would have been filed as "delete a
 guard clause" and failed silently on step 2.
+
+**Noticed while testing, and worth fixing separately.** `feedback._extract_texts`
+and `_extract_assistant_texts` (`feedback.py:41,69`) are dead — nothing on the
+live path calls them — and `_extract_texts` still matches `type == "human"`,
+which never appears in a transcript. That is the exact bug the module's own
+docstring records as fixed (`feedback.py:228-230`). The fix landed in the
+replacement; the original was left behind.
 
 **Why first.** All 37 cross-tool recalls are `pending`, and only 1.3% of
 `session_stats` rows carry a recall correlation. Until this lands, every
@@ -727,7 +741,9 @@ boilerplate; restricting to human-typed turns cut it to 1,172.
 ### P7 — Repair operational faults
 
 Remove or reset the `compressor_ready` latch (`memor/proxy/shim.py:35-46`);
-delete `memor/proxy/output_shaper.py` (271 dead lines); extract `memor/install/`
+delete `memor/proxy/output_shaper.py` (271 dead lines); delete
+`feedback._extract_texts` and `_extract_assistant_texts` (`feedback.py:41,69`,
+dead and carrying a known-fixed bug); extract `memor/install/`
 from `memor/cli.py` (1,871 lines, install logic for seven agents at 701–1102).
 
 ---
@@ -787,8 +803,8 @@ That framing is defensible in a way that "11.7% saved" is not.
 | Store is tool-agnostic | `Scope` has no agent field (`types.py:34-46`); grepped retrieval path for agent filters |
 | **Cross-tool retrieval works** | **End-to-end through `hook_server.handle_request` on an isolated store: a jcode-written memory delivered to goose, jcode and claude** |
 | **Feedback analyzer is agent-agnostic** | **Fed a goose recall plus a reusing transcript; resolved `pending`→`used` and wrote `use_count`** |
-| **jcode transcripts unreadable by feedback** | **`feedback._extract_texts` on 80 real journal lines returns 0/0; `ingest/jcode.py:94` reads the same file as 28 messages** |
-| **Ingest drift is silent** | **Renaming the transcript's top-level key yields 0 artifacts, no exception, no warning** |
+| **jcode transcripts unreadable by feedback** | **`_extract_stamped_texts` (the live reader) returns 0/0 on a real journal, against 4,584/1,230 on a real Claude transcript; `ingest/jcode.py:94` reads the jcode file as 28 messages** |
+| **Ingest drift is silent** | **Five drift modes — renamed top-level key, renamed roles, renamed content key, restructured blocks, dict instead of list — each yield 0 artifacts, no exception, no warning** |
 | 5.6% / 28.7% cross-tool | Joined `recall_outcomes` → `recall_log` → `artifacts`, comparing reader agent to writer source |
 | All cross-tool recalls pending | Same join, grouped by `outcome` |
 | Feedback is Claude-only | `memor/daemon.py:367-372` |

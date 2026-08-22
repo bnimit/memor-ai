@@ -115,47 +115,98 @@ def test_feedback_analyzer_is_not_claude_specific(store_with_jcode_memory, tmp_p
 def test_feedback_cannot_read_a_jcode_transcript():
     """Documents the specific gap, so closing it flips this test.
 
-    ``feedback._extract_texts`` understands Claude's ``{type, message}`` records.
-    jcode writes ``{append_messages, meta}``. The reader for that shape already
-    exists in ``memor/ingest/jcode.py`` -- it is simply not reachable from the
-    feedback path, which is why cross-tool recalls stay unadjudicated.
+    ``_extract_stamped_texts`` is the reader the live path uses
+    (``feedback.py:245``), and it understands Claude's ``{type, message}``
+    records with ISO timestamps. jcode writes ``{append_messages, meta}``, so it
+    yields nothing, and every jcode recall stays unadjudicated.
+
+    The reader for that shape already exists in ``memor/ingest/jcode.py`` -- it
+    is simply not reachable from the feedback path.
 
     When feedback gains a per-agent reader, invert this assertion.
     """
-    from memor.feedback import _extract_texts
+    from memor.feedback import _extract_stamped_texts
 
-    assert _extract_texts(_jcode_journal()) == ([], []), (
+    assert _extract_stamped_texts(_jcode_journal()) == ([], []), (
         "feedback can now read jcode transcripts -- update this test and "
         "remove the Claude-only guard in memor/daemon.py"
     )
 
 
-def test_a_harness_format_change_is_silent():
+def test_feedback_reads_claude_transcripts(tmp_path):
+    """The control for the test above.
+
+    Without this, a reader that returned nothing for *every* agent would still
+    pass, and the jcode assertion would prove nothing about jcode.
+    """
+    from memor.feedback import _extract_stamped_texts
+
+    transcript = tmp_path / "c.jsonl"
+    stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    transcript.write_text("\n".join(json.dumps(rec) for rec in [
+        {"type": "assistant", "timestamp": stamp,
+         "message": {"role": "assistant", "content": [{"type": "text", "text": DECISION}]}},
+        {"type": "user", "timestamp": stamp,
+         "message": {"role": "user", "content": QUERY}},
+    ]))
+
+    assistant, user = _extract_stamped_texts(transcript)
+    assert assistant and user, "the Claude reader regressed"
+
+
+@pytest.mark.parametrize("mode,document", [
+    ("top-level key renamed", {"turns": [{"role": "assistant", "content": DECISION}]}),
+    ("role values renamed", {"messages": [{"role": "model", "content": DECISION}]}),
+    ("content key renamed", {"messages": [{"role": "assistant", "body": DECISION}]}),
+    ("content becomes blocks",
+     {"messages": [{"role": "assistant", "content": [{"kind": "text", "value": DECISION}]}]}),
+    ("messages become a dict",
+     {"messages": {"0": {"role": "assistant", "content": DECISION}}}),
+])
+def test_a_harness_format_change_is_silent(tmp_path, mode, document):
     """Passive capture is the moat; this is the hole in it.
 
-    memor ingests transcripts harnesses write for their own reasons, so a
-    harness renaming a key stops the flow with no exception and no warning.
-    The failure presents months later as "memory got worse".
+    memor ingests transcripts harnesses write for their own reasons, so it is
+    exposed to formats it does not control. Every plausible shape of change
+    produces zero artifacts with no exception and no warning, so the flow stops
+    and nothing says so. The failure surfaces months later as "memory got
+    worse", with no way to date it.
+
+    Parametrised over five distinct drift modes rather than one, because a
+    single case would not show that *nothing* in the parser raises. If drift
+    detection is added, assert on the signal instead of the silence.
     """
     from memor.ingest.jcode import parse_session
-    import tempfile
 
-    tmp = Path(tempfile.mkdtemp())
-    current = tmp / "session_a.json"
+    drifted = tmp_path / f"{mode.replace(' ', '_')}.json"
+    drifted.write_text(json.dumps(document))
+
+    assert parse_session(drifted, project="drift") == [], (
+        f"{mode}: parser now recovers or raises -- if detection was added, "
+        "assert on the warning rather than the empty result"
+    )
+
+
+def test_the_current_format_still_parses(tmp_path):
+    """Control for the drift tests: proves they fail for the right reason.
+
+    Asserts one artifact, not two. The user turn is kept because any user
+    message over six tokens is signal; the assistant reply is dropped because
+    at 35 tokens it clears neither the 100-token bar nor the decision regex in
+    ``_signal_score``. That is the noise filter working, and pinning the real
+    number here is what makes the drift assertions above mean "the parser saw
+    nothing" rather than "the filter ate everything".
+    """
+    from memor.ingest.jcode import parse_session
+
+    current = tmp_path / "session_a.json"
     current.write_text(json.dumps({"messages": [
         {"role": "user", "content": QUERY},
         {"role": "assistant", "content": DECISION},
     ]}))
-    assert parse_session(current, project="drift"), "fixture no longer matches the parser"
 
-    renamed = tmp / "session_b.json"
-    renamed.write_text(json.dumps({"turns": [
-        {"role": "user", "content": QUERY},
-        {"role": "assistant", "content": DECISION},
-    ]}))
-    assert parse_session(renamed, project="drift") == [], (
-        "drift now raises or recovers -- if detection was added, assert on the signal"
-    )
+    artifacts = parse_session(current, project="drift")
+    assert [a.meta["role"] for a in artifacts] == ["user"]
 
 
 def _outcomes(store) -> list[tuple[str, str]]:
