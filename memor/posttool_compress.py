@@ -120,7 +120,16 @@ def build_response(request: dict, *, ledger: bool = False) -> dict:
     # The source guard is the safety property this hook rests on: the log
     # crusher deletes lines it considers repetitive, which is right for build
     # output and catastrophic for a heredoc'd file or a `cat` of a module.
-    if looks_like_source(text):
+    #
+    # A fetched document is exempt. It announces its own provenance, nobody
+    # edits a docs page, and holding it back cost ~5% of context because any
+    # page carrying a fenced sample trips the guard's two-marker rule. Checked
+    # here as well as in `detect_content_type` because this gate runs *before*
+    # `compress_text`, so a classifier fix that only reached the proxy would be
+    # dead code on the path that does 83.5% of the real work.
+    from memor.compress.detect import looks_like_fetched_document
+
+    if looks_like_source(text) and not looks_like_fetched_document(text):
         return {}
 
     result = compress_text(text)

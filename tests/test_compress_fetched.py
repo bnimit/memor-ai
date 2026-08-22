@@ -136,3 +136,32 @@ def test_detection_matches_provenance_on_the_real_corpus():
         assert released is not mostly_code, (
             f"{item['tokens']}-token doc: mostly_code={mostly_code} "
             f"but released={released}")
+
+
+def test_hook_path_also_releases_fetched_documents():
+    """The hook gates on `looks_like_source` before calling `compress_text`.
+
+    That is the path with the real savings (83.5% measured), so a classifier
+    improvement that only reaches the proxy is dead code where it matters most.
+    """
+    from memor.posttool_compress import build_response
+
+    out = build_response({
+        "tool_name": "bash",
+        "tool_response": {"stdout": _docs_page(), "exit_code": 0},
+    })
+    assert out, "hook declined a fetched document the classifier released"
+    text = out["hookSpecificOutput"]["updatedToolOutput"]["stdout"]
+    for line in ("def handler(request):", "    return 200"):
+        assert line in text, f"hook lost fenced code: {line!r}"
+
+
+def test_hook_still_refuses_a_real_file_read():
+    """The property that must not regress on the hook path either."""
+    from memor.posttool_compress import build_response
+
+    out = build_response({
+        "tool_name": "bash",
+        "tool_response": {"stdout": _source_file(), "exit_code": 0},
+    })
+    assert out == {}, "hook rewrote a file read"
