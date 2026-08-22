@@ -181,3 +181,79 @@ class TestNoEffortRouting:
         out, d = osh.apply("anthropic", body)
         assert d.shaped
         assert out["thinking"] == {"type": "enabled", "budget_tokens": 10000}
+
+
+def test_write_tool_detection_is_case_insensitive():
+    """Agents disagree on capitalisation, and the guard is safety-critical.
+
+    Claude Code emits `Edit`; jcode emits `edit`. A case-sensitive membership
+    test silently stops recognising a code-writing conversation, which is the
+    single condition this gate exists to catch. Measured on 11,187 real jcode
+    assistant turns, 85 of the turns the shaper would have allowed went on to
+    call a write tool.
+    """
+    import os
+
+    from memor.proxy import output_shaper as osr
+
+    os.environ["MEMOR_OUTPUT_SHAPER"] = "1"
+    os.environ["MEMOR_OUTPUT_HOLDOUT"] = "0"
+    try:
+        for name in ("edit", "Edit", "EDIT", "write", "apply_patch", "MultiEdit"):
+            body = {
+                "system": "sys",
+                "messages": [
+                    {"role": "assistant", "content": [
+                        {"type": "tool_use", "name": name, "input": {}}]},
+                    {"role": "user", "content": "and now explain it"},
+                ],
+            }
+            decision = osr.decide("anthropic", body, conversation_key="k")
+            assert not decision.shaped, f"{name!r} was not recognised as a write tool"
+            assert decision.reason == "conversation_writes_code"
+
+        # Declared-tools path takes the same lowercase spelling.
+        body = {
+            "system": "sys",
+            "messages": [{"role": "user", "content": "fix the parser"}],
+            "tools": [{"name": "edit"}, {"name": "bash"}],
+        }
+        decision = osr.decide("anthropic", body, conversation_key="k")
+        assert not decision.shaped
+        assert decision.reason == "change_requested_with_write_tools"
+    finally:
+        os.environ.pop("MEMOR_OUTPUT_SHAPER", None)
+        os.environ.pop("MEMOR_OUTPUT_HOLDOUT", None)
+
+
+def test_bare_approval_of_a_proposed_change_is_not_shaped():
+    """"yes lets do it" carries no change verb but authorises one.
+
+    Found by replaying real transcripts: the residual code-writing turns the
+    shaper still allowed were approvals of a plan proposed in an earlier turn.
+    The change intent lives in the assistant's proposal, not in the two words
+    the user typed, so scanning only the latest user message misses it.
+    """
+    import os
+
+    from memor.proxy import output_shaper as osr
+
+    os.environ["MEMOR_OUTPUT_SHAPER"] = "1"
+    os.environ["MEMOR_OUTPUT_HOLDOUT"] = "0"
+    try:
+        for reply in ("yes lets do it", "Lets go with A", "yes", "go ahead", "sounds good", "sure"):
+            body = {
+                "system": "sys",
+                "messages": [
+                    {"role": "user", "content": "which approach is better?"},
+                    {"role": "assistant", "content": [
+                        {"type": "text", "text": "Option A: rewrite the parser."}]},
+                    {"role": "user", "content": reply},
+                ],
+                "tools": [{"name": "edit"}, {"name": "bash"}],
+            }
+            decision = osr.decide("anthropic", body, conversation_key="k")
+            assert not decision.shaped, f"{reply!r} was shaped but authorises a change"
+    finally:
+        os.environ.pop("MEMOR_OUTPUT_SHAPER", None)
+        os.environ.pop("MEMOR_OUTPUT_HOLDOUT", None)

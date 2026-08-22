@@ -48,10 +48,20 @@ STEER_NOTE = (
 )
 
 #: Tools whose presence means this conversation edits code.
+#:
+#: Compared case-insensitively. Agents disagree on capitalisation for the same
+#: tool -- Claude Code emits `Edit`, jcode emits `edit` -- and this is the gate
+#: that keeps a terseness instruction away from code generation. Measured on
+#: 11,187 real jcode assistant turns, an exact-match test let 85 code-writing
+#: turns through.
 WRITE_TOOLS = frozenset({
-    "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch",
-    "str_replace_editor", "create_file", "edit_file",
+    "edit", "write", "multiedit", "notebookedit", "apply_patch",
+    "str_replace_editor", "create_file", "edit_file", "patch",
 })
+
+
+def _is_write_tool(name) -> bool:
+    return isinstance(name, str) and name.strip().lower() in WRITE_TOOLS
 
 #: A tool result carrying one of these is a failure the model must reason about.
 ERROR_SIGNAL = re.compile(
@@ -63,6 +73,21 @@ ERROR_SIGNAL = re.compile(
 CHANGE_INTENT = re.compile(
     r"\b(fix|implement|add|remove|refactor|rename|migrate|write|create|"
     r"update|change|patch|build|delete|revert|bump|wire|hook up)\b", re.I)
+
+#: A short reply that authorises a change proposed in an earlier turn.
+#:
+#: Found by replaying real transcripts: after the write-tool fix, every
+#: remaining code-writing turn the shaper allowed was an approval -- "yes lets
+#: do it", "Lets go with A". The intent is in the assistant's proposal, not in
+#: the two words the user typed, so a change-verb scan of the latest message
+#: cannot see it. Short and affirmative is the signal; a long message would
+#: carry its own verbs.
+APPROVAL = re.compile(
+    r"^\W*(y(es|ep|eah|up)?|ok(ay)?|sure|go|go ahead|do it|proceed|continue|"
+    r"lets? (go|do|try)|sounds good|please do|agreed|approved|ship it|"
+    r"perfect|great)\b", re.I)
+#: Above this many characters a reply is a request in its own right.
+APPROVAL_MAX_CHARS = 60
 
 ENV_FLAG = "MEMOR_OUTPUT_SHAPER"
 ENV_HOLDOUT = "MEMOR_OUTPUT_HOLDOUT"
@@ -121,7 +146,7 @@ def _messages(provider: str, body: dict) -> list:
 def _declares_write_tools(body: dict) -> bool:
     for tool in body.get("tools") or []:
         name = tool.get("name") or (tool.get("function") or {}).get("name")
-        if name in WRITE_TOOLS:
+        if _is_write_tool(name):
             return True
     return False
 
@@ -134,7 +159,7 @@ def _used_write_tool(messages: list) -> bool:
         for block in content:
             if not isinstance(block, dict):
                 continue
-            if block.get("type") == "tool_use" and block.get("name") in WRITE_TOOLS:
+            if block.get("type") == "tool_use" and _is_write_tool(block.get("name")):
                 return True
     return False
 
@@ -196,8 +221,13 @@ def decide(provider: str, body: dict, *, conversation_key: str = "") -> ShapeDec
     if result_text and ERROR_SIGNAL.search(result_text):
         return ShapeDecision(False, "error_in_tool_result")
 
-    if _declares_write_tools(body) and CHANGE_INTENT.search(_latest_user_text(messages)):
-        return ShapeDecision(False, "change_requested_with_write_tools")
+    latest_user = _latest_user_text(messages)
+    if _declares_write_tools(body):
+        if CHANGE_INTENT.search(latest_user):
+            return ShapeDecision(False, "change_requested_with_write_tools")
+        stripped = latest_user.strip()
+        if stripped and len(stripped) <= APPROVAL_MAX_CHARS and APPROVAL.match(stripped):
+            return ShapeDecision(False, "approval_of_proposed_change")
 
     return ShapeDecision(True, "shaped")
 
