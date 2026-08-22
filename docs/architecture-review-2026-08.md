@@ -119,6 +119,14 @@ projects have two tools writing 20+ chunks; 89% of all writes are `claude_code`.
 Where two tools genuinely share a project, better than one in four served
 memories came from the other tool.
 
+**The 28.7% survives its definition being changed.** It was first computed
+against a hand-typed list of multi-tool projects, which is the kind of choice
+that quietly determines a result. Re-deriving the set from the data at six
+different activity thresholds gives 2 to 5 projects and **28.7% every time**:
+`nimit` and `polymarket` contribute no adjudicated recalls, so including them
+changes nothing. The figure is stable; what limits it is sample size, 129
+adjudicated pairs across 3 projects, not the definition.
+
 The mechanism works. The thesis is delivered.
 
 **Validated through the public interface, not only from production data.** Driving
@@ -502,9 +510,16 @@ scrolled off screen, and gets OCR-grade text with no session ID or tool-call
 boundary.
 
 memor reads the transcripts harnesses already write to disk for their own
-reasons. **A tool contributes memory without knowing memor exists.** Goose wrote
-1,256 artifacts having never called it, and none of the four competitors can
-produce that demo.
+reasons. **A tool contributes memory without knowing memor exists.**
+
+Verified rather than asserted, because it is the strongest claim in this review.
+Goose has written 1,256 artifacts; `memor` appears **nowhere in
+`~/.config/goose/config.yaml`** (grepped; the only matches are Goose's own
+`memory` and `chatrecall` extensions, both disabled), and Goose has issued
+**zero recalls**. The daemon reads
+`~/.local/share/goose/sessions/sessions.db` directly and discovers sessions with
+no cooperation from Goose at all. None of the four competitors can produce that
+demo.
 
 **Two honest caveats.** This is a moat of *engineering*, not architecture:
 per-harness format reverse-engineering that breaks silently when Claude Code
@@ -835,6 +850,8 @@ all of them against the live system afterwards, plus the public surfaces:
 | Store composition (46.3% ephemeral, 52.4% rationale in recalled) | reproduce exactly |
 | `no_hits` 1,543; `disputes` 0; `validity` all 1.0 | reproduce exactly |
 | Code facts (271 dead lines, `cli.py` 1,871, 4 shelved tags) | reproduce exactly |
+| 28.7% under six derived definitions of "multi-tool project" | 28.7% every time |
+| Goose ingested with no cooperation | `memor` absent from goose config, 0 goose recalls, sessions.db read directly |
 
 Two things the re-audit caught, both worth recording.
 

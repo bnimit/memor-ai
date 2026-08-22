@@ -267,3 +267,27 @@ def test_mcp_exposes_recall_but_not_write():
         f"MCP surface changed: {names}. If a write tool was added, memor now "
         "shares the opt-in capture model it is differentiated against."
     )
+
+
+@pytest.mark.skipif(
+    not Path("~/.local/share/goose/sessions/sessions.db").expanduser().exists(),
+    reason="goose is not installed on this machine",
+)
+def test_goose_is_ingested_without_cooperating():
+    """The sharpest evidence for the passive-capture claim.
+
+    Competitors need the model to call a save tool, or a hook the vendor wrote
+    per harness. memor reads Goose's own SQLite session store, so Goose
+    contributes memory while having no idea memor exists: it is absent from
+    Goose's config, and Goose has never issued a recall.
+
+    Skipped rather than mocked when Goose is missing, because a mocked SQLite
+    file would prove the parser works, not that the integration does -- and the
+    integration is the whole claim.
+    """
+    from memor.ingest.goose import GOOSE_DB_PATH, scan_goose_sessions
+
+    assert scan_goose_sessions(GOOSE_DB_PATH), (
+        "no goose sessions discoverable -- if the schema changed, this is the "
+        "silent-drift failure mode that P4 exists to detect"
+    )
