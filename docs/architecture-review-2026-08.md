@@ -31,6 +31,52 @@ thesis.
 product, memor is capped and near-finished. As a shared memory layer, it is
 built, working, and structurally unable to prove it.
 
+**With one correction to the thesis itself.** "One store, many tools" is not a
+defensible position — Pieces, OpenMemory and Supermemory all occupy it, two of
+them funded and louder (§6.2). What no competitor has is *how memor writes*: it
+polls harness transcripts off disk, so a tool contributes memory **without
+knowing memor exists**. Every rival's write path needs the model to call a save
+tool, or a hand-built per-harness hook, or settles for screen pixels. That is the
+line worth defending (§6.3).
+
+### 1.1 What I had to guess, and what I got wrong
+
+This review was commissioned before the thesis above was stated, and I worked for
+some time under the wrong one. Since the document's whole claim is that
+unfalsifiable assertions are worthless, the interpretive debts belong in it.
+
+**Guessed and later confirmed wrong: that the README describes the product.** It
+leads with compression percentages, so the first draft graded memor as a
+compression tool and produced a roadmap headed by constraint pinning — a good
+feature aimed at the wrong goal. Corrected in full; compression is now Appendix A
+and constraint pinning is P5.
+
+**Guessed and still unverified: that "shared layer" means shared *retrieval*.**
+I have taken the thesis to mean a fact written by one tool should be *retrievable*
+by another, and measured that. It could also mean shared *budget* (one context
+allowance across tools) or shared *identity* (one profile of the user's
+preferences). The measurements here support the retrieval reading only.
+
+**Guessed: that the local corpus is representative.** All figures come from one
+machine, one user, mostly one harness — 89% of writes are `claude_code`. The
+28.7% cross-tool rate rests on 129 adjudicated pairs in five projects. Directional
+at best.
+
+**Three claims withdrawn during the review**, each from reasoning about code
+rather than running it:
+
+1. That recency admits irrelevant-but-fresh memories. The blended threshold
+   cannot do this; `norm_rel` is min-max normalised and the code says so in a
+   comment (`retriever.py:255-260`).
+2. That the L2/cosine units bug is the main cause of the 40.9% zero-hit rate.
+   Probing the live store showed the gate sits near precision-optimal (§3.2).
+3. That compaction is the product's central problem. True as a measurement
+   (≥36.9% of typed instructions lost), wrong as a priority for *this* product.
+
+The pattern in all three is the same, and it is the pattern this codebase has
+been correcting all year: **a number derived from a formula is a hypothesis, not
+a finding.**
+
 ---
 
 ## 2. Was the shared layer delivered? Yes.
@@ -75,7 +121,45 @@ memories came from the other tool.
 
 The mechanism works. The thesis is delivered.
 
-### 2.3 What that is worth, and the ledger nobody drew
+### 2.3 The differentiator is passive capture, not the shared store
+
+The shared store on its own is **not** a defensible niche. Mem0's OpenMemory MCP
+Server (mem0.ai/blog/introducing-openmemory-mcp, read 2026-08-22) is explicitly
+"a private, local-first memory server that creates a shared, persistent memory
+layer for your MCP-compatible tools", markets exactly this scenario — *"Define
+technical requirements in Claude Desktop. Build in Cursor. Debug in Windsurf"* —
+and supports Cursor, Claude Desktop, Windsurf and Cline. Local, free, and the
+same headline claim.
+
+The difference is in **how memory gets written**, and it is architectural.
+
+OpenMemory exposes `add_memories` as an MCP tool. Something must *decide to call
+it*: the agent, prompted to save, or the user. That is opt-in capture, and it
+inherits the failure mode of every manual knowledge base — the discipline lapses
+and the store goes stale.
+
+memor never asks. The daemon polls agent transcript stores directly on disk every
+30 seconds (`memor/daemon.py:23`, `memor/ingest/sources.py:180-188`): Claude's
+`projects` dir, jcode sessions, Goose's SQLite database, Kimi's session files.
+Its MCP surface is **read-only** — `memor_recall` and `memor_retrieve`, with no
+write tool (`memor/proxy/mcp_retrieve.py:3-6`).
+
+The consequence is the interesting one: **a tool contributes memory without
+knowing memor exists.** Goose wrote 1,256 artifacts and has never called memor.
+No plugin, no MCP registration, no prompt asking the model to save anything. That
+is a materially different bet from OpenMemory's, and it is the part a competitor
+cannot copy without also writing a parser per harness.
+
+It also explains the asymmetry in §2.1: four tools write, but writing requires
+only a transcript on disk, whereas reading requires an integration. That is why
+`goose` and `kimi` appear as writers and never as readers.
+
+**The honest risk.** Passive capture is why 46.3% of stored tokens are ephemeral
+scaffolding (§3.3) — nothing decided what was worth keeping. OpenMemory's opt-in
+write is a curation filter that memor pays for in noise. P2 exists to close that
+gap without giving up the property that makes the approach distinctive.
+
+### 2.4 What that is worth, and the ledger nobody drew
 
 The product's own numbers, on one line:
 
@@ -114,9 +198,12 @@ for unit in pending:
         continue
 ```
 
-`analyze_session_feedback` is the only writer of `use_count`, and it never runs
-for jcode, cursor, goose or kimi sessions. The consequence is exact and visible
-in the data:
+That single guard clause gates **both** of memor's measurement systems.
+
+`analyze_session_feedback` (`daemon.py:385`) is the only writer of `use_count`,
+and `correlate_with_recalls` (`daemon.py:396`) is the only writer of
+`had_recall`. Neither runs for jcode, cursor, goose or kimi. The consequences are
+exact and visible:
 
 | | used | rejected | unused | pending |
 |---|---|---|---|---|
@@ -125,7 +212,15 @@ in the data:
 
 Every one of the 37 cross-tool recalls — the product's headline capability — sits
 `pending` forever. Same-tool recalls are adjudicated and score **100% of judged
-as `used`**. Cross-tool recalls are served, then never scored.
+as `used`**.
+
+The second system is degraded further: only **48 of 3,620 `session_stats` rows
+(1.3%)** carry a non-zero `recall_turn_count`, against 4,133 logged recalls. Two
+causes compound. The Claude-only guard is one. The other is that
+`correlate_with_recalls` matches on `session_id`
+(`memor/turn_metrics.py:95-99`), and **100% of jcode recalls record no
+`session_id` at all** (31 of 31), so even lifting the guard would not correlate
+them without also fixing the identifier.
 
 **The one feature memor exists for is the one feature it cannot measure.** That
 is why a rigorous, measurement-driven project drifted into describing itself by
@@ -328,33 +423,114 @@ was corrected to call production `recall()` (`CHANGELOG.md:39`).
 
 ## 6. Strategic position
 
-Under the corrected thesis, memor's position is **stronger**, not weaker.
+The platform is not the threat. The other startups are, and the position is
+**more crowded than the thesis assumes**.
+
+### 6.1 The platform leaves this gap open
 
 Anthropic has shipped context editing (2025-09-29), the memory tool
 (`memory_20250818`), auto-compact, and auto-memory. Against a *compression*
-product this is close to fatal: they report 84% token reduction on a 100-turn
+product that is close to fatal: they report 84% token reduction on a 100-turn
 eval, and a user will compare that to 11.7% and stop reading.
 
-Against a *cross-tool memory layer* it is not competitive at all, because
-**no model provider will ever make its memory work well inside a rival's
-harness.** Anthropic's memory is Claude's memory. Cursor's Memories are Cursor's.
-A developer using Claude Code, Codex and Cursor in one week has three silos by
-construction, and only a third party can unify them.
+Against a *cross-tool memory layer* it is not competitive, because **no model
+provider will make its memory work well inside a rival's harness.** Anthropic's
+memory is Claude's. Cursor's Memories are Cursor's. Anthropic ships the memory
+*protocol* and states plainly that "memory lives entirely in your application" —
+the socket, not the appliance.
 
-Anthropic ships the memory *protocol* and states plainly that "memory lives
-entirely in your application" — they specified the socket, not the appliance.
-What goes in, when, deduplicated how, ranked by what, and **shared with whom**,
-is unowned.
+The economics also stop being embarrassing. On a Max subscription compression
+saves **$0.00**; cross-tool memory claims to save *re-establishment*, which is
+felt on every tool switch regardless of billing model.
 
-Every serious competitor has noticed the portability gap: claude-mem, Cognee,
-Honcho and Headroom all lead with multi-harness support. memor's differentiators
-within that field are **local-first** (against Mem0, Zep, Supermemory, Honcho,
-which are cloud APIs) and **falsifiable measurement** (against all of them).
+### 6.2 But three products already occupy this exact position
 
-The economics also stop being embarrassing. On a Max subscription, compression
-saves **$0.00**. Cross-tool memory does not claim to save money; it claims to
-save *re-establishment*, which is felt on every tool switch regardless of billing
-model.
+| Product | Shared store? | Local-first? | Markets cross-tool? |
+|---|---|---|---|
+| **Pieces** (PiecesOS) | Yes, one LTM store over MCP to ~20 harnesses | Yes, on-device | Yes, as the architecture |
+| **OpenMemory** (Mem0) | Yes, explicitly | Yes, but needs Docker + an OpenAI key | Yes, headline |
+| **Supermemory** | Yes | Cloud-first; self-host on paid tiers | Yes, headline |
+| **claude-mem** | Yes by construction (one SQLite, `project` column, no agent column) | Yes | No — never claims it |
+
+*(All read 2026-08-22: mem0.ai/blog/introducing-openmemory-mcp,
+supermemory.ai/personal, docs.pieces.app/products/mcp/get-started,
+docs.claude-mem.ai/architecture/database.md.)*
+
+Zep, Cognee, Letta and Honcho are **not** competitors here: they are memory
+backends for developers building their own agents, scoped per user or session
+inside one application, not across a developer's tools.
+
+**"One store, many tools" is not a pitch.** Two funded companies already say it
+louder. The uncontested intersection is narrower — local **and** project-scoped
+**and** no cloud **and** no Docker or heavyweight daemon — and those are
+implementation constraints, which are easier to copy than to defend.
+
+### 6.3 What is actually hard to copy
+
+Two things, and neither is the store.
+
+**Passive artifact capture.** Every competitor's write path needs cooperation
+from something. Researched across the four closest products, the taxonomy has
+four cells and memor is alone in its own:
+
+| Approach | Products | Needs the model to comply? | Needs a per-harness adapter? | Gets structured data? |
+|---|---|---|---|---|
+| Model-invoked write tool | OpenMemory (`add_memories`), Supermemory one-click save | **Yes** | No | Yes |
+| Harness-cooperative hooks | claude-mem, Supermemory plugins | No | **Yes** | Yes |
+| Ambient screen capture | Pieces (Vision/Clipboard/Audio) | No | No | **No — pixels** |
+| **Artifact polling** | **memor** | **No** | No¹ | **Yes** |
+
+¹ It needs a *parser* per harness, but not the harness's cooperation.
+
+The distinctions are load-bearing. OpenMemory's docs recommend installing skills
+and pasting a starter prompt "so the assistant knows to use it"
+(docs.mem0.ai/vibecoding) — memory contingent on prompt engineering, and if the
+model does not think to save, nothing is saved. claude-mem is "fundamentally a
+hook-driven system" whose installer asks which IDEs to wire up
+(docs.claude-mem.ai/hooks-architecture.md, /installation): automatic at runtime,
+but only inside a harness someone has built an adapter for, and only if that
+harness exposes hooks at all. Pieces captures Vision, Clipboard and Audio — a
+closed list (docs.pieces.app/products/core-dependencies/pieces-os/long-term-memory)
+— so it sees the *pixels* of a coding agent, misses anything headless, SSH'd or
+scrolled off screen, and gets OCR-grade text with no session ID or tool-call
+boundary.
+
+memor reads the transcripts harnesses already write to disk for their own
+reasons. **A tool contributes memory without knowing memor exists.** Goose wrote
+1,256 artifacts having never called it, and none of the four competitors can
+produce that demo.
+
+**Two honest caveats.** This is a moat of *engineering*, not architecture:
+per-harness format reverse-engineering that breaks silently when Claude Code
+changes its transcript layout, defensible only while the maintenance tax is paid,
+and copyable by a funded competitor in a quarter. And Pieces' capture list is
+documented-absence, not confirmed-negative — its source list beyond the three
+modalities could not be verified.
+
+**Falsifiable measurement.** No competitor ships tools letting a user disprove
+its claims on their own traffic. Narrow appeal, invisible to most buyers,
+genuinely unmatched.
+
+**If the product repositions, this is the line — not the shared store:**
+*contribute memory without knowing memor exists.*
+
+### 6.4 Demand is validated by supply, not by users
+
+At least eight entrants in twelve months (Bindly, RedPlanetHQ CORE, Drift,
+Jumbo, and others), **every one scoring 1–4 points on Hacker News**. Many people
+are building this fix; few are organically complaining about the problem. That
+asymmetry should temper any assumption that cross-tool memory is a felt pain
+with buyers waiting.
+
+Standardisation is also moving: every serious player ships an MCP memory server,
+so the plumbing is commodity. AGENTS.md is the precedent — 60k repos, 25 agents,
+now under the Linux Foundation's Agentic AI Foundation. Cross-harness context
+standardised quickly once a neutral body took it. A shared-memory *protocol*
+could commoditise the same way, which would leave capture quality and curation as
+the only durable ground.
+
+*(HN sampling via hn.algolia.com, 2026-08-22. Reddit returned 403 and was not
+sampled, so this demand picture is HN-only.)*
 
 ---
 
@@ -365,22 +541,30 @@ Ranked by (impact on the shared-layer thesis × confidence).
 ### P0 — Make cross-tool recall measurable
 
 **What.** Extend the feedback loop past Claude. `memor/daemon.py:372` skips every
-non-Claude session, so `analyze_session_feedback` never adjudicates a jcode,
-cursor, goose or kimi recall. Transcript parsers for these agents already exist
-(`memor/ingest/jcode.py`, `goose.py`, `kimi.py`); the work is wiring them into
-the feedback path.
+non-Claude session, so neither `analyze_session_feedback` nor
+`correlate_with_recalls` ever runs for jcode, cursor, goose or kimi. Transcript
+parsers for these agents already exist (`memor/ingest/jcode.py`, `goose.py`,
+`kimi.py`); the work is wiring them into the feedback path.
 
-**Why first.** All 37 cross-tool recalls are `pending`. Until this lands, every
+**Also required, and easy to miss.** `correlate_with_recalls` joins on
+`session_id` (`memor/turn_metrics.py:95-99`), and **100% of jcode recalls record
+none** (31 of 31). Lifting the guard alone would leave jcode uncorrelated. The
+identifier has to be populated at recall time as well.
+
+**Why first.** All 37 cross-tool recalls are `pending`, and only 1.3% of
+`session_stats` rows carry a recall correlation. Until this lands, every
 statement about the product's core capability is unfalsifiable — including the
 favourable ones in this document. The project's own history says an unfalsifiable
-claim is worth nothing: seven collapsed this session.
+claim is worth nothing: seven collapsed this session, and three claims in this
+review had to be withdrawn for the same reason.
 
 **Success metric.** Cross-tool `used`/`rejected` verdicts become non-zero, and
 the cross-tool use rate is comparable against the same-tool 100%-of-judged
 baseline.
 
-**Effort.** Small-to-moderate. Parsers exist; the loop is one guard clause and a
-transcript-path resolution per agent.
+**Effort.** Small-to-moderate. Parsers exist; the loop is one guard clause, a
+transcript-path resolution per agent, and a session-id fix on the jcode recall
+path.
 
 **Risk.** Low. It adds measurement, changes no retrieval behaviour.
 
@@ -444,7 +628,29 @@ breakage is the default failure mode.
 
 **Effort.** Moderate.
 
-### P4 — Unshelve temporal validity
+### P4 — Detect ingest drift
+
+**What.** Alert when a configured source stops producing artifacts. Per-source
+"last successful ingest" plus a staleness threshold, surfaced in
+`memor service status` and the dashboard.
+
+**Why.** §6.3 identifies passive artifact capture as the one genuinely hard-to-copy
+property, and its stated weakness is that it **breaks silently**: a harness
+changes its transcript layout, the parser yields nothing, and the source goes
+quiet with no error. Searched `memor/ingest/` and `memor/daemon.py` for staleness
+or drift detection; **none found**. Today the failure presents as "memory got
+worse over the last month" with no diagnosis.
+
+This is cheap insurance on the moat. A moat maintained by reverse-engineering
+needs a tripwire when the terrain moves.
+
+**Success metric.** A deliberately corrupted source directory produces a visible
+warning within one poll cycle.
+
+**Effort.** Small. The daemon already tracks per-source state in
+`~/.memor/ingested.json`.
+
+### P5 — Unshelve temporal validity
 
 **What.** Restore `shelved/temporal-validity` (+699) or delete the orphaned
 schema.
@@ -452,7 +658,7 @@ schema.
 **Why.** Staleness compounds in a shared layer: a memory written by one tool and
 read by another months later has no freshness signal. The work is done.
 
-### P5 — Constraint pinning (was P0 in the first draft)
+### P6 — Constraint pinning (was P0 in the first draft)
 
 **What.** Detect user-issued constraints, persist them, re-inject after
 compaction.
@@ -475,7 +681,7 @@ inspection shows that fires on stopwords where the summary merely discusses the
 topic. A first pass also counted 21,421 "constraints" that were skill-file
 boilerplate; restricting to human-typed turns cut it to 1,172.
 
-### P6 — Repair operational faults
+### P7 — Repair operational faults
 
 Remove or reset the `compressor_ready` latch (`memor/proxy/shim.py:35-46`);
 delete `memor/proxy/output_shaper.py` (271 dead lines); extract `memor/install/`
@@ -551,3 +757,24 @@ That framing is defensible in a way that "11.7% saved" is not.
 Research agents: `arch-map2`, `memory-qual2`, `landscape`, `product-pos`,
 `ctx-frontier`. Full reports in `docs/competitive-landscape-2026-08.md` and
 `docs/research/context-quality-2026-08.md`.
+
+## Appendix C: research provenance
+
+Six research agents were run. The first five were commissioned under the
+compression framing and are reported here only where their findings survived
+re-framing:
+
+| Agent | Question | Fate of its conclusions |
+|---|---|---|
+| `arch-map2` | Structural audit, entry points, failure modes | Survives; framing-independent |
+| `memory-qual2` | Write path, read path, feedback loop, benchmark validity | Survives; the shelved-tag and threshold findings are load-bearing |
+| `landscape` | Competitors and platform absorption | Partly survives. Independently reached "lead with cross-harness memory", but its competitor table did not distinguish shared stores from per-tool silos |
+| `product-pos` | Value proposition and effort allocation | Survives. Reached "compression should not be the headline" from the effort histogram alone |
+| `ctx-frontier` | Compaction integrity, context rot | Survives as evidence; its recommendation (compaction is the top priority) was correct under the wrong thesis and is now P6 |
+| `crosstool` | **Does anyone else genuinely share one store across tools, and how does each capture?** | Commissioned after the thesis was corrected. Produced §6.2 and §6.3, the two findings that changed the strategic conclusion |
+
+The sixth agent existed only because the thesis was corrected. Its finding — that
+the shared store is crowded but the capture mechanism is not — reversed the
+strategic section. Had the review shipped at its first draft, it would have
+recommended a compaction feature for a cross-tool memory product, and called a
+crowded position defensible.
