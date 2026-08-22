@@ -137,8 +137,10 @@ for the entire product thesis.
 
 ### 3.2 The relevance gate is calibrated in the wrong metric
 
-This is the sharpest code defect found, and it directly suppresses cross-tool
-recall.
+This is the clearest code defect found. It is a units error rather than a
+mis-tuning, and its practical cost turned out to be smaller than the conversion
+table alone suggests — the measurement that qualifies it is below, and it
+reversed my initial reading.
 
 `vec_artifacts` is declared with no distance metric
 (`memor/store/sqlite_store.py:135-136`), so sqlite-vec uses its default, **L2**.
@@ -165,14 +167,43 @@ relevant content at >0 and noise at <0, so the default floor is 0.0."* Correct
 the memory lane, and before any blended score exists.
 
 That band is exactly where cross-tool matches live. A memory written by jcode
-about the same subsystem, in different words, is related-but-not-duplicate: the
-0.2–0.45 range this gate silently removes.
+about the same subsystem, in different words, is related-but-not-duplicate.
 
-The apparent signal-to-noise separation on real artifacts is only ~0.16, which
-looks like a weak embedder. It is not: comparing the same texts under **true
-cosine**, `potion-base-8M` separates matched from nonsense pairs by **0.573**.
-The model is fine; the unit conversion is compressing the usable range and the
-gate sits inside it.
+**But the gate is better calibrated than the unit error suggests, and this
+qualifies the finding substantially.** Converting the store's `sim` to true
+cosine and probing the live store with five on-topic queries (150 candidates)
+against four nonsense queries (112 candidates):
+
+| cosine cut | on-topic admitted | nonsense admitted | precision |
+|---|---|---|---|
+| 0.50 | 11% | 0 | 100% |
+| **0.449 (current gate)** | **~41%** | **2** | **~97%** |
+| 0.40 | 67% | 18 | 85% |
+| 0.35 | 81% | 22 | 85% |
+| 0.30 | 91% | 28 | 83% |
+| 0.25 | 100% | 53 | 74% |
+
+So `-0.05` in L2 units lands at cosine 0.449, which is close to the
+precision-optimal cut for this embedder. **Whoever tuned it tuned it on
+behaviour, and arrived somewhere defensible by feel.** The bug is real — the
+constant means something different from what its comment claims, and cannot be
+reasoned about or ported to another embedder — but it is not costing the recall
+disaster the mapping table alone implies.
+
+What it *is* costing is the 0.40–0.449 slice: roughly **26 percentage points of
+recall for 16 additional false admits**. On this sample the blocked-but-on-topic
+items are visibly relevant:
+
+```
+cos +0.444  BLOCKED  'if the competitors are claiming 20% savings...'
+cos +0.429  BLOCKED  'Why are we not able to improve our compression...'
+cos +0.421  BLOCKED  'wait so you did identify the reason compression...'
+```
+
+The apparent signal-to-noise separation on raw `sim` is only ~0.16, which looks
+like a weak embedder. It is not: under true cosine, `potion-base-8M` separates
+matched from nonsense pairs by **0.573**. The model is fine; the unit conversion
+compresses the usable range into a band too narrow to reason about.
 
 **Correction to this review's first draft.** I initially reported that the 0.3
 blended threshold admits irrelevant-but-fresh memories, since a zero-relevance
@@ -185,9 +216,14 @@ cosine here is the real relevance filter."* The design anticipated the objection
 and answered it. The remaining defect is that the filter it points to is in the
 wrong units.
 
-**Predicted and confirmed.** If the raw gate is what rejects, then `no_hits` rows
-should show an empty candidate set rather than a filtered one. All 1,543
+**Predicted and confirmed.** If the raw gate is what rejects, then `no_hits`
+rows should show an empty candidate set rather than a filtered one. All 1,543
 `no_hits` rows have `top_score = 0.000` exactly, with no intermediate values.
+
+**What this does not explain.** Since the gate sits near the precision-optimal
+cut, it cannot be the whole cause of 40.9% zero-hit. The residual is most likely
+§3.3: 88% of artifacts have never been recalled, and a store full of scaffolding
+has little to return however the gate is set.
 
 ### 3.3 What is stored is mostly not knowledge
 
@@ -348,24 +384,37 @@ transcript-path resolution per agent.
 
 **Risk.** Low. It adds measurement, changes no retrieval behaviour.
 
-### P1 — Express the relevance gate in cosine
+### P1 — Express the relevance gate in cosine, then tune it on evidence
 
 **What.** Declare `distance_metric=cosine` on `vec_artifacts`, or convert with
-`cos = 1 − L2²/2`, then re-derive the floor.
+`cos = 1 − L2²/2`, so the constant means what its comment says. Then decide the
+floor from the precision/recall table in §3.2 rather than by feel.
 
-**Why.** §3.2. The gate cuts at true cosine ≈ +0.449, discarding the 0.0–0.45
-band where cross-tool paraphrase matches live. This is the most plausible single
-cause of 40.9% of recalls returning nothing.
+**Why.** Two reasons, and the second is the smaller one.
+
+First, correctness of reasoning: `min_similarity = -0.05` currently denotes
+cosine 0.449, so nobody can reason about it, port it to another embedder, or
+change it safely. That is a latent hazard every time the embedding model moves.
+
+Second, recall: moving the cut from 0.449 to ~0.40 admits **67% of on-topic
+candidates instead of 41%**, costing 16 additional false admits on the probe set
+(85% precision, down from 97%). That is the specific trade available.
+
+**Important qualification.** The measured table shows the existing gate is close
+to precision-optimal for `potion-base-8M`. This is a units bug and a modest
+recall opportunity, **not** the cause of the 40.9% zero-hit rate — see §3.3 for
+the more likely cause. I over-claimed this in an earlier draft on the strength of
+the conversion table alone, before probing the live store.
 
 **Success metric.** Zero-hit rate on stores with >2,000 artifacts falls from
 32.1%, **and** the P0 cross-tool use rate does not fall. Both must hold.
 
 **Effort.** Small in code; needs a `vec_artifacts` re-index migration.
 
-**Risk.** Real. Widening the gate admits weaker matches, and §3.3 says much of
-what it admits is scaffolding. Chroma's context-rot work (2025-07-14, 18 models,
-194,480 calls) finds distractor harm is the dominant degradation lever and grows
-with context length. **Do not ship before P0 can measure it.**
+**Risk.** Real. Chroma's context-rot work (2025-07-14, 18 models, 194,480 calls)
+finds distractor harm is the dominant degradation lever and grows with context
+length, so the 16 extra false admits are not free. **Do not ship before P0 can
+measure it.**
 
 ### P2 — A write-side curation filter
 
@@ -456,8 +505,9 @@ from `memor/cli.py` (1,871 lines, install logic for seven agents at 701–1102).
    new) or *worse* (different conventions, stale context).
 3. **Is 28.7% good?** No baseline exists. It could be near a ceiling set by how
    often two tools genuinely need the same knowledge.
-4. **Would fixing the gate improve answers or just add distractors?** §3.2 vs
-   §3.3 pull opposite ways. P0 must land first.
+4. **Would fixing the gate improve answers or just add distractors?** The
+   measured trade is 41%→67% recall for 97%→85% precision. Which side wins is
+   unknown without P0.
 5. **Is the local ≥36.9% constraint loss representative?** One user, one harness,
    63 events. COMPINT reports far worse across compactors.
 
@@ -490,6 +540,7 @@ That framing is defensible in a way that "11.7% saved" is not.
 | All cross-tool recalls pending | Same join, grouped by `outcome` |
 | Feedback is Claude-only | `memor/daemon.py:367-372` |
 | L2-vs-cosine gate | Orthogonal unit vectors through sqlite-vec return √2, confirming L2; table from L2 = √(2−2cos) |
+| Gate precision/recall | 5 on-topic queries (150 candidates) vs 4 nonsense (112) against the live store, converted to true cosine |
 | Embedder is not the problem | Matched vs nonsense pairs under true cosine: 0.573 separation on `potion-base-8M` |
 | Token ledger | `sum(tokens_injected)` from `recall_log` vs `proxy_savings` before/after |
 | 46.3% ephemeral / 52.4% rationale | Regex classification over all 6,948 memory artifacts |
