@@ -101,3 +101,38 @@ between protecting or crushing the whole payload.
 - 153 payloads in the protect bucket carry 480,642 tokens. Any classifier change
   must be checked against those specifically, since misclassifying one of them
   is the failure the guard exists to prevent.
+
+
+## Built: outcome
+
+The classifier change shipped. Fetched documents are recognised by their own
+provenance header and released from the guard unless they are majority fenced
+code:
+
+```
+fetched documents released: 138
+  before 408,531  after 400,748  saved 7,783  (1.9%)
+  as share of ALL context: 0.10%
+INTEGRITY violations (fenced code lost): 0
+```
+
+**0.10%, against the 5.39% of removable mass this document projected.**
+
+The gap is the same one the diff compressor hit. Removable mass assumed the log
+crusher would run on these payloads; in practice a released document classifies
+as `text`, and `compress_plain_text` is deliberately lossless -- it strips
+control characters and collapses blank runs, nothing more. So releasing the
+payload grants permission to compress it, and the compressor that receives it
+then declines on merit.
+
+Two things were still worth it:
+
+- **150 real file reads keep protection**, verified, and no file read in the
+  corpus carries a fetch header, so the signal does not collide with the case
+  the guard exists for.
+- The remaining prose is now *reachable*. A prose compressor with real savings
+  would apply to 408K tokens that were previously unreachable at any quality.
+
+The honest reading is that the guard was not the binding constraint. The
+binding constraint is that memor has no lossy prose compressor, and the
+fetched-page squeeze measured earlier (7.4%) is the ceiling for one.

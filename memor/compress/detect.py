@@ -92,6 +92,69 @@ def looks_like_manifest(text: str) -> bool:
     return hits / len(lines) >= _MANIFEST_MIN_RATIO
 
 
+#: A payload that announces its own provenance in the first line. Agents label
+#: fetched documents: `Fetched https://...`, `Source: \`README.md\``, and the
+#: batch wrapper's `--- [1] webfetch ---`.
+#:
+#: This is evidence, not a guess. On 179 real guard-blocked payloads labelled by
+#: provenance, 93% of fetched documents carry one of these headers and 1% of
+#: genuine file reads do.
+_FETCHED_HEADER = re.compile(
+    r"^(Fetched https?://"
+    r"|Source: `"
+    r"|Jcode docs results for "
+    r"|--- \[\d+\] (?:webfetch|browser|jcode_docs) ---)"
+)
+
+#: A file read from an agent tool arrives line-numbered (`   12\tcode`). Above
+#: this share of lines, the payload is a file rather than a document quoting
+#: one: 71% of real file reads clear it, 0% of fetched documents do.
+_LINE_NUMBERED = re.compile(r"^\s*\d+\t")
+_LINE_NUMBERED_MIN_RATIO = 0.5
+
+
+def looks_line_numbered(text: str) -> bool:
+    """True when most lines carry a tool's line-number prefix."""
+    lines = [ln for ln in text.split("\n") if ln.strip()]
+    if len(lines) < 10:
+        return False
+    hits = sum(1 for ln in lines if _LINE_NUMBERED.match(ln))
+    return hits / len(lines) >= _LINE_NUMBERED_MIN_RATIO
+
+
+def looks_like_fetched_document(text: str) -> bool:
+    """True when this is a document that quotes code, not a file of code.
+
+    The source guard exists to stop an agent editing against a mutilated file
+    read. A documentation page is not that: nobody edits a fetched page, and
+    holding it back cost ~5% of context on the local corpus because any page
+    with a fenced sample trips the guard's two-marker rule.
+
+    Requires the payload to *say* it was fetched and to *not* look like a file
+    read. Both, because either alone is too weak: a fetched raw `.py` really is
+    source, and an unlabelled payload could be anything.
+    """
+    if not text or not _FETCHED_HEADER.match(text.lstrip()[:200]):
+        return False
+    if looks_line_numbered(text):
+        return False
+    # A fetched page that is mostly fenced code is source in a thin wrapper.
+    inside = False
+    fenced = plain = 0
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            inside = not inside
+            continue
+        if inside:
+            fenced += len(line)
+        else:
+            plain += len(line)
+    total = fenced + plain
+    if total and fenced / total > 0.5:
+        return False
+    return True
+
+
 #: Extension -> content type. When a payload came from a file we know the type
 #: for certain, and guessing from bytes is strictly worse: `var(--warn)` in a
 #: stylesheet is enough to make a heuristic call it a log and crush it. The
@@ -221,6 +284,13 @@ def detect_content_type(text: str, file_path: str | None = None) -> str:
     progress = sum(1 for line in lines if _TEST_PROGRESS.match(line))
     if progress >= 3 and progress / len(lines) >= _TEST_PROGRESS_MIN_RATIO:
         return "log"
+
+    # A fetched document that quotes code is not source. Checked before the
+    # guard because the guard's two-marker rule cannot tell them apart: a
+    # documentation page with one fenced sample carries ``` plus almost
+    # inevitably a second marker.
+    if looks_like_fetched_document(text):
+        return "text"
 
     # Guard source code before the log heuristic. Code trips it constantly:
     # `var(--warn)` in CSS matches \bWARN\b, and any file with timestamps in
