@@ -24,12 +24,47 @@ that path requires an API key, and metered API billing costs more than the
 flat-rate subscription it would replace. For a Max/Pro user the proxy is not
 a viable route at all.
 
-## What works
+## Two options
 
-A **mutating `post_tool` hook**, added to jcode in
-`0001-post-tool-filter.patch`. It never touches the token or the endpoint, so
+**The shim (`memor-jcode-shim.sh`) keeps you on the official binary**, and is
+the one to start with. jcode's bash tool spawns `TokioCommand::new("bash")` and
+`StdCommand::new("bash")`, both resolved through `PATH` rather than an absolute
+path, so a `bash` earlier on `PATH` intercepts tool output with nothing patched
+and upstream upgrades still applying.
+
+```bash
+mkdir -p ~/.memor/shim
+cp docs/jcode-patch/memor-jcode-shim.sh ~/.memor/shim/bash
+cp docs/jcode-patch/memor-jcode-filter.{sh,py} ~/.memor/shim/
+chmod +x ~/.memor/shim/bash ~/.memor/shim/memor-jcode-filter.sh
+PATH="$HOME/.memor/shim:$PATH" jcode      # or export it in your shell rc
+```
+
+Measured on stock `jcode v0.79.1`, official binary, nothing patched:
+
+| | stored `tool_result` |
+|---|---|
+| no shim | 17,136 chars |
+| with shim | **370 chars** |
+| shim + `MEMOR_SHIM_OFF=1` | 17,136 chars |
+
+It is byte-exact for everything else. `seq`, `echo`, `printf` without a
+trailing newline, and a full source file all hash identically to real bash;
+exit codes and stderr pass through. Only `-c` and `-lc` are intercepted, so
+interactive and login shells are untouched, and if the filter is missing or
+`MEMOR_SHIM_OFF` is set it execs the real shell immediately.
+
+The catch: it is a `PATH` interposition, which is a blunt instrument. It only
+applies where you put it on `PATH`, and anything else running `bash -c` in that
+environment goes through it too (harmlessly, but it is worth knowing).
+
+**The patch (`0001-post-tool-filter.patch`) is the upstream-quality version**,
+adding a mutating `post_tool` hook. It never touches the token or the endpoint, so
 it works identically under OAuth, and it edits context before the request is
 built rather than rewriting a cached prefix afterwards.
+
+Building it means running a custom binary and forfeiting upstream upgrades
+until it is merged, which is why the shim comes first.
 
 Upstream status: implemented and verified locally, not yet submitted.
 See `../jcode-post-tool-issue.md` for the write-up to file alongside it.
