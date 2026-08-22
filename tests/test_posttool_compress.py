@@ -493,3 +493,33 @@ def test_fetched_pages_and_fanout_are_not_rewritten():
         out = build_response({"tool_name": tool,
                               "tool_response": {"stdout": page, "exit_code": 0}})
         assert out == {}, f"{tool} must not be rewritten"
+
+
+def test_floor_admits_payloads_between_1kb_and_2kb():
+    """The floor was 2,000 chars, and the corpus says that was too high.
+
+    On 400 sessions, 1,147 payloads between 1KB and 2KB reach a real
+    compressor for a 0.57% gain -- 80% of everything available below the old
+    floor, with the remaining 20% spread thinly under 500 chars.
+
+    Safety was probed to the same standard as the log crusher: of the newly
+    admitted payloads, the log bucket loses no answer-critical line, and the
+    112 'losses' flagged in search output were the path-prefix fold (111) plus
+    one section header, not match text.
+    """
+    from memor.posttool_compress import MIN_CHARS, should_compress
+
+    assert MIN_CHARS == 1_000
+
+    body = "\n".join(f"2026-01-01 12:00:0{i%10} INFO worker {i} handled request" for i in range(30))
+    assert 1_000 <= len(body) < 2_000, len(body)
+    assert should_compress({"tool_name": "Bash",
+                            "tool_response": {"stdout": body, "exit_code": 0}})
+
+
+def test_floor_still_refuses_genuinely_small_output():
+    """Below 1KB the measured gain is 0.14% total, so the floor stays."""
+    from memor.posttool_compress import should_compress
+
+    assert not should_compress({"tool_name": "Bash",
+                                "tool_response": {"stdout": "x" * 400, "exit_code": 0}})

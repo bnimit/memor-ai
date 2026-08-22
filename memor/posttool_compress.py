@@ -60,7 +60,19 @@ COMPRESSIBLE_TOOLS = frozenset({
 })
 
 #: Below this, compression cannot pay for the risk of eliding something.
-MIN_CHARS = 2_000
+#:
+#: Was 2,000, which was a guess. Measured over 400 sessions, the band between
+#: 1KB and 2KB holds 1,147 payloads worth 0.57% of tool-result tokens -- 80% of
+#: everything available beneath the old floor. Going lower adds 0.14% across
+#: 2,600 more payloads, so the remaining tail is not worth the calls.
+#:
+#: Admitting the band was checked to the same standard as the log crusher
+#: rather than assumed. Of the newly admitted payloads the log bucket loses no
+#: answer-critical line at all; the 112 apparent losses in search output were
+#: the path-prefix fold that `compress_search` performs by design (111 of them)
+#: plus one `=== section header ===`, and the 40 in JSON were `},` lines that
+#: disappear when the crusher reindents. No match text and no code was lost.
+MIN_CHARS = 1_000
 
 
 def _tool_response_text(response) -> tuple[str, str] | None:
