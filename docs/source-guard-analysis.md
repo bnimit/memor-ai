@@ -136,3 +136,52 @@ Two things were still worth it:
 The honest reading is that the guard was not the binding constraint. The
 binding constraint is that memor has no lossy prose compressor, and the
 fetched-page squeeze measured earlier (7.4%) is the ceiling for one.
+
+
+## The prose compressor, sized
+
+The 408K tokens the classifier made reachable, broken down by what is actually
+in them:
+
+| | tokens | share |
+|---|---|---|
+| ordinary prose | 137,889 | 33.8% |
+| long prose lines | 86,363 | 21.1% |
+| repeated lines (nav, footers) | 40,467 | 9.9% |
+| URLs | 40,338 | 9.9% |
+| short nav-ish lines | 15,342 | 3.8% |
+| blank | 409 | 0.1% |
+
+Three concrete lossy techniques, each measured on all 138 documents:
+
+```
+dedupe repeated lines     408,531 -> 373,014    8.69%
+shorten long URLs         408,531 -> 398,877    2.36%
+collapse blank runs       408,531 -> 407,219    0.32%
+ALL THREE                 408,531 -> 362,590   11.25%
+```
+
+**11.25% of the reachable prose, which is 0.62% of total context.** Slightly
+better than the 7.4% the earlier squeeze suggested, because URL shortening was
+not in that experiment.
+
+Note the URL figure is 9.9% of tokens, not the 28.6% an earlier line-level
+bucket implied: that bucket attributed a whole line to "urls" whenever a URL
+appeared anywhere in it. Same error as the `csv` and `html` retractions --
+counting lines that *contain* a thing rather than the thing itself.
+
+### Whether to build it
+
+For: 0.62% is comparable to everything else shipped today (diff 0.01%,
+classifier 0.10%), all three techniques are mechanical, and deduping a line
+repeated three times inside one document is close to lossless.
+
+Against: two of the three touch prose an agent may be reading for meaning.
+Shortening `https://host/a/b/c?token=...` to `https://host/…` destroys a URL
+the agent might need to fetch, and unlike a diff's context lines there is no
+copy on disk to recover it from. That is the CCR case -- store the original,
+hand back a marker -- rather than a plain elision.
+
+Recommended shape if built: dedupe repeated lines (8.69%, the safe majority of
+the win), skip URL shortening unless it goes through CCR, and skip blank
+collapsing at 0.32% since `compress_plain_text` already does it losslessly.
