@@ -578,6 +578,28 @@ n-gram check can match. The assumption that it was Claude-shaped was wrong.
 Verdicts settle as each agent's *next* session is ingested, so the panel reads
 "37 awaiting a verdict" until then rather than showing a misleading 0%.
 
+**The existing backlog cannot be graded, and that is a finding.** `memor
+grade-recalls` walks the local sources and settles what it can. Against the live
+store it settled **0 of 133**, and every one is unmatchable for a reason that is
+permanent rather than fixable:
+
+| | count | why |
+|---|---|---|
+| session text absent from disk | 75 | the sessions were compacted away; the evidence no longer exists |
+| conversation key hashes a preamble | 28 | proxy-served jcode recalls key on a `<system-reminder>` block transcripts never store |
+| synthetic test probes | 30 | mine, from earlier in this review |
+
+The 75 are the sharpest illustration of the review's own thesis: **compaction
+destroyed the record needed to judge whether those memories helped.** A tool
+whose purpose is remembering lost the evidence of its own usefulness to the
+mechanism it exists alongside.
+
+Grading a *new* cross-tool recall works. Serving a `claude_code`-written memory
+into a real jcode session and running the shipped path takes it
+`pending → used`, and `cross_tool_stats` reports
+`jcode ← claude_code, used=1, use_rate=100%`. The measurement is live; it needs
+traffic, not more code.
+
 The original analysis follows.
 
 **What.** Extend the feedback loop past Claude. `memor/daemon.py:372` skips every

@@ -331,3 +331,104 @@ def test_dashboard_exposes_cross_tool(tmp_path, monkeypatch):
     assert payload["cross_tool"]["used"] == 1
     assert payload["cross_tool"]["use_rate"] == 100.0
     assert any(p["cross_tool"] for p in payload["pairs"])
+
+
+def test_backfill_grades_sessions_already_ingested(tmp_path, monkeypatch):
+    """Settling verdicts the daemon will never revisit.
+
+    The daemon grades a session when it ingests it, so recalls served before
+    the loop reached every agent stay ``pending`` forever -- the sessions are
+    already in the store and will not be scanned again. Backfill walks the
+    local sources and settles them, which is what turns a shipped fix into a
+    number on the dashboard.
+    """
+    from memor.backfill_feedback import backfill_feedback
+
+    store, db = _store_with_memory(tmp_path)
+    session = tmp_path / "sessions" / "session_a.json"
+    session.parent.mkdir()
+    reuse = "right. " + DECISION + " keeping it async"
+    session.write_text(json.dumps({"messages": [
+        {"role": "user", "content": QUERY, "timestamp": "2026-08-22T15:00:00Z"},
+        {"role": "assistant", "content": reuse, "timestamp": "2026-08-22T15:05:00Z"},
+    ]}))
+
+    recall_id = store.log_recall(
+        project="acc", query_preview=QUERY, hits_count=1, top_score=0.9,
+        tokens_injected=40, latency_ms=5.0, status="ok",
+        session_id="session_a", agent="jcode",
+    )
+    store.record_recall_candidates(recall_id, ["jc-1"])
+    # Served before the assistant replied, which is what makes the reply evidence.
+    store.db.execute("UPDATE recall_log SET timestamp=? WHERE id=?",
+                     (_epoch("2026-08-22T15:01:00Z"), recall_id))
+    store.db.commit()
+    assert _outcomes(store) == [("jc-1", "pending")]
+
+    settled = backfill_feedback(store, jcode_sessions_dir=session.parent)
+
+    assert settled == 1
+    assert _outcomes(store) == [("jc-1", "used")]
+
+
+def test_backfill_leaves_unmatched_recalls_pending(tmp_path):
+    """A recall with no session to check against keeps its honest state.
+
+    Guessing a verdict from an absent transcript is how the old feedback code
+    credited every memory in a project. Pending means unmeasured, and staying
+    pending is the correct outcome, not a failure.
+    """
+    from memor.backfill_feedback import backfill_feedback
+
+    store, _db = _store_with_memory(tmp_path)
+    recall_id = store.log_recall(
+        project="acc", query_preview=QUERY, hits_count=1, top_score=0.9,
+        tokens_injected=40, latency_ms=5.0, status="ok",
+        session_id="a-session-with-no-transcript", agent="jcode",
+    )
+    store.record_recall_candidates(recall_id, ["jc-1"])
+
+    empty = tmp_path / "nothing"
+    empty.mkdir()
+    assert backfill_feedback(store, jcode_sessions_dir=empty) == 0
+    assert _outcomes(store) == [("jc-1", "pending")]
+
+
+def test_backfill_skips_recalls_whose_session_text_is_gone(tmp_path):
+    """Compacted sessions are unrecoverable, and must stay that way.
+
+    Every one of the 133 stranded verdicts on the author's machine was
+    unmatchable, and 75 for this reason: the recall's opening text exists in no
+    transcript on disk, because the session was compacted away. The evidence
+    needed to judge those memories is gone, so they stay pending. Inventing a
+    verdict from a different session would be worse than admitting the gap.
+    """
+    from memor.backfill_feedback import backfill_feedback
+
+    store, _db = _store_with_memory(tmp_path)
+    recall_id = store.log_recall(
+        project="acc", query_preview="text that no transcript contains",
+        hits_count=1, top_score=0.9, tokens_injected=40, latency_ms=5.0,
+        status="ok", session_id="", agent="claude",
+    )
+    store.db.execute("UPDATE recall_log SET conversation_key=? WHERE id=?",
+                     ("0be2a2ef9868cf89", recall_id))
+    store.db.commit()
+    store.record_recall_candidates(recall_id, ["jc-1"])
+
+    other = tmp_path / "sessions"
+    other.mkdir()
+    (other / "unrelated.json").write_text(json.dumps({"messages": [
+        {"role": "user", "content": "a completely different conversation",
+         "timestamp": "2026-08-22T15:00:00Z"},
+        {"role": "assistant", "content": "about something else entirely",
+         "timestamp": "2026-08-22T15:01:00Z"},
+    ]}))
+
+    assert backfill_feedback(store, jcode_sessions_dir=other) == 0
+    assert _outcomes(store) == [("jc-1", "pending")]
+
+
+def _epoch(iso: str) -> float:
+    from datetime import datetime
+    return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()

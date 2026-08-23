@@ -466,6 +466,8 @@ memor hook-worth                     What tool-output compression saved on your
                                      own Bash output, with its denominator
   --sessions N                       How many recent sessions to scan (default 60)
 memor recall-worth                   Whether recall is earning its context budget
+memor grade-recalls                  Settle verdicts on recalls the daemon passed
+                                     over, so cross-tool memory becomes measurable
 memor compress-older                 Show or set whether payloads the agent has
                                      moved past get compressed by the proxy
 memor cost-compare                   Did a change actually lower the bill?

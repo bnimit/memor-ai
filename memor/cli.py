@@ -661,6 +661,40 @@ def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
     run_daemon(poll_interval=poll_interval, projects_dir=d)
 
 
+@app.command("grade-recalls")
+def grade_recalls(
+    db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+):
+    """Settle verdicts on recalls the daemon already passed over.
+
+    The feedback loop grades a session as it is ingested, so recalls served
+    before the loop reached every agent stay pending: their sessions will not
+    be scanned again. This walks the local sources once and grades what it can.
+
+    A recall whose session text is no longer on disk stays pending. That is the
+    correct outcome, not a failure -- a verdict invented from a different
+    session is worse than an honest gap.
+    """
+    from memor.backfill_feedback import backfill_feedback, _pending_count
+    from memor.store.sqlite_store import SqliteStore, read_dim
+
+    embedder = _auto_embedder()
+    store = SqliteStore(db, dim=read_dim(db, embedder.dim))
+    before = _pending_count(store)
+    typer.echo(f"pending verdicts: {before:,}")
+    if not before:
+        typer.echo("nothing to grade.")
+        return
+
+    settled = backfill_feedback(store, embedder=embedder)
+    after = _pending_count(store)
+    typer.echo(f"settled {settled:,}; {after:,} still pending")
+    if after:
+        typer.echo("Recalls stay pending when their session text is no longer "
+                   "on disk -- compacted sessions cannot be graded after the "
+                   "fact. New recalls are graded as their sessions arrive.")
+
+
 @app.command("backfill")
 def backfill(
     projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/"),
