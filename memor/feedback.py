@@ -11,6 +11,7 @@ Two matching strategies:
 from __future__ import annotations
 import json
 import math
+import re
 from pathlib import Path
 from memor.store.sqlite_store import SqliteStore
 
@@ -19,13 +20,78 @@ _MIN_WORDS = 4
 _MATCH_RATIO = 0.10
 _SEMANTIC_SIM_THRESHOLD = 0.45
 
+#: Explicit contradictions. Rare in practice but unambiguous when they appear.
 _REJECTION_PATTERNS = [
     "no that's wrong", "that's not right", "that's incorrect", "that's outdated",
-    "no, we", "no we", "actually we", "actually, we",
+    "no, we", "no we",
     "we switched", "we moved", "we changed", "we no longer",
     "that's not how", "not what i meant", "wrong approach",
     "we don't use", "we stopped using", "we dropped",
 ]
+
+#: The form disagreement actually takes: a rhetorical question that asserts a
+#: correction while sounding like a query. On 947 real user turns the explicit
+#: patterns above fired twice, once wrongly; every genuine correction in the
+#: sample was one of these instead.
+#:
+#: Not anchored to sentence start, because real ones arrive mid-clause -- "When
+#: we were working on the Gltf reader did we not cover the extensions?" -- and
+#: anchoring cost four of nine labelled corrections. Selectivity comes instead
+#: from requiring a negated auxiliary with a specific subject, a construction
+#: that ordinary requests do not use.
+#:
+#: ``be we`` in the ``shouldn't`` branch is not a typo. Real corrections here
+#: read "shouldn't be we fix those together", and a detector tuned only to
+#: grammatical English misses the register it is meant to read.
+_CORRECTIVE_FRAME = re.compile(
+    r"\b(?:"
+    r"i thought\b"
+    r"|isn'?t\s+(?:it|that|this|the)\b"
+    r"|wasn'?t\s+(?:it|that|this|the)\b"
+    r"|shouldn'?t\s+(?:be\s+)?(?:we|it|that|this)\b"
+    r"|didn'?t\s+(?:we|you|it|that)\b"
+    r"|don'?t\s+we\b"
+    r"|did\s+we\s+not\b"
+    r"|aren'?t\s+(?:they|these|those|we)\b"
+    r")",
+    re.I,
+)
+
+#: "Actually we" reads as pushback in isolation and as agreement in
+#: "Actually we can include yesterday's changes too", which was one of only two
+#: hits the old list produced on real traffic. The distinguishing word is what
+#: follows: a correction says what stopped being true.
+_ACTUALLY_CORRECTION = re.compile(
+    r"\bactually,?\s+we\s+"
+    r"(?:don'?t|do\s+not|never|stopped|switched|moved|changed|dropped|no\s+longer)\b",
+    re.I,
+)
+
+#: Harness-generated, not user text. An interrupt can mean the agent was wrong,
+#: or the user changed their mind, or they hit the wrong key, and attributing
+#: harm to whichever memory sat in context would be a guess.
+_NOT_USER_SIGNAL = re.compile(r"^\s*\[request interrupted", re.I)
+
+
+def looks_like_correction(text: str) -> bool:
+    """True when a user turn pushes back on something the agent said.
+
+    Feeds the rejection half of ``memory_quality``. Both failure modes here are
+    silent and neither is safe: missing corrections leaves every quality score
+    counting hits with no misses, and over-firing marks ordinary questions as
+    harm, which would penalise whichever memory happened to be in context.
+    """
+    if not text:
+        return False
+    lowered = text.lower()
+    if _NOT_USER_SIGNAL.match(lowered):
+        return False
+    if _ACTUALLY_CORRECTION.search(lowered):
+        return True
+    if _CORRECTIVE_FRAME.search(lowered):
+        return True
+    return any(p in lowered for p in _REJECTION_PATTERNS)
+
 
 _CONTRADICTION_PATTERNS = [
     "however, looking at the current code",
@@ -224,11 +290,31 @@ def _split_channels(
     return assistant, user
 
 
+#: How long after a recall a correction can still be blamed on it.
+#:
+#: Ordering alone is not attribution. With the sharper detector, 85 of 170
+#: 'used' verdicts on the local store had a correction somewhere later in the
+#: session -- median gap 330 minutes, longest ten days. A working session
+#: contains pushback about *something*, and charging it to whichever memory was
+#: served that morning is the attribution bug the rewrite above already fixed
+#: once, arriving by a different route.
+#:
+#: An hour is deliberately generous. A correction can take a few turns to
+#: surface, and an unrecorded rejection costs one missing data point while a
+#: misattributed one actively demotes a memory that did nothing wrong.
+_REJECTION_WINDOW_S = 3600.0
+
+
 def _rejected_after(stamped_user: list[tuple[float, str]],
                     assistant_after: list[str], since: float) -> bool:
     """Did the user push back, or the assistant contradict, after this recall?"""
     for ts, text in stamped_user:
-        if (ts <= 0.0 or ts >= since) and any(p in text for p in _REJECTION_PATTERNS):
+        # An undated turn is kept rather than dropped: a transcript without
+        # usable timestamps would otherwise contribute no evidence at all.
+        dated = ts > 0.0
+        if dated and not (since <= ts <= since + _REJECTION_WINDOW_S):
+            continue
+        if looks_like_correction(text):
             return True
     joined = " ".join(assistant_after)
     return any(p in joined for p in _CONTRADICTION_PATTERNS)
