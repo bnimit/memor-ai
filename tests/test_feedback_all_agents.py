@@ -290,9 +290,10 @@ def _store_with_memory(tmp_path) -> tuple[SqliteStore, str]:
     return store, db
 
 
-def _settle(store: SqliteStore, *, agent: str, artifact: str, outcome: str) -> None:
+def _settle(store: SqliteStore, *, agent: str, artifact: str, outcome: str,
+            project: str = "acc") -> None:
     recall_id = store.log_recall(
-        project="acc", query_preview=QUERY, hits_count=1, top_score=0.9,
+        project=project, query_preview=QUERY, hits_count=1, top_score=0.9,
         tokens_injected=40, latency_ms=5.0, status="ok",
         session_id=f"s-{agent}-{artifact}-{outcome}", agent=agent,
     )
@@ -464,3 +465,36 @@ def test_task_briefs_are_not_treated_as_disposable(tmp_path):
         "task briefs are being filtered out on write -- measured on real "
         "outcomes they are the most-used class of memory in the store"
     )
+
+
+def test_cross_tool_stats_break_down_by_project(tmp_path):
+    """Where sharing happens matters as much as whether it happens.
+
+    The reader x writer matrix is agent-shaped, which answers "do tools share"
+    but not "where". On the author's machine only 2 of 27 projects have more
+    than one agent active, so a low overall cross-tool rate reads as a broken
+    feature when it is actually an under-exercised one. The per-project view is
+    what separates those two readings.
+    """
+    from memor.crosstool import cross_tool_stats
+
+    store, _db = _store_with_memory(tmp_path)
+    store.add_artifacts(
+        [Artifact(id="cc-1", kind="memory", project="solo", source="claude_code",
+                  text="only one tool works here", token_count=5,
+                  created_at=time.time(), meta={})],
+        [FakeEmbedder(dim=64).embed(["only one tool works here"])[0]],
+    )
+    # `acc` has two agents reading, one of them across the tool boundary.
+    _settle(store, agent="claude", artifact="jc-1", outcome="used")
+    _settle(store, agent="jcode", artifact="jc-1", outcome="used")
+    # `solo` has one agent reading its own tool's memory.
+    _settle(store, agent="claude", artifact="cc-1", outcome="used", project="solo")
+
+    projects = {p["project"]: p for p in cross_tool_stats(store)["projects"]}
+
+    assert projects["acc"]["cross_tool"] == 1
+    assert projects["acc"]["shared"] is True
+    assert projects["acc"]["agents"] == ["claude", "jcode"]
+    assert projects["solo"]["cross_tool"] == 0
+    assert projects["solo"]["shared"] is False

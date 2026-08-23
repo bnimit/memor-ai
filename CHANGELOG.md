@@ -29,9 +29,25 @@ compression percentage.
   baseline disappears. An ungraded bucket reads "not yet graded" rather than 0%.
 - `memor grade-recalls`, to settle verdicts on recalls the daemon already
   passed over.
+- Per-project breakdown in the cross-tool panel. The reader × writer matrix
+  answers whether tools share; it cannot say where. On this machine **all 37
+  cross-tool recalls come from one project**, and 1 of 5 projects has more than
+  one agent in it — which is the difference between an under-exercised feature
+  and a broken one.
 
 **Fixed**
 
+- `ingest-doc` did not redact secrets. Every other ingest path calls
+  `redact_text` inside its parser; this one did not, making it the only route
+  to an unredacted key in the store — and the route most likely aimed at a
+  runbook. Redaction now runs before chunking, since a connection string can
+  straddle a heading boundary and a pattern split across two chunks matches in
+  neither.
+- Ten commands, `ingest-doc` among them, defaulted to a bare `memor.db`
+  resolved against the working directory rather than `~/.memor/memor.db`.
+  Running one from a repo created a stray database beside the source and
+  reported success. That is also why the redaction gap went unnoticed: the
+  output was never visible to anything.
 - The rejection detector had never fired: 524 settled verdicts, zero
   rejections. It matched phrases a wrong answer provokes in the abstract
   ("that's incorrect"), and on 947 real user turns it fired twice, once on

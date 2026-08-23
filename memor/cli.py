@@ -124,7 +124,7 @@ def setup_model():
 
 
 @app.command("ingest-cc")
-def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memor.db",
+def ingest_cc(path: str, project: str = typer.Option(...), db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
               fake: bool = False, no_filter: bool = False):
     e = _embedder(fake)
     s = SqliteStore(_db_path(db), dim=e.dim)
@@ -133,7 +133,7 @@ def ingest_cc(path: str, project: str = typer.Option(...), db: str = "memor.db",
     typer.echo(f"ingested {len(arts)} chunks from {path}")
 
 @app.command("query")
-def query(text: str, project: str = typer.Option(None), db: str = "memor.db",
+def query(text: str, project: str = typer.Option(None), db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
           k: int = 8, fake: bool = False):
     e = _embedder(fake)
     s = SqliteStore(_db_path(db), dim=e.dim)
@@ -145,7 +145,7 @@ def query(text: str, project: str = typer.Option(None), db: str = "memor.db",
                f"{sum(h.artifact.token_count for h in trace.hits)} tokens")
 
 @app.command("eval")
-def eval_cmd(cases_path: str, db: str = "memor.db", k: int = 8, fake: bool = False):
+def eval_cmd(cases_path: str, db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")), k: int = 8, fake: bool = False):
     from memor.eval.dataset import EvalCase
     from memor.eval.runner import run_suite
     e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
@@ -159,7 +159,7 @@ def eval_cmd(cases_path: str, db: str = "memor.db", k: int = 8, fake: bool = Fal
     typer.echo("(eval run persisted)")
 
 @app.command("build-cases")
-def build_cases(project: str = typer.Option(...), db: str = "memor.db",
+def build_cases(project: str = typer.Option(...), db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
                 out: str = "cases.json", fake: bool = False):
     from memor.eval.dataset import build_counterfactual_cases
     e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
@@ -171,7 +171,7 @@ def build_cases(project: str = typer.Option(...), db: str = "memor.db",
     typer.echo(f"wrote {len(cases)} cases to {out}")
 
 @app.command("eval-judge")
-def eval_judge_cmd(project: str = typer.Option(...), db: str = "memor.db",
+def eval_judge_cmd(project: str = typer.Option(...), db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
                    k: int = 8, fake: bool = False,
                    llm_provider: str = "anthropic", llm_model: str = "claude-sonnet-4-6",
                    holdout: int = 2):
@@ -201,7 +201,7 @@ def eval_judge_cmd(project: str = typer.Option(...), db: str = "memor.db",
 
 
 @app.command("eval-counterfactual")
-def eval_counterfactual_cmd(project: str = typer.Option(...), db: str = "memor.db",
+def eval_counterfactual_cmd(project: str = typer.Option(...), db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
                             k: int = 8, fake: bool = False,
                             llm_provider: str = "anthropic",
                             llm_model: str = "claude-sonnet-4-6",
@@ -233,7 +233,7 @@ def eval_counterfactual_cmd(project: str = typer.Option(...), db: str = "memor.d
 
 
 @app.command("bench-embed")
-def bench_embed(project: str = typer.Option(...), db: str = "memor.db",
+def bench_embed(project: str = typer.Option(...), db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
                 k: int = 8, fake: bool = False):
     """Benchmark multiple embedding models on your data. Compares recall@k, nDCG@k, and latency."""
     from memor.eval.embed_benchmark import run_embed_benchmark, CANDIDATE_MODELS
@@ -430,7 +430,7 @@ def eval_proxy(fixtures_dir: str = typer.Option(None, help="Path to fixtures dir
 
 
 @app.command("distill")
-def distill(project: str = typer.Option(...), db: str = "memor.db",
+def distill(project: str = typer.Option(...), db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
             fake: bool = False, llm_provider: str = "anthropic", llm_model: str = "claude-sonnet-4-6"):
     from memor.distill.distiller import Distiller
     e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
@@ -457,7 +457,7 @@ def distill(project: str = typer.Option(...), db: str = "memor.db",
 
 
 @app.command("redistill")
-def redistill_cmd(project: str = typer.Option(...), db: str = "memor.db",
+def redistill_cmd(project: str = typer.Option(...), db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
                   questions: bool = False, yes: bool = False):
     """Re-distill a project's raw sessions with the local model (opt-in backfill)."""
     import os
@@ -483,7 +483,7 @@ def redistill_cmd(project: str = typer.Option(...), db: str = "memor.db",
 
 @app.command("ingest-project")
 def ingest_project(project_dir: str, project: str = typer.Option(...),
-                   db: str = "memor.db", fake: bool = False, no_filter: bool = False):
+                   db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")), fake: bool = False, no_filter: bool = False):
     """Recursively ingest all .jsonl transcripts (including subagent transcripts) from a Claude Code project directory."""
     e = _embedder(fake)
     s = SqliteStore(_db_path(db), dim=e.dim)
@@ -499,7 +499,21 @@ def ingest_project(project_dir: str, project: str = typer.Option(...),
 
 @app.command("ingest-doc")
 def ingest_doc(path: str, project: str = typer.Option(...), kind: str = "note",
-               db: str = "memor.db", fake: bool = False):
+               db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+               fake: bool = False):
+    """Import a markdown or text file as memories for a project.
+
+    Explicit rather than automatic, and deliberately so. The daemon ingests
+    session transcripts because they are a byproduct nobody else keeps: once a
+    session scrolls away, the reasoning in it is gone. A design doc in the repo
+    is the opposite -- it is a live file the agent can read, and copying it into
+    memory creates a stale duplicate of an authoritative source.
+
+    Use this for notes that live *outside* the repo: an onboarding brief, an
+    incident writeup, a decision record kept in a wiki.
+
+    Secrets are redacted on the way in, the same as every other ingest path.
+    """
     from memor.ingest.documents import parse_document
     e = _embedder(fake); s = SqliteStore(_db_path(db), dim=e.dim)
     arts = parse_document(Path(path), project=project, kind=kind)

@@ -79,3 +79,33 @@ def test_a_clean_document_is_unchanged(tmp_path):
     assert "[REDACTED]" not in artifacts[0].text
     assert "# Design" in artifacts[0].text
     assert "We chose Postgres for transactional DDL." in artifacts[0].text
+
+
+def test_every_command_writes_to_the_real_store():
+    """A command that writes somewhere else is a command nobody's memory sees.
+
+    Ten commands defaulted to a bare ``memor.db``, resolved against the working
+    directory, while the daemon and dashboard read ``~/.memor/memor.db``.
+    Running one from a repo created a stray database beside the source and
+    reported success: the data was ingested, just not where anything reads it.
+
+    Found while documenting ``ingest-doc``, and it explains why the redaction
+    gap in that path went unnoticed -- its output was never visible.
+    """
+    import inspect
+    from pathlib import Path
+
+    from memor.cli import app
+
+    expected = str(Path.home() / ".memor" / "memor.db")
+    stray = {}
+    for command in app.registered_commands:
+        params = inspect.signature(command.callback).parameters
+        if "db" not in params:
+            continue
+        default = params["db"].default
+        resolved = str(getattr(default, "default", default))
+        if resolved != expected:
+            stray[command.name] = resolved
+
+    assert not stray, f"commands writing outside the store: {stray}"

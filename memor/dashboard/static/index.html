@@ -492,6 +492,21 @@
       </div>
       <div class="metric-sub" id="cross-tool-note"
            style="margin-top:8px;color:var(--text-muted);font-size:11px;"></div>
+      <div class="metric-sub" id="cross-tool-projects-label"
+           style="margin:16px 0 6px;color:var(--text-muted);font-size:12px;"></div>
+      <div class="table-card">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Agents active</th>
+              <th style="text-align:right">Cross-tool</th>
+              <th style="text-align:right">Same-tool</th>
+            </tr>
+          </thead>
+          <tbody id="cross-tool-projects-body"></tbody>
+        </table>
+      </div>
     </section>
 
     <section id="savings-periods-section" style="display:none;">
@@ -1619,6 +1634,28 @@
         '<td style="text-align:right">' + (graded ? p.use_rate + '%' : '—') + '</td>' +
         '<td style="text-align:right;color:var(--text-muted)">' + fmt(p.pending || 0) + '</td>';
       body.appendChild(tr);
+    });
+
+    // Where sharing happens, not just whether. A low overall rate reads as a
+    // broken feature until you can see that most projects only ever had one
+    // agent in them -- under-exercised, not failing.
+    var projects = data.projects || [];
+    var shared = projects.filter(function(p) { return p.shared; });
+    var label = document.getElementById('cross-tool-projects-label');
+    var pbody = document.getElementById('cross-tool-projects-body');
+    label.textContent = shared.length + ' of ' + projects.length +
+      ' projects have more than one agent working in them' +
+      (shared.length ? '' : ' — cross-tool sharing has had no opportunity yet');
+    pbody.innerHTML = '';
+    projects.slice(0, 12).forEach(function(p) {
+      var tr = el('tr');
+      tr.innerHTML =
+        '<td>' + esc(p.project) + '</td>' +
+        '<td style="color:' + (p.shared ? 'var(--text)' : 'var(--text-muted)') + '">' +
+          esc((p.agents || []).join(', ')) + '</td>' +
+        '<td style="text-align:right">' + (p.cross_tool ? fmt(p.cross_tool) : '—') + '</td>' +
+        '<td style="text-align:right;color:var(--text-muted)">' + fmt(p.same_tool || 0) + '</td>';
+      pbody.appendChild(tr);
     });
 
     var note = document.getElementById('cross-tool-note');

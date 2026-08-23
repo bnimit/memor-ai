@@ -49,6 +49,28 @@ rather than by configuration. Note the asymmetry: writing needs only a
 transcript on disk, while reading needs an integration, which is why Goose and
 Kimi appear as writers and not yet as readers.
 
+### What gets remembered, and what deliberately does not
+
+Memory is built from **sessions**, automatically, because they are a byproduct
+nobody else keeps: once a conversation scrolls away, the reasoning in it is gone. Why a
+library was rejected, what was tried and abandoned, the correction you made at
+4pm — none of that survives in the repo.
+
+It does **not** crawl your codebase, and that is a design choice rather than a
+missing feature. A design doc, an ADR, a README are live files the agent can
+already read. Copying them into memory creates a stale duplicate of an
+authoritative source, and a stale memory is worse than none: it costs tokens
+*and* misleads.
+
+For notes that live outside the repo — an onboarding brief, an incident
+writeup, a decision record in a wiki — import them explicitly:
+
+```bash
+memor ingest-doc notes/postmortem-2026-08.md --project plirin
+```
+
+Secrets are redacted on the way in, the same as every other ingest path.
+
 ### Is the memory half working? Partly, and it now says so
 
 Compression has always been easy to measure. Memory was not: until recently

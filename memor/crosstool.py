@@ -95,7 +95,55 @@ def cross_tool_stats(store: SqliteStore) -> dict:
     return {
         **buckets,
         "pairs": sorted(pairs.values(), key=lambda p: -p["total"]),
+        "projects": _by_project(store),
     }
+
+
+def _by_project(store: SqliteStore) -> list[dict]:
+    """Where sharing actually happens.
+
+    The reader × writer matrix answers whether tools share; it cannot say
+    where. That distinction decides how a low cross-tool rate should be read.
+    On the author's machine only 2 of 27 projects have more than one agent
+    active, so the overall figure is dominated by projects where sharing was
+    never possible -- an under-exercised feature, not a broken one.
+    """
+    rows = store.db.execute(
+        """
+        SELECT rl.project AS project, rl.agent AS reader, a.source AS writer,
+               ro.outcome AS outcome, COUNT(*) AS n
+        FROM recall_outcomes ro
+        JOIN recall_log rl ON rl.id = ro.recall_id
+        JOIN artifacts a   ON a.id  = ro.artifact_id
+        GROUP BY rl.project, reader, writer, outcome
+        """
+    ).fetchall()
+
+    projects: dict[str, dict] = {}
+    readers: dict[str, set] = {}
+
+    for row in rows:
+        name = row["project"] or "unknown"
+        entry = projects.setdefault(
+            name, {"project": name, "cross_tool": 0, "same_tool": 0, **_empty()}
+        )
+        readers.setdefault(name, set()).add(row["reader"] or "unknown")
+
+        count = row["n"]
+        if is_cross_tool(row["reader"] or "", row["writer"] or ""):
+            entry["cross_tool"] += count
+        else:
+            entry["same_tool"] += count
+        _tally(entry, row["outcome"] or "pending", count)
+
+    for name, entry in projects.items():
+        _finalise(entry)
+        # "Shared" means more than one agent read here, which is the condition
+        # under which a cross-tool figure is meaningful at all.
+        entry["agents"] = sorted(readers[name])
+        entry["shared"] = len(readers[name]) > 1
+
+    return sorted(projects.values(), key=lambda p: (-p["cross_tool"], -p["total"]))
 
 
 def _empty() -> dict:
