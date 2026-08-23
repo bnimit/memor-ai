@@ -9,18 +9,87 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1532%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1631%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
 
-**Token compression and automatic memory for coding agents, both measured on your own traffic.** Everything runs locally. No Memor API key required.
+**One long-term memory shared by every LLM coding tool on your machine.** A
+decision recorded while using Claude Code is there when you switch to Cursor,
+Codex, jcode, Goose or Kimi. Everything runs locally. No Memor API key required.
 
 Two things, in one install:
 
-1. **Compression** — crush noisy tool output before it reaches the model, without losing what you need from it.
-2. **Memory** — recall past decisions and bugfixes so you stop re-explaining your own codebase.
+1. **Memory** — one store, every tool. Recall past decisions and bugfixes so you
+   stop re-explaining your own codebase, in whichever agent you happen to open.
+2. **Compression** — crush noisy tool output before it reaches the model,
+   without losing what you need from it. This pays for the memory: it removes
+   more tokens than recall injects.
 
-### What the numbers actually are
+### What makes it different: nothing has to cooperate
+
+Other shared-memory tools need the model to call a `save` tool, or a plugin
+written per harness, or they capture your screen. memor reads the transcripts
+your agents already write to disk for their own reasons.
+
+The practical consequence: **Goose has contributed 1,256 memories to this
+machine's store and has never heard of memor** — no plugin, no MCP
+registration, no entry in its config. It contributed by being used.
+
+One developer's store, as an illustration rather than a benchmark:
+
+| Writes memories | | Reads them back | |
+|---|---|---|---|
+| `claude_code` | 24,446 | `claude` | 3,635 |
+| `jcode` | 1,300 | `cursor` | 427 |
+| `goose` | 1,256 | `codex` | 38 |
+| `kimi` | 95 | `jcode` | 32 |
+
+Scope is by **project**, never by agent, so a memory crosses tools by default
+rather than by configuration. Note the asymmetry: writing needs only a
+transcript on disk, while reading needs an integration, which is why Goose and
+Kimi appear as writers and not yet as readers.
+
+### Is the memory half working? Partly, and it now says so
+
+Compression has always been easy to measure. Memory was not: until recently
+there was no answer to the product's own central question.
+
+**The whole-product ledger**, from this machine's store:
+
+```
+compression saved   2,453,627 tokens
+recall injected     1,146,846 tokens   (what memory costs)
+                    ---------
+net                 1,306,781 tokens
+```
+
+Recall spends 47% of what compression saves. That is the design: compression
+funds the memory layer.
+
+**Cross-tool recall is now graded.** Until 2026-08-23 the feedback loop ran for
+Claude only, so every cross-tool recall was served and never judged — the one
+capability memor exists for was the one it could not measure. All four agents
+are now read. The dashboard shows the reader × writer matrix at
+`/api/cross-tool`, with cross-tool and same-tool kept apart because blending
+them hides the comparison that matters.
+
+| | state on this machine |
+|---|---|
+| Same-tool recalls | **170 of 170 judged** used |
+| Cross-tool recalls | **37 awaiting a verdict** |
+
+The cross-tool column fills in as each agent's next session is ingested. It
+reads *"not yet graded"* rather than 0%, because "nothing has been judged" and
+"judged and useless" are different facts.
+
+**Two caveats worth stating.** The 170 judged verdicts are 0.5% of a
+34,039-artifact store, so every claim about memory quality rests on a thin
+sample. And the rejection detector was blind until 2026-08-23 — it matched
+phrases like *"that's incorrect"* while real users push back by asking *"didn't
+we already fix that?"* — so scores recorded before then counted hits with no
+misses.
+
+### What the compression numbers actually are
 
 Compression is easy to verify and therefore easy to falsify, so these are measured on real traffic rather than favourable fixtures:
 
@@ -30,7 +99,7 @@ Compression is easy to verify and therefore easy to falsify, so these are measur
 | ...on the payloads it engages | **43.3%** saved | the subset it does not decline, same 6 sessions | `memor request-anatomy` |
 | Answer-critical retention | **96.2%** kept | 132 grounded cases from real edits | `memor eval-retention` |
 | ...against truncation at a comparable budget | **50.3%** kept | the same 132 cases | `memor eval-retention` |
-| Retrieval accuracy | **95.0%** any-hit, 86.7% all-gold | LongMemEval_S, n=120, published ground truth | `memor eval-longmemeval` |
+| Retrieval accuracy | **95.0%** any-hit, 86.7% all-gold | LongMemEval_S, n=120 — see the caveat below | `memor eval-longmemeval` |
 | Tool-output compression, when it fires | **47.7%** saved | 70 of 291 large Bash results, 60 sessions | `memor hook-worth` |
 | ...across all Bash output | **11.1%** saved | the same 291 results (24.1% coverage) | `memor hook-worth` |
 | Proxy, blended over all traffic | **0.8%** | 5,414 real proxied requests | dashboard |
@@ -53,6 +122,14 @@ Any product claiming more than that on this shape of traffic is measuring a
 different denominator — typically log-heavy or document-heavy workloads where
 tool output is most of the request. `memor request-anatomy` prints this
 breakdown for your own sessions.
+
+> **What LongMemEval does and does not show.** It scores whether retrieval
+> surfaced the right session, not whether the agent then answered correctly, and
+> its content is conversational personal-assistant memory rather than coding
+> work. It is evidence the retriever functions; it is not evidence that memor
+> makes a coding agent better. The honest end-to-end number is worse and is
+> published in the changelog: a counterfactual win rate that read 63.8% before
+> the harness was corrected to call production `recall()`, and 8.6% after.
 
 > Beware the image trap. A base64 screenshot tokenises as a vast string — a
 > 161 KB PNG counts as 113,367 tokens if you feed the encoded text to a

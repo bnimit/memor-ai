@@ -4,6 +4,71 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### The memory half became measurable
+
+memor exists so a decision recorded in one agent is available in another. That
+worked, but nothing graded it: the feedback loop that judges whether a served
+memory helped ran for Claude only, so every cross-tool recall was served and
+then forgotten. The product's headline capability was the one thing it could
+not measure, which is why it had drifted into describing itself by its
+compression percentage.
+
+**Added**
+
+- Per-agent transcript readers (`stamped_turns_from_claude/_jcode/_goose/_kimi`)
+  returning a normalised `(timestamp, role, text)`. The blocker was never the
+  Claude-only guard clause, it was the signature: `analyze_session_feedback`
+  asked for a `transcript_path`, and Goose keeps no transcript file, only rows
+  in SQLite. All four agents now read: 387, 1,376, 520 and 48 turns from their
+  newest local sessions.
+- Kimi needed its own reader. Its `wire.jsonl` is a protocol stream, not a
+  conversation: an assistant reply arrives as a run of `ContentPart` fragments,
+  which are joined before scoring because the n-gram check needs a whole reply.
+- `memor/crosstool.py`, `/api/cross-tool` and a dashboard panel showing the
+  reader × writer matrix. Cross-tool and same-tool are kept apart; blended, the
+  baseline disappears. An ungraded bucket reads "not yet graded" rather than 0%.
+- `memor grade-recalls`, to settle verdicts on recalls the daemon already
+  passed over.
+
+**Fixed**
+
+- The rejection detector had never fired: 524 settled verdicts, zero
+  rejections. It matched phrases a wrong answer provokes in the abstract
+  ("that's incorrect"), and on 947 real user turns it fired twice, once on
+  agreement. Real disagreement here is the corrective question — *"isn't it",
+  "didn't we", "I thought"* — so every quality score was counting hits with no
+  misses. Now catches 2.4% of real turns, hand-audited.
+- Rejections are attributed within an hour of the recall. Replaying the sharper
+  detector over history flipped 85 of 170 `used` verdicts, but the median gap
+  was 330 minutes and the longest ten days. Ordering is not attribution.
+
+**Retracted**
+
+- An earlier draft of the architecture review called subagent task prompts
+  ephemeral scaffolding — 46.3% of stored memory tokens — and proposed
+  filtering them on write. Measured against outcomes they are the store's
+  *best* class (19.7% use-per-recall against 5.4%), and the filter would have
+  discarded 112 of the 151 memories ever judged used. They are specifications,
+  not scaffolding: a brief records what the code was asked to do, which stops
+  existing anywhere once the branch merges. Pinned as a test.
+
+**Known limits**
+
+- 170 judged verdicts is 0.5% of a 34,039-artifact store. Every claim about
+  memory quality, including the favourable ones, rests on a thin sample.
+- The existing 133 pending verdicts cannot be graded. 75 of them lost their
+  session text to compaction, 28 key on a `<system-reminder>` preamble no
+  transcript stores. New recalls are graded as their sessions arrive.
+
+### Compression
+
+- Lowered the hook's floor from 2,000 to 1,000 characters: +0.57% of
+  tool-result tokens, with no answer-critical line lost.
+- Recorded why the remaining 4.04% is unreachable
+  (`docs/receiving-compressor-bottleneck.md`). Four independent attacks all
+  measured negative; the residue is source code, and the only things to do with
+  source code are pass it through or corrupt it.
+
 ## [0.13.1] - 2026-08-11
 
 A test-only release. 0.13.0's tag points at a commit whose CI run failed, so
