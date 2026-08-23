@@ -432,3 +432,35 @@ def test_backfill_skips_recalls_whose_session_text_is_gone(tmp_path):
 def _epoch(iso: str) -> float:
     from datetime import datetime
     return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+
+
+def test_task_briefs_are_not_treated_as_disposable(tmp_path):
+    """Guards against rebuilding a filter that measurement already rejected.
+
+    An earlier draft of the architecture review classed subagent task prompts
+    as ephemeral scaffolding -- they are 46.3% of stored memory tokens and read
+    like boilerplate. Checked against outcomes, they are the store's best
+    performing class: 19.7% use-per-recall against 5.4% for everything else,
+    and a filter keyed on their opening would have discarded 112 of the 151
+    memories ever judged used.
+
+    They are specifications, not scaffolding. A brief carries the requirements
+    and file paths that stop existing anywhere once the branch is merged: the
+    repo records what the code does, the brief records what it was asked to do.
+
+    If a curation filter is ever added, this asserts it does not swallow them.
+    """
+    from memor.ingest.claude_code import _signal_score
+    from memor.tokencount import count_tokens
+
+    brief = (
+        "You are implementing Task 11 of a multi-currency plan. Replace all "
+        "hardcoded `$` currency formatting in the PDF generator with "
+        "currency-aware helpers, and update the three snapshot tests that "
+        "assert on the rendered totals."
+    )
+
+    assert _signal_score(brief, "user", count_tokens(brief)) > 0, (
+        "task briefs are being filtered out on write -- measured on real "
+        "outcomes they are the most-used class of memory in the store"
+    )

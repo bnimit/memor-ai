@@ -168,10 +168,11 @@ It also explains the asymmetry in §2.1: four tools write, but writing requires
 only a transcript on disk, whereas reading requires an integration. That is why
 `goose` and `kimi` appear as writers and never as readers.
 
-**The honest risk.** Passive capture is why 46.3% of stored tokens are ephemeral
-scaffolding (§3.3) — nothing decided what was worth keeping. OpenMemory's opt-in
-write is a curation filter that memor pays for in noise. P2 exists to close that
-gap without giving up the property that makes the approach distinctive.
+**The honest risk.** Passive capture stores whatever a session produced, with
+nothing deciding what was worth keeping: 88.1% of artifacts have never been
+recalled. OpenMemory's opt-in write is a curation filter that memor pays for in
+volume. §3.3 is the caution against overcorrecting — the content that *looks*
+most disposable turned out to be the most used.
 
 ### 2.4 What that is worth, and the ledger nobody drew
 
@@ -331,28 +332,50 @@ rows should show an empty candidate set rather than a filtered one. All 1,543
 
 **What this does not explain.** Since the gate sits near the precision-optimal
 cut, it cannot be the whole cause of 40.9% zero-hit. The residual is most likely
-§3.3: 88% of artifacts have never been recalled, and a store full of scaffolding
-has little to return however the gate is set.
+§3.3: 88.1% of artifacts have never been recalled at all, so there is little for
+any gate setting to return. Note that this cuts the opposite way from a curation
+argument — a memory that was never surfaced cannot be judged useless.
 
-### 3.3 What is stored is mostly not knowledge
+### 3.3 What is stored is mostly not recalled — but the obvious filter is wrong
 
-Of 6,948 memory artifacts (5.67M tokens), **46.3% of tokens are provably
-ephemeral scaffolding**: 2,316 subagent task prompts ("You are implementing Task
-11..."), 293 status reports, plus caveat banners. Sampling the remainder shows
-more work-log.
+Of 6,949 memory artifacts (5.67M tokens), **46.3% of tokens open like
+scaffolding**: 2,316 subagent task prompts ("You are implementing Task 11..."),
+293 status reports, plus caveat banners. **88.1% of all artifacts (29,976) have
+never been recalled once.**
 
-The signal that matters: **52.4% of memories ever recalled carry rationale
-language** ("because", "instead of", "turned out", "root cause") against 44.8% of
-the corpus. Retrieval is already selecting for rationale — the class that cannot
-be recovered by reading the repo, and the only class worth carrying between
-tools.
+The first draft of this section called that ephemeral and recommended filtering
+it on write. **Checking what the filter would actually remove reversed the
+conclusion**, and the reversal is more useful than the recommendation was:
 
-Anthropic reached the same conclusion independently. Claude Code's auto-memory
-**"skips anything it can derive from the codebase, such as architecture, file
-paths, or debugging fixes"**, storing `project` memories only for decisions
-*"that Claude can't derive from the code or git history"*. They encoded the
-thesis as a write-filter. memor has no such filter, and **88.0% of its artifacts
-(29,909) have never been recalled once.**
+| class | memories | recalled | used | use/recall |
+|---|---|---|---|---|
+| opens like a task brief | 2,316 | 594 | 117 | **19.7%** |
+| opens like a status report | 387 | 16 | 1 | 6.2% |
+| everything else | 4,246 | 773 | 42 | 5.4% |
+
+**Task briefs are the best-performing class in the store, by more than 3×.** A
+filter keyed on that opening would have dropped 2,629 memories containing **112
+of the 151 memories ever judged used**, leaving 39.
+
+Reading the ones that were used explains why. They are not scaffolding, they
+are **specifications**: "Replace all hardcoded `$` currency formatting in the
+PDF generator with currency-aware..." carries requirements, file paths and
+constraints that exist nowhere else once the branch is merged. The repo records
+what the code does; the brief records what it was asked to do.
+
+What the data does support is narrower: **status reports are genuinely
+disposable** (387 memories, 1 use), and the undifferentiated remainder converts
+at 5.4%. That is a real but much smaller target than 46.3%.
+
+The rationale signal still holds: **52.4% of memories ever recalled carry
+rationale language** ("because", "instead of", "turned out", "root cause")
+against 44.8% of the corpus. Retrieval is already selecting for it.
+
+Anthropic's auto-memory **"skips anything it can derive from the codebase, such
+as architecture, file paths, or debugging fixes"**, storing `project` memories
+only for decisions *"that Claude can't derive from the code or git history"*.
+That is the right instinct, and the measurement above is the caution that comes
+with it: a task brief *looks* derivable and measurably is not.
 
 ---
 
@@ -711,21 +734,39 @@ finds distractor harm is the dominant degradation lever and grows with context
 length, so the 16 extra false admits are not free. **Do not ship before P0 can
 measure it.**
 
-### P2 — A write-side curation filter
+### P2 — Curate on write, but not the way this review first proposed
 
-**What.** Refuse to store what the repo already answers. Prefer rationale, failed
-attempts, corrections, preferences.
+**What this now says.** The first version recommended filtering out subagent
+task prompts and status reports as ephemeral, on the strength of them being
+46.3% of stored tokens. **Do not build that.** Measured against outcomes, task
+briefs are the store's *best*-performing class (19.7% use-per-recall against
+5.4% for everything else), and the filter would have discarded 112 of the 151
+memories ever judged used.
 
-**Why.** 46.3% of memory tokens are ephemeral scaffolding; 88% of artifacts are
-never recalled; recall already selects for rationale at 52.4%. Anthropic shipped
-exactly this filter. It also improves the P1 risk profile: a cleaner store means
-a wider gate admits knowledge rather than noise.
+**What the evidence does support**, and it is narrower:
 
-**Success metric.** Never-recalled share falls from 88%; rationale share of
-stored tokens rises from 44.8%.
+- **Drop status reports.** 387 memories, 16 recalls, 1 use. Genuinely
+  disposable.
+- **Investigate the 4,246-memory remainder**, which converts at 5.4% and is the
+  bulk of the store. It is undifferentiated today, so there is nothing to filter
+  *on* yet — that is the work.
+- **Do not filter on opening text.** The one signal that looked strongest was
+  the one that inverted. Any future rule must be checked against
+  `memory_quality.use_count` before it ships, which is now possible because P0
+  landed.
 
-**Effort.** Small-to-moderate; `_signal_score()` (`memor/ingest/claude_code.py:82`)
-is the hook point.
+**Why it dropped below P3.** The premise — that memor stores junk — is only
+half-true, and the half that is true is small. 88.1% never-recalled is real, but
+"never recalled" is not the same as "not worth storing": recall has to surface a
+memory before use can be judged, so a low recall rate indicts retrieval (P1) at
+least as much as curation.
+
+**Success metric.** Use-per-recall on the remainder rises above 5.4% without the
+task-brief class regressing.
+
+**Effort.** Small to change `_signal_score()`
+(`memor/ingest/claude_code.py:82`); the analysis to know *what* to change is the
+larger part, and it needs more graded outcomes than the 151 available today.
 
 ### P3 — Cross-tool acceptance test
 
