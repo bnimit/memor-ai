@@ -35,6 +35,25 @@ MAINTENANCE_INTERVAL = 3600  # seconds
 MAINTENANCE_STAMP = STATE_DIR / "last_maintenance"
 
 
+def _session_id_for(unit) -> str:
+    """The session id a unit's recalls were logged under.
+
+    Each source names sessions differently, and the ingest side already
+    encodes those choices: Claude and jcode use the file stem, Kimi the parent
+    directory, Goose the id embedded in its state key. Mirrored here so the
+    feedback loop looks up the same rows the recall path wrote.
+    """
+    agent = getattr(unit, "agent", "")
+    path = getattr(unit, "path", None)
+    if agent == "goose":
+        from memor.feedback import _goose_session_id
+
+        return _goose_session_id(unit)
+    if path is None:
+        return ""
+    return path.parent.name if agent == "kimi" else path.stem
+
+
 def _maintenance_due(now: float | None = None, *, interval: float | None = None) -> bool:
     """True when the whole-store sweeps should run again.
 
@@ -364,32 +383,53 @@ def run_poll_cycle(
         print(f"  running {mode} distillation on new sessions...")
         distilled = distill_new_sessions(store, embedder, llm, distilled)
 
-    # Feedback + turn metrics: Claude transcripts only
+    # Feedback + turn metrics, for every agent that records a conversation.
+    #
+    # This was Claude-only, and the cost was the product's headline capability:
+    # a memory written in one tool and served to another was never graded, so
+    # every cross-tool recall sat "pending" forever. The blocker was not this
+    # loop but the analyzer's signature -- it asked for a transcript path, and
+    # Goose has no transcript file, only rows in SQLite. Feeding it normalised
+    # turns instead lets one code path grade them all.
     if new_ingested:
-        from memor.feedback import analyze_session_feedback
+        from memor.feedback import analyze_session_feedback, turns_for_unit
         from memor.turn_metrics import parse_turn_metrics, correlate_with_recalls
         for unit in pending:
-            if unit.agent != "claude" or unit.path is None:
+            session_id = _session_id_for(unit)
+            if not session_id:
                 continue
-            session_id = unit.path.stem
+            try:
+                turns = turns_for_unit(unit)
+            except Exception:
+                turns = []
+            if not turns:
+                continue
             try:
                 # Proxy-served recalls carry no session id, so the analyzer is
-                # given the conversation key as well to find them.
-                from memor.conversation import conversation_key as _convo_key
-                from memor.episodes import parse_episodes as _parse
-                try:
-                    _eps = _parse(unit.path)
-                    convo = _eps[0].conversation_key if _eps else ""
-                except Exception:
-                    convo = ""
+                # given the conversation key as well to find them. Only Claude
+                # transcripts parse into episodes, so others pass an empty key
+                # and are matched on session id alone.
+                convo = ""
+                if unit.agent == "claude" and unit.path is not None:
+                    from memor.episodes import parse_episodes as _parse
+                    try:
+                        _eps = _parse(unit.path)
+                        convo = _eps[0].conversation_key if _eps else ""
+                    except Exception:
+                        convo = ""
                 used = analyze_session_feedback(
-                    store, session_id, unit.path, embedder=embedder,
-                    conversation_key=convo,
+                    store, session_id, embedder=embedder,
+                    conversation_key=convo, turns=turns,
                 )
                 if used > 0:
-                    print(f"  feedback: {used} memories confirmed used in {session_id[:12]}...")
+                    print(f"  feedback: {used} memories confirmed used in "
+                          f"{unit.agent}/{session_id[:12]}...")
             except Exception:
                 pass
+            # Turn metrics parse Claude's transcript shape specifically, so
+            # they stay path-gated rather than being widened on a guess.
+            if unit.agent != "claude" or unit.path is None:
+                continue
             try:
                 metrics = parse_turn_metrics(unit.path, session_id)
                 if metrics:

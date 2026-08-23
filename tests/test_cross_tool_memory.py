@@ -112,25 +112,28 @@ def test_feedback_analyzer_is_not_claude_specific(store_with_jcode_memory, tmp_p
     assert _outcomes(store) == [("jc-1", "used")]
 
 
-def test_feedback_cannot_read_a_jcode_transcript():
-    """Documents the specific gap, so closing it flips this test.
+def test_feedback_can_now_read_a_jcode_transcript():
+    """The gap this suite was written to document, now closed.
 
-    ``_extract_stamped_texts`` is the reader the live path uses
-    (``feedback.py:245``), and it understands Claude's ``{type, message}``
-    records with ISO timestamps. jcode writes ``{append_messages, meta}``, so it
-    yields nothing, and every jcode recall stays unadjudicated.
+    It used to assert the opposite: ``_extract_stamped_texts`` reads Claude's
+    ``{type, message}`` records and returns nothing for jcode's
+    ``{append_messages, meta}``, so every jcode recall stayed unadjudicated.
 
-    The reader for that shape already exists in ``memor/ingest/jcode.py`` -- it
-    is simply not reachable from the feedback path.
-
-    When feedback gains a per-agent reader, invert this assertion.
+    The Claude-shaped reader still cannot read a jcode journal, and should not
+    -- the fix was to dispatch per agent rather than widen one parser until it
+    guesses. Both halves are asserted, because a reader that accepted anything
+    would pass the second check while quietly mis-parsing the first.
     """
-    from memor.feedback import _extract_stamped_texts
+    from memor.feedback import _extract_stamped_texts, stamped_turns_from_jcode
 
-    assert _extract_stamped_texts(_jcode_journal()) == ([], []), (
-        "feedback can now read jcode transcripts -- update this test and "
-        "remove the Claude-only guard in memor/daemon.py"
+    journal = _jcode_journal()
+    assert _extract_stamped_texts(journal) == ([], []), (
+        "the Claude reader now accepts jcode records -- it should decline them "
+        "and let turns_for_unit route to the jcode reader instead"
     )
+
+    session = journal.parent / journal.name.replace(".journal.jsonl", "")
+    assert stamped_turns_from_jcode(session), "the jcode reader returned nothing"
 
 
 def test_feedback_reads_claude_transcripts(tmp_path):

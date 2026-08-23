@@ -116,6 +116,20 @@ def create_app(db_path: str | None = None) -> FastAPI:
         store = _store()
         return store.get_recent_recalls(limit=limit, project=project, agent=agent)
 
+    @app.get("/api/cross-tool")
+    def cross_tool():
+        """Does a memory written in one tool help in another?
+
+        The product's reason for existing, and until the feedback loop reached
+        every agent there was no way to answer it: cross-tool recalls were
+        served and then never graded, so this panel would have shown a single
+        grey bar. It is reported separately from same-tool rather than blended,
+        because blending hides the only comparison that matters.
+        """
+        from memor.crosstool import cross_tool_stats
+
+        return cross_tool_stats(_store())
+
     @app.get("/api/quality")
     def quality():
         store = _store()

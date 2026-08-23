@@ -468,6 +468,32 @@
       </div>
     </section>
 
+    <section id="cross-tool-section" style="display:none;">
+      <div class="section-label"><span class="dot"></span> Cross-tool memory</div>
+      <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">
+        Did a memory written while using one agent help in another? Kept apart from
+        same-tool, because blending the two hides the only comparison that matters.
+      </div>
+      <div class="agent-compare" id="cross-tool-totals"></div>
+      <div class="table-card" style="margin-top:12px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Read by</th>
+              <th>Written by</th>
+              <th style="text-align:right">Used</th>
+              <th style="text-align:right">Judged</th>
+              <th style="text-align:right">Use rate</th>
+              <th style="text-align:right">Awaiting verdict</th>
+            </tr>
+          </thead>
+          <tbody id="cross-tool-body"></tbody>
+        </table>
+      </div>
+      <div class="metric-sub" id="cross-tool-note"
+           style="margin-top:8px;color:var(--text-muted);font-size:11px;"></div>
+    </section>
+
     <section id="savings-periods-section" style="display:none;">
       <div class="section-label"><span class="dot"></span> Token savings over time</div>
       <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">
@@ -1549,6 +1575,66 @@
     });
   }
 
+  function renderCrossTool(data) {
+    var section = document.getElementById('cross-tool-section');
+    if (!data || !data.pairs || !data.pairs.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+
+    var cross = data.cross_tool || {}, same = data.same_tool || {};
+
+    // Two tiles, never one blended rate. Same-tool is the baseline the
+    // cross-tool number has to be read against: on its own, "68% used" says
+    // nothing about whether memory travels between tools.
+    var grid = document.getElementById('cross-tool-totals');
+    grid.innerHTML = '';
+    [['Cross-tool', cross, 'a memory from a different agent'],
+     ['Same-tool', same, 'the baseline to compare against']].forEach(function(spec) {
+      var t = spec[1];
+      // An unjudged bucket is not a failing one. Showing 0% for "nothing has
+      // been graded yet" is the confusion this panel exists to end.
+      var graded = (t.judged || 0) > 0;
+      var tile = el('div', { class: 'agent-tile' });
+      tile.innerHTML =
+        '<div class="name">' + esc(spec[0]) + '</div>' +
+        '<div class="val" style="color:' + (graded ? 'var(--ok)' : 'var(--text-muted)') + '">' +
+          (graded ? t.use_rate + '%' : 'not yet graded') + '</div>' +
+        '<div class="sub">' +
+          (graded ? fmt(t.used || 0) + ' of ' + fmt(t.judged) + ' judged'
+                  : fmt(t.pending || 0) + ' awaiting a verdict') +
+          ' · ' + esc(spec[2]) + '</div>';
+      grid.appendChild(tile);
+    });
+
+    var body = document.getElementById('cross-tool-body');
+    body.innerHTML = '';
+    data.pairs.forEach(function(p) {
+      var tr = el('tr');
+      var graded = (p.judged || 0) > 0;
+      tr.innerHTML =
+        '<td>' + esc(p.reader) + '</td>' +
+        '<td>' + esc(p.writer) +
+          (p.cross_tool ? ' <span style="color:var(--accent);font-size:10px">CROSS</span>' : '') + '</td>' +
+        '<td style="text-align:right">' + fmt(p.used || 0) + '</td>' +
+        '<td style="text-align:right">' + fmt(p.judged || 0) + '</td>' +
+        '<td style="text-align:right">' + (graded ? p.use_rate + '%' : '—') + '</td>' +
+        '<td style="text-align:right;color:var(--text-muted)">' + fmt(p.pending || 0) + '</td>';
+      body.appendChild(tr);
+    });
+
+    var note = document.getElementById('cross-tool-note');
+    if ((cross.judged || 0) === 0 && (cross.pending || 0) > 0) {
+      note.textContent = 'Cross-tool recalls are being served but not yet graded: ' +
+        cross.pending + ' awaiting a verdict. The feedback loop settles them once ' +
+        'each agent\u2019s next session is ingested.';
+    } else if ((cross.judged || 0) > 0) {
+      note.textContent = 'Use rate is over judged recalls only. "Unused" means the ' +
+        'agent wrote nothing after the recall, which says as much about the session ' +
+        'ending as about the memory, so it is shown but not counted against the rate.';
+    } else {
+      note.textContent = '';
+    }
+  }
+
   var SAVINGS_PERIODS = null;
   var SAVINGS_PERIOD = 'daily';
 
@@ -1930,6 +2016,7 @@
   async function loadAgentBreakdown() { try { renderAgentBreakdown(await api('/api/agent-breakdown')); } catch (e) { console.warn(e); } }
   async function loadSavingsHero() { try { renderSavingsHero(await api('/api/savings-ledger?days=30')); } catch (e) { console.warn(e); } }
   async function loadProxyStatus() { try { renderProxyStatus(await api('/api/proxy-status')); } catch (e) { console.warn(e); } }
+  async function loadCrossTool() { try { renderCrossTool(await api('/api/cross-tool')); } catch (e) { console.warn(e); } }
   async function loadSavingsPeriods() {
     try { renderSavingsPeriods(await api('/api/savings-periods?days=365')); }
     catch (e) { console.warn(e); }
@@ -2193,7 +2280,7 @@
       loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(),
       loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(),
       loadProxySavingsByAgent(), loadRecallWorth(), loadRecallBaseline(), loadCompression(),
-      loadSavingsPeriods(),
+      loadSavingsPeriods(), loadCrossTool(),
     ]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
   }
@@ -2225,6 +2312,7 @@
     btn.addEventListener('click', function() {
       SAVINGS_PERIOD = btn.dataset.period;
       renderSavingsPeriods(null);
+      renderCrossTool(null);
     });
   });
 

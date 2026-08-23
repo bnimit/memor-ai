@@ -559,7 +559,26 @@ sampled, so this demand picture is HN-only.)*
 
 Ranked by (impact on the shared-layer thesis × confidence).
 
-### P0 — Make cross-tool recall measurable
+### P0 — Make cross-tool recall measurable — **SHIPPED 2026-08-23**
+
+Built. `memor/feedback.py` gained a per-agent reader for each source
+(`stamped_turns_from_claude/_jcode/_goose/_kimi`) returning a normalised
+`(timestamp, role, text)`; `analyze_session_feedback` now accepts those turns
+instead of requiring a transcript path; the Claude-only guard at
+`daemon.py:372` is gone. All four agents read on this machine: claude 387,
+goose 520, jcode 1,376, kimi 48 turns from their newest sessions. Verified
+end-to-end on a real jcode session, `pending` → `used`.
+
+`memor/crosstool.py` and `/api/cross-tool` expose the reader × writer matrix,
+and the dashboard renders it above the fold. Kimi needed its own reader after
+all: it records a protocol stream, not a conversation, so an assistant reply
+arrives as a run of `ContentPart` fragments that must be joined before the
+n-gram check can match. The assumption that it was Claude-shaped was wrong.
+
+Verdicts settle as each agent's *next* session is ingested, so the panel reads
+"37 awaiting a verdict" until then rather than showing a misleading 0%.
+
+The original analysis follows.
 
 **What.** Extend the feedback loop past Claude. `memor/daemon.py:372` skips every
 non-Claude session, so neither `analyze_session_feedback` nor

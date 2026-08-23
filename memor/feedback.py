@@ -84,25 +84,28 @@ def _record_epoch(rec: dict) -> float:
     return 0.0
 
 
-def _extract_stamped_texts(
-    transcript_path: Path,
-) -> tuple[list[tuple[float, str]], list[tuple[float, str]]]:
-    """(assistant, user) texts paired with when they were written.
+#: One conversational turn, normalised across agents:
+#: ``(epoch_seconds, "assistant" | "user", lowercased_text)``.
+#:
+#: Every harness records the same three facts and disagrees only on how. Making
+#: that the interface is what lets the analyzer grade a Goose session, which has
+#: no transcript file at all -- its history is rows in SQLite, so a reader keyed
+#: on a filesystem path could not express it.
+StampedTurn = tuple[float, str, str]
 
-    Timestamps are the whole point: a memory can only have been used by text
-    written *after* it was recalled, and the previous version compared against
-    the entire session in both directions.
+
+def stamped_turns_from_claude(transcript_path: Path) -> list[StampedTurn]:
+    """Turns from a Claude Code transcript.
 
     Note ``type == "user"``. The old code tested for ``"human"``, which no
     transcript emits, so the user channel was always empty and rejection
     detection ran on assistant prose alone.
     """
-    assistant: list[tuple[float, str]] = []
-    user: list[tuple[float, str]] = []
+    turns: list[StampedTurn] = []
     try:
         lines = transcript_path.read_text(errors="replace").splitlines()
     except OSError:
-        return [], []
+        return []
     for line in lines:
         line = line.strip()
         if not line:
@@ -113,21 +116,111 @@ def _extract_stamped_texts(
             continue
         if not isinstance(rec, dict):
             continue
-        kind = rec.get("type")
-        if kind not in ("assistant", "user"):
+        role = rec.get("type")
+        if role not in ("assistant", "user"):
             continue
-        content = rec.get("message", {}).get("content", "")
-        parts = []
-        if isinstance(content, str):
-            parts.append(content.lower())
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    parts.append(block.get("text", "").lower())
-        if not parts:
+        text = _text_of_content(rec.get("message", {}).get("content", ""))
+        if text:
+            turns.append((_record_epoch(rec), role, text))
+    return turns
+
+
+def stamped_turns_from_jcode(session_path: Path) -> list[StampedTurn]:
+    """Turns from a jcode session.
+
+    jcode splits a session across a settled ``.json`` and a ``.journal.jsonl``
+    of appends. ``memor.ingest.jcode`` already reconciles the two, so this
+    reuses that rather than re-deriving the format in a second place.
+    """
+    from memor.ingest.jcode import _messages
+
+    turns: list[StampedTurn] = []
+    for msg in _messages(session_path):
+        if not isinstance(msg, dict):
             continue
-        stamped = (_record_epoch(rec), " ".join(parts))
-        (assistant if kind == "assistant" else user).append(stamped)
+        role = msg.get("role")
+        if role not in ("assistant", "user"):
+            continue
+        text = _text_of_content(msg.get("content", ""))
+        if text:
+            turns.append((_record_epoch(msg), role, text))
+    return turns
+
+
+def stamped_turns_from_goose(db_path: Path, session_id: str) -> list[StampedTurn]:
+    """Turns from one Goose session.
+
+    Goose keeps messages in SQLite with an integer ``created_timestamp``, so
+    there is no transcript file to point at. Read-only URI, because this runs
+    against the user's live Goose database while Goose may be writing to it.
+    """
+    import sqlite3
+
+    if not Path(db_path).is_file():
+        return []
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            "SELECT role, content_json, created_timestamp FROM messages "
+            "WHERE session_id = ? ORDER BY created_timestamp, id",
+            (session_id,),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+
+    from memor.ingest.goose import _text_from_content_json
+
+    turns: list[StampedTurn] = []
+    for row in rows:
+        role = (row["role"] or "").strip()
+        if role not in ("assistant", "user"):
+            continue
+        text = (_text_from_content_json(row["content_json"] or "") or "").strip()
+        if text:
+            turns.append((float(row["created_timestamp"] or 0), role, text.lower()))
+    return turns
+
+
+def _text_of_content(content) -> str:
+    """Flatten a message body to lowercased text, whatever shape it arrived in.
+
+    Agents disagree: a bare string, or a list of typed blocks. Only ``text``
+    blocks are taken -- tool calls and results are the agent's machinery, not
+    evidence that it used a memory.
+    """
+    if isinstance(content, str):
+        return content.lower()
+    if isinstance(content, list):
+        parts = [b.get("text", "") for b in content
+                 if isinstance(b, dict) and b.get("type") == "text"]
+        return " ".join(parts).lower()
+    return ""
+
+
+def _extract_stamped_texts(
+    transcript_path: Path,
+) -> tuple[list[tuple[float, str]], list[tuple[float, str]]]:
+    """(assistant, user) texts paired with when they were written.
+
+    Timestamps are the whole point: a memory can only have been used by text
+    written *after* it was recalled, and the previous version compared against
+    the entire session in both directions.
+
+    Retained as a thin adapter over :func:`stamped_turns_from_claude` so the
+    split-channel shape the analyzer wants has one definition.
+    """
+    return _split_channels(stamped_turns_from_claude(transcript_path))
+
+
+def _split_channels(
+    turns: list[StampedTurn],
+) -> tuple[list[tuple[float, str]], list[tuple[float, str]]]:
+    """Separate normalised turns into the assistant and user channels."""
+    assistant = [(ts, text) for ts, role, text in turns if role == "assistant"]
+    user = [(ts, text) for ts, role, text in turns if role == "user"]
     return assistant, user
 
 
@@ -213,11 +306,105 @@ def _session_recalls(store: SqliteStore, session_id: str,
     return [{"id": r["id"], "timestamp": r["timestamp"] or 0.0} for r in rows]
 
 
+def stamped_turns_from_kimi(wire_path: Path) -> list[StampedTurn]:
+    """Turns from a Kimi ``wire.jsonl``.
+
+    Kimi records a protocol stream rather than a conversation: a user turn is a
+    ``TurnBegin`` envelope and an assistant turn arrives as a run of
+    ``ContentPart`` fragments. Consecutive assistant parts are joined, because
+    the n-gram check needs a whole reply to match against -- scored fragment by
+    fragment, a memory quoted across a sentence boundary would never register.
+    """
+    turns: list[StampedTurn] = []
+    try:
+        lines = wire_path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+
+    from memor.ingest.kimi import _user_input_text
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        msg = rec.get("message") or {}
+        payload = msg.get("payload") or {}
+        kind = msg.get("type")
+
+        if kind == "TurnBegin":
+            text = _user_input_text(payload.get("user_input")).strip()
+            role = "user"
+        elif kind == "ContentPart" and payload.get("type") == "text":
+            text = (payload.get("text") or "").strip()
+            role = "assistant"
+        else:
+            continue
+        if not text:
+            continue
+
+        stamp = _record_epoch(rec)
+        if turns and role == "assistant" and turns[-1][1] == "assistant":
+            prev = turns[-1]
+            turns[-1] = (prev[0], "assistant", prev[2] + " " + text.lower())
+        else:
+            turns.append((stamp, role, text.lower()))
+    return turns
+
+
+def turns_for_unit(unit) -> list[StampedTurn]:
+    """Normalised turns for one ingest unit, whatever agent produced it.
+
+    The daemon already knows each unit's agent, so the dispatch belongs here
+    rather than in a chain of conditionals at the call site. Unknown agents
+    return nothing, which leaves their recalls pending -- the same state as
+    before, rather than a wrong verdict from a mis-parsed transcript.
+    """
+    agent = getattr(unit, "agent", "")
+    path = getattr(unit, "path", None)
+
+    if agent == "claude" and path is not None:
+        return stamped_turns_from_claude(path)
+    if agent == "jcode" and path is not None:
+        return stamped_turns_from_jcode(path)
+    if agent == "kimi" and path is not None:
+        return stamped_turns_from_kimi(path)
+    if agent == "goose":
+        from memor.ingest.goose import GOOSE_DB_PATH
+
+        session_id = _goose_session_id(unit)
+        if session_id:
+            return stamped_turns_from_goose(GOOSE_DB_PATH, session_id)
+    return []
+
+
+def _goose_session_id(unit) -> str:
+    """Recover a Goose session id from its ingest state key.
+
+    Goose units carry no path, so the id lives in the state key the scanner
+    builds. Parsed rather than stored so that ``IngestUnit`` keeps one shape
+    across every source.
+    """
+    key = getattr(unit, "state_key", "") or ""
+    return key.split(":", 1)[1] if key.startswith("goose:") else ""
+
+
 def analyze_session_feedback(
-    store: SqliteStore, session_id: str, transcript_path: Path,
+    store: SqliteStore, session_id: str, transcript_path: Path | None = None,
     *, embedder=None, conversation_key: str = "",
+    turns: list[StampedTurn] | None = None,
 ) -> int:
     """Settle the verdict on every memory this session was actually served.
+
+    Accepts either a Claude ``transcript_path`` or pre-read ``turns``. The
+    second form exists because Goose keeps no transcript file -- its history is
+    rows in SQLite -- so a path is not a shape every agent can supply. Callers
+    that already have a path keep working unchanged.
 
     Rewritten against four defects that between them produced 2,180 uses and
     1,770 rejections for an artifact recalled 40 times:
@@ -242,7 +429,11 @@ def analyze_session_feedback(
     if not pending:
         return 0
 
-    stamped_assistant, stamped_user = _extract_stamped_texts(transcript_path)
+    stamped_assistant, stamped_user = (
+        _split_channels(turns) if turns is not None
+        else _extract_stamped_texts(transcript_path) if transcript_path is not None
+        else ([], [])
+    )
     # A user correction with no assistant reply after it is still evidence —
     # arguably the strongest kind — so this bails only when the transcript
     # says nothing at all.
