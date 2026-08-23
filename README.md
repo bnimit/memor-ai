@@ -587,42 +587,53 @@ memor bench-embed --project <name>   Compare embedding models
 
 ```
 memor/
-+-- types.py / interfaces.py   Core types + Embedder/LLM/MemoryStore protocols
-+-- cli.py                     Typer CLI (hooks, proxy, daemon, eval, service)
-+-- daemon.py                  Multi-agent ingest + distill + compaction
-+-- recall.py                  Shared recall core (hook + skill + proxy inject)
-+-- service.py                 launchd/systemd: daemon + dashboard (+ proxy)
-+-- redact.py / feedback.py    Secret redaction; positive/negative quality loop
-+-- global_memories.py         Cross-project promotion to _global scope
-|
-+-- ingest/
-|   +-- claude_code.py         ~/.claude/projects/ JSONL
-|   +-- kimi.py                ~/.kimi/sessions/ wire.jsonl
-|   +-- goose.py               Goose sessions.db
-|   +-- sources.py             Registry used by daemon + backfill
-|
-+-- hook_cli.py / hook_server.py
-|                              Hook entry + agent detect/format
-|                              (Claude, Cursor, Codex, Copilot, Kimi, Goose)
-|
-+-- proxy/                     Opt-in token-savings path (localhost:8421)
-|   +-- server.py / pipeline.py  Compress → forward → ledger
-|   +-- install.py               Wire agent config + backups
-|   +-- mcp_retrieve.py          memor_retrieve MCP tool
-|
-+-- compress/                  Structure-preserving crushers: code (AST /
-|                                 tree-sitter), search, log, JSON, text
-|
-+-- retrieve/retriever.py      Hybrid dense + BM25 (RRF) + relevance gate
-+-- store/sqlite_store.py      SQLite + sqlite-vec + FTS5 + proxy_savings
-|
-+-- dashboard/                 FastAPI + static UI (status, savings, agents)
-+-- distill/                   Extractive default; optional local GGUF LLM
-+-- embed/                     model2vec local (default) + API/fake
-+-- eval/                      Counterfactual, proxy benchmark fixtures, baselines
-+-- llm/                       Anthropic / OpenAI-compat / llama.cpp backends
+├── types.py / interfaces.py    Core types + Embedder/LLM/MemoryStore protocols
+├── cli.py                      Typer CLI (hooks, proxy, daemon, eval, service)
+├── daemon.py                   Multi-agent ingest + distill + feedback
+├── recall.py                   Shared recall core (hook + skill + proxy inject)
+├── service.py                  launchd/systemd: daemon + dashboard (+ proxy)
+├── redact.py                   Secret redaction at ingest
+├── feedback.py                 Did a served memory get used? Per-agent readers
+├── crosstool.py                Reader × writer: did memory cross tools?
+├── backfill_feedback.py        Grade recalls the daemon already passed over
+├── global_memories.py          Cross-project promotion to _global scope
+│
+├── ingest/                     Passive capture — no agent cooperation needed
+│   ├── claude_code.py            ~/.claude/projects/ JSONL
+│   ├── jcode.py                  ~/.jcode/sessions/ + journal appends
+│   ├── goose.py                  Goose sessions.db (SQLite)
+│   ├── kimi.py                   ~/.kimi/sessions/ wire.jsonl
+│   ├── documents.py              Markdown / text files
+│   └── sources.py                Registry used by daemon + backfill
+│
+├── hook_cli.py                 Hook entry point
+├── hook_server.py              Agent detect + response format
+│                                 (Claude, Cursor, Codex, Copilot, Kimi,
+│                                  Goose, jcode)
+│
+├── proxy/                      Opt-in token-savings path (localhost:8421)
+│   ├── server.py                 Request routing + health
+│   ├── pipeline.py               Compress → forward → ledger
+│   ├── shim.py                   Fail-open wrapper around the pipeline
+│   ├── memory.py                 Recall injection on the proxy path
+│   ├── install.py                Wire agent config + backups
+│   └── mcp_retrieve.py           memor_recall + memor_retrieve (read-only)
+│
+├── compress/                   Structure-preserving crushers
+│   ├── detect.py                 Content-type classifier + source guard
+│   ├── code.py / code_ts.py      AST / tree-sitter skeletonizers
+│   └── diff.py, logs.py, search.py, json_crush.py, text.py
+│
+├── retrieve/retriever.py       Hybrid dense + BM25 (RRF) + relevance gate
+├── store/sqlite_store.py       SQLite + sqlite-vec + FTS5 + proxy_savings
+│
+├── dashboard/                  FastAPI + static UI (savings, cross-tool, agents)
+├── distill/                    Extractive default; optional local GGUF LLM
+├── embed/                      model2vec local (default) + API/fake
+├── eval/                       Counterfactual, proxy benchmarks, baselines
+└── llm/                        Anthropic / OpenAI-compat / llama.cpp backends
 
-skill/recall.py                Standalone recall script
+skill/recall.py                 Standalone recall script
 ```
 
 ---
@@ -631,8 +642,13 @@ skill/recall.py                Standalone recall script
 
 **Nothing leaves your machine.** In the default configuration (hooks only, no proxy):
 
-- **No telemetry, no analytics, no phone-home.** Memor itself makes zero outbound network calls.
+- **No telemetry, no analytics, no phone-home.** Memor makes no outbound network
+  calls. The only HTTP it speaks by default is to `127.0.0.1` — health checks
+  against its own daemon, dashboard and proxy.
 - **Embeddings run locally** via model2vec static token embeddings — no inference runtime, no GPU (one-time model download from HuggingFace — no user data sent).
+- **Memory capture is read-only.** The daemon reads agent transcripts off disk;
+  it never writes to another tool's files, and its MCP surface exposes recall
+  and retrieve only, with no write tool.
 - **Hook transport is a Unix socket** (`~/.memor/hook.sock`), not a network port.
 - **Dashboard binds localhost only** (`127.0.0.1:8420`).
 
