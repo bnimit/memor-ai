@@ -2026,6 +2026,12 @@
       var p = paths[name];
       // null means the path has never recorded anything, which is a setup
       // state the onboarding banner already covers -- not a regression.
+      //
+      // The `!= null` is deliberate belt-and-braces, not load-bearing: JS
+      // already evaluates `null >= 2` as false, so mutating it away does not
+      // change behaviour and no test can catch it. It is kept because relying
+      // on that coercion is how a later `<=` or `!==` comparison silently
+      // starts treating "never ran" as "ran a long time ago".
       if (p && p.idle_days != null && p.idle_days >= PATH_IDLE_WARN_DAYS) {
         stale.push(name + ' (' + p.idle_days + 'd)');
       }
