@@ -1106,6 +1106,58 @@ class SqliteStore:
             "proxy": proxy,
         }
 
+    def get_agent_contribution(self, agent: str) -> dict:
+        """What an agent *wrote* into the store, as opposed to what it read.
+
+        The desk panes only ever showed consumption -- recalls, hit rate,
+        latency -- which cannot distinguish an agent that feeds the shared layer
+        from one that only draws on it. That distinction is the product: Codex
+        served 38 recalls while contributing nothing for months, and no panel on
+        the dashboard could have shown it.
+
+        ``meta.agent`` is the ingest-side label and ``source`` is the older one;
+        Claude's chunks predate the meta field and carry ``source='claude_code'``,
+        so both are consulted rather than migrating 24k rows.
+        """
+        aliases = {"claude": ("claude", "claude_code")}
+        names = aliases.get(agent, (agent,))
+        placeholders = ",".join("?" for _ in names)
+        row = self.db.execute(
+            f"""
+            SELECT COUNT(*) AS chunks,
+                   SUM(token_count) AS tokens,
+                   COUNT(DISTINCT project) AS projects,
+                   MAX(created_at) AS last_seen
+            FROM artifacts
+            WHERE active=1
+              AND COALESCE(json_extract(meta, '$.agent'), source) IN ({placeholders})
+            """,
+            names,
+        ).fetchone()
+        projects = [
+            dict(r)
+            for r in self.db.execute(
+                f"""
+                SELECT project, COUNT(*) AS chunks, SUM(token_count) AS tokens
+                FROM artifacts
+                WHERE active=1
+                  AND COALESCE(json_extract(meta, '$.agent'), source)
+                      IN ({placeholders})
+                GROUP BY project
+                ORDER BY chunks DESC
+                LIMIT 10
+                """,
+                names,
+            ).fetchall()
+        ]
+        return {
+            "chunks": row["chunks"] or 0,
+            "tokens": row["tokens"] or 0,
+            "projects": row["projects"] or 0,
+            "last_seen": row["last_seen"] or 0,
+            "by_project": projects,
+        }
+
     def record_recall(self, artifact_ids: list[str]) -> None:
         import time as _time
         now = _time.time()
@@ -1282,6 +1334,11 @@ class SqliteStore:
             "avg_overhead_pct": round(avg_per_session / context_window * 100, 2),
             "coverage": round((totals["with_hits"] or 0) / total_recalls, 3) if total_recalls else 0,
             "avg_quality": round(totals["avg_quality"] or 0, 3),
+            # Median, not mean: one multi-second outlier moves the average by
+            # hundreds of milliseconds and describes nobody's actual wait. Served
+            # here as well as from /api/summary because the Efficiency panel that
+            # renders it now lives on a pane that does not load the summary.
+            "p50_latency_ms": self.get_recall_stats().get("p50_latency_ms", 0.0),
             "sessions": session_list,
         }
 

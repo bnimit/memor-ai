@@ -142,3 +142,92 @@ def test_dashboard_html_has_compression_panel(tmp_path):
     assert "cx-live" in html
     # The liveness warning must be presentable, not buried in a log.
     assert "NOT taking effect" in html
+
+
+def _contrib_seed(tmp_path):
+    """A store where one agent writes and another only reads."""
+    db_path = str(tmp_path / "contrib.db")
+    e = FakeEmbedder(dim=16)
+    s = SqliteStore(db_path, dim=16)
+    arts = [
+        Artifact(id="c1", kind="session_chunk", project="alpha", source="codex",
+                 text="the root cause was a missing index", token_count=40,
+                 created_at=500.0, meta={"agent": "codex"}),
+        Artifact(id="c2", kind="session_chunk", project="beta", source="codex",
+                 text="we switched to a queue", token_count=10,
+                 created_at=900.0, meta={"agent": "codex"}),
+        # Claude's oldest chunks predate meta.agent and carry only source.
+        Artifact(id="k1", kind="session_chunk", project="alpha",
+                 source="claude_code", text="older claude chunk", token_count=7,
+                 created_at=300.0, meta={}),
+    ]
+    s.add_artifacts(arts, e.embed([a.text for a in arts]))
+    s.log_recall("alpha", "q", 1, 0.8, 20, 5.0, "ok", "s1", agent="cursor")
+    from memor.dashboard.server import create_app
+    return create_app(db_path), s
+
+
+def test_agent_desk_reports_what_the_agent_wrote(tmp_path):
+    """Recalls measure consumption; a shared layer also has to show supply.
+
+    Every desk KPI was a read metric, so an agent that draws on the store
+    without ever feeding it looked identical to one that does both. That is
+    precisely how Codex went months serving recalls while contributing nothing.
+    """
+    app, _ = _contrib_seed(tmp_path)
+    c = TestClient(app).get("/api/agent-desk?agent=codex").json()["contribution"]
+    assert c["chunks"] == 2
+    assert c["tokens"] == 50
+    assert c["projects"] == 2
+    assert c["last_seen"] == 900.0
+    assert [p["project"] for p in c["by_project"]] == ["alpha", "beta"]
+
+
+def test_claude_contribution_counts_pre_meta_chunks(tmp_path):
+    """Claude's 24k oldest rows carry source='claude_code' and no meta.agent.
+
+    Reading meta alone would report the busiest agent as having written nothing.
+    """
+    app, _ = _contrib_seed(tmp_path)
+    c = TestClient(app).get("/api/agent-desk?agent=claude").json()["contribution"]
+    assert c["chunks"] == 1
+
+
+def test_read_only_agent_is_visibly_empty(tmp_path):
+    """A consumer must render as a zero, not as missing data."""
+    app, _ = _contrib_seed(tmp_path)
+    c = TestClient(app).get("/api/agent-desk?agent=cursor").json()["contribution"]
+    assert c["chunks"] == 0 and c["by_project"] == []
+
+
+def test_overview_is_split_from_the_evidence_behind_it(tmp_path):
+    """13 sections and 6 tables on one scroll buried the daily figures.
+
+    The measurement pane holds the evidence; the overview keeps the KPIs. Both
+    must exist, and long tables must collapse rather than be truncated away.
+    """
+    app, _ = _seed(tmp_path)
+    html = TestClient(app).get("/").text
+    assert 'id="pane-measure"' in html
+    assert "show-all-btn" in html
+    # Evidence sections moved off the overview, not deleted.
+    for probe in ("recall-baseline-section", "quality-section", "proxy-savings-section"):
+        assert probe in html
+    overview = html.split('id="pane-overview"')[1].split('id="pane-measure"')[0]
+    assert overview.count("<section") <= 7
+    assert "recall-baseline-section" not in overview
+    assert "quality-section" not in overview
+
+
+def test_efficiency_carries_its_own_latency(tmp_path):
+    """A panel must not depend on an endpoint its pane does not load.
+
+    The Efficiency card read p50 latency from /api/summary. Moving the card to
+    the measurement pane, which loads only /api/efficiency, blanked the figure
+    without any request failing -- the exact failure that is invisible in tests
+    that assert on endpoints rather than on what a pane can actually render.
+    """
+    app, _ = _seed(tmp_path)
+    d = TestClient(app).get("/api/efficiency").json()
+    assert d["total_recalls"] > 0
+    assert d["p50_latency_ms"] > 0

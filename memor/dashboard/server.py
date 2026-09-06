@@ -397,11 +397,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.get("/api/agent-desk")
     def agent_desk(agent: str = Query(..., min_length=1)):
-        """Per-agent pane payload: stats + trends + recent recalls."""
+        """Per-agent pane payload: stats + trends + recent recalls.
+
+        ``contribution`` answers the half the pane could not: what this agent
+        wrote into the shared store, not just what it drew out of it.
+        """
         store = _store()
         stats = store.get_agent_stats(agent)
         return {
             "stats": stats,
+            "contribution": store.get_agent_contribution(agent),
             "recall_trend": store.get_recall_trend(days=30, agent=agent),
             "savings_series": store.get_proxy_savings_series(days=30, agent=agent),
             "savings_summary": store.get_proxy_savings_summary(days=30, agent=agent),

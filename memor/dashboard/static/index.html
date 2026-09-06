@@ -296,6 +296,13 @@
   .quality-fill-error { background: var(--error); }
 
   .empty-state { text-align: center; padding: 28px 16px; color: var(--text-muted); font-size: 13px; }
+  .show-all-row td { text-align: center; padding: 10px 16px; border-bottom: none; }
+  .show-all-btn {
+    background: none; border: 1px solid var(--border); color: var(--text-muted);
+    border-radius: var(--radius-sm); padding: 5px 14px; font-size: 12px;
+    font-family: inherit; cursor: pointer;
+  }
+  .show-all-btn:hover { color: var(--text); border-color: var(--text-muted); }
   .side-stats { display: grid; gap: 10px; }
   .side-stat {
     background: var(--bg-elev); border: 1px solid var(--border-light);
@@ -510,6 +517,58 @@
       </div>
     </section>
 
+
+    <section id="agent-compare-section" style="display:none;">
+      <div class="section-label"><span class="dot"></span> Desks</div>
+      <div class="agent-compare" id="agent-compare"></div>
+    </section>
+
+    <section>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-title"><span class="dot"></span> Projects</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th class="sortable" data-col="project" data-type="str">Project <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="artifacts" data-type="num"><span id="th-col1">Chunks</span> <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="memories" data-type="num"><span id="th-col2">Memories</span> <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="total_tokens" data-type="num"><span id="th-col3">Tokens</span> <span class="sort-icon">↕</span></th>
+              <th id="th-col4">Status</th>
+              <th id="th-col5"></th>
+              <th id="th-col6"></th>
+            </tr>
+          </thead>
+          <tbody id="projects-body" class="projects-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-title"><span class="dot"></span> Recent recalls</div>
+          <div class="filter-bar" id="filter-bar"></div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th><th>Agent</th><th>Project</th><th>Query</th>
+              <th>Hits</th><th>Score</th><th>Tokens</th><th>Latency</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="recalls-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <!-- ═══════════════ MEASUREMENT PANE ═══════════════
+       The overview answers "is it working"; this answers "how do we know".
+       Split because 13 sections and 6 tables on one scroll meant the four
+       numbers a user checks daily were buried under the evidence for them. -->
+  <div class="pane" id="pane-measure" data-pane="measure">
     <section id="savings-periods-section" style="display:none;">
       <div class="section-label"><span class="dot"></span> Token savings over time</div>
       <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">
@@ -539,7 +598,6 @@
       <div class="metric-sub" id="savings-periods-note"
            style="margin-top:8px;color:var(--text-muted);font-size:11px;"></div>
     </section>
-
 
     <section>
       <div class="chart-panel" id="recall-worth-panel">
@@ -592,11 +650,6 @@
           <div class="rw-note" id="cx-note"></div>
         </div>
       </div>
-    </section>
-
-    <section id="agent-compare-section" style="display:none;">
-      <div class="section-label"><span class="dot"></span> Desks</div>
-      <div class="agent-compare" id="agent-compare"></div>
     </section>
 
     <section>
@@ -654,28 +707,6 @@
     </section>
 
     <section>
-      <div class="table-card">
-        <div class="table-header">
-          <div class="table-title"><span class="dot"></span> Projects</div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th class="sortable" data-col="project" data-type="str">Project <span class="sort-icon">↕</span></th>
-              <th class="sortable" data-col="artifacts" data-type="num"><span id="th-col1">Chunks</span> <span class="sort-icon">↕</span></th>
-              <th class="sortable" data-col="memories" data-type="num"><span id="th-col2">Memories</span> <span class="sort-icon">↕</span></th>
-              <th class="sortable" data-col="total_tokens" data-type="num"><span id="th-col3">Tokens</span> <span class="sort-icon">↕</span></th>
-              <th id="th-col4">Status</th>
-              <th id="th-col5"></th>
-              <th id="th-col6"></th>
-            </tr>
-          </thead>
-          <tbody id="projects-body" class="projects-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section>
       <div class="table-card" id="quality-section" style="display:none;">
         <div class="table-header">
           <div class="table-title"><span class="dot"></span> Memory quality</div>
@@ -688,24 +719,6 @@
             </tr>
           </thead>
           <tbody id="quality-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section>
-      <div class="table-card">
-        <div class="table-header">
-          <div class="table-title"><span class="dot"></span> Recent recalls</div>
-          <div class="filter-bar" id="filter-bar"></div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th><th>Agent</th><th>Project</th><th>Query</th>
-              <th>Hits</th><th>Score</th><th>Tokens</th><th>Latency</th><th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="recalls-body"></tbody>
         </table>
       </div>
     </section>
@@ -743,6 +756,33 @@
           <div class="kpi-value pnl" id="ap-saved-pct">–</div>
           <div class="kpi-sub" id="ap-saved-sub">no proxy data</div>
         </div>
+      </div>
+    </section>
+
+    <!-- Reads vs writes. Every KPI above measures what this agent took out of
+         the shared layer; none measured what it put in. Codex served 38 recalls
+         while contributing nothing for months and no panel could have said so. -->
+    <section>
+      <div class="section-label"><span class="dot"></span> Contributed to the shared layer</div>
+      <div class="kpi-grid">
+        <div class="kpi" style="--kpi-accent:var(--ok)">
+          <div class="kpi-label">Chunks written</div>
+          <div class="kpi-value" id="ap-contrib-chunks">–</div>
+          <div class="kpi-sub" id="ap-contrib-tokens">– tokens</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Projects covered</div>
+          <div class="kpi-value" id="ap-contrib-projects">–</div>
+          <div class="kpi-sub" id="ap-contrib-last">–</div>
+        </div>
+      </div>
+      <div class="table-card" id="ap-contrib-card" style="margin-top:12px;">
+        <table>
+          <thead>
+            <tr><th>Project</th><th>Chunks</th><th>Tokens</th></tr>
+          </thead>
+          <tbody id="ap-contrib-body"></tbody>
+        </table>
       </div>
     </section>
 
@@ -807,8 +847,10 @@
   var activePane = 'overview';
   var knownAgents = CORE_AGENTS.slice();
 
+  var FIXED_PANES = ['overview', 'measure', 'provenance'];
+
   function isValidPane(id) {
-    return id === 'overview' || id === 'provenance' || CORE_AGENTS.indexOf(id) !== -1 || knownAgents.indexOf(id) !== -1;
+    return FIXED_PANES.indexOf(id) !== -1 || CORE_AGENTS.indexOf(id) !== -1 || knownAgents.indexOf(id) !== -1;
   }
 
   function readStoredPane() {
@@ -971,6 +1013,7 @@
         return { id: a, label: agentLabel(a), color: AGENT_COLORS[a] || 'var(--text-muted)' };
       })
     );
+    tabs.push({ id: 'measure', label: 'Measurement', color: 'var(--text-muted)' });
     tabs.push({ id: 'provenance', label: 'Provenance', color: 'var(--ok)' });
     tabs.forEach(function(t) {
       var btn = el('button', {
@@ -989,10 +1032,12 @@
     activePane = id;
     persistPane(id);
     document.getElementById('pane-overview').classList.toggle('active', id === 'overview');
+    document.getElementById('pane-measure').classList.toggle('active', id === 'measure');
     document.getElementById('pane-provenance').classList.toggle('active', id === 'provenance');
-    document.getElementById('pane-agent').classList.toggle('active', id !== 'overview' && id !== 'provenance');
+    document.getElementById('pane-agent').classList.toggle('active', FIXED_PANES.indexOf(id) === -1);
     renderTabs();
     if (id === 'overview') refreshOverview();
+    else if (id === 'measure') refreshMeasure();
     else if (id === 'provenance') loadProvenance();
     else loadAgentPane(id);
   }
@@ -1423,10 +1468,6 @@
       document.getElementById('m-recalls-sub').textContent =
         fmtPct(d.hit_rate * 100) + ' hit · ' + fmtMs(d.p50_latency_ms) + ' median';
     }
-    // Median, not mean: a single multi-second outlier moves the average by
-    // hundreds of milliseconds and describes nobody's actual wait.
-    document.getElementById('e-latency').textContent =
-      d.total_recalls > 0 ? fmtMs(d.p50_latency_ms) : '–';
   }
 
   function renderSavingsHero(data) {
@@ -1503,6 +1544,11 @@
 
   function renderEfficiency(data) {
     document.getElementById('e-coverage').textContent = fmtPct(data.coverage * 100);
+    // Read from this payload rather than the summary's: the panel moved to the
+    // measurement pane, which does not load /api/summary, and the figure went
+    // blank without anything failing loudly enough to notice.
+    document.getElementById('e-latency').textContent =
+      data.total_recalls > 0 ? fmtMs(data.p50_latency_ms) : '–';
   }
 
   function renderSessionEfficiency(data) {
@@ -1769,6 +1815,36 @@
     });
   }
 
+  //: Rows shown before a table collapses behind "show all". 44 projects and 50
+  //: recalls rendered in full turned the overview into a scroll where the four
+  //: KPIs at the top were the only things anyone read. The rows are not
+  //: discarded -- hiding data outright is how a dashboard starts lying -- they
+  //: are one click away and the count is always stated.
+  var TABLE_PREVIEW_ROWS = 8;
+  var expandedTables = {};
+
+  function appendShowAllRow(tbody, key, total, colspan, reRender) {
+    if (total <= TABLE_PREVIEW_ROWS) return;
+    var tr = el('tr', { class: 'show-all-row' });
+    var expanded = expandedTables[key];
+    var td = el('td', { colspan: String(colspan) });
+    var btn = el('button', { type: 'button', class: 'show-all-btn' });
+    btn.textContent = expanded
+      ? 'Show fewer'
+      : 'Show all ' + fmt(total) + ' rows';
+    btn.addEventListener('click', function() {
+      expandedTables[key] = !expanded;
+      reRender();
+    });
+    td.appendChild(btn);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+
+  function visibleRows(rows, key) {
+    return expandedTables[key] ? rows : rows.slice(0, TABLE_PREVIEW_ROWS);
+  }
+
   function renderQuality(data) {
     var section = document.getElementById('quality-section');
     var tbody = document.getElementById('quality-body');
@@ -1791,7 +1867,8 @@
     if (!judged.length) { section.style.display = 'none'; return; }
     data = judged;
     section.style.display = '';
-    data.forEach(function(row) {
+    var qualityRows = data;
+    visibleRows(qualityRows, 'quality').forEach(function(row) {
       var neg = row.negative_count || 0;
       var score = row.quality_score || 0;
       var barClass = score >= 0.5 ? 'quality-fill-ok' : (score >= 0.25 ? 'quality-fill-warn' : 'quality-fill-error');
@@ -1814,6 +1891,8 @@
         '<td><div class="quality-bar"><div class="quality-fill ' + barClass + '" style="width:' + barWidth + '%;"></div></div></td>';
       tbody.appendChild(tr);
     });
+    appendShowAllRow(tbody, 'quality', qualityRows.length, 8,
+                     function() { renderQuality(qualityRows); });
   }
 
   function renderProjects(data) {
@@ -1847,7 +1926,7 @@
       document.getElementById('th-col5').textContent = 'No Hits';
       document.getElementById('th-col6').textContent = 'No Distill';
     }
-    sorted.forEach(function(row) {
+    visibleRows(sorted, 'projects').forEach(function(row) {
       var tr = el('tr', {});
       if (projectFilter === row.project) tr.classList.add('selected');
       var isGlobal = row.project === '_global';
@@ -1876,6 +1955,8 @@
       });
       tbody.appendChild(tr);
     });
+    appendShowAllRow(tbody, 'projects', sorted.length, 7,
+                     function() { renderProjects(projectsData); });
   }
 
   // "_global" is an internal scope name, not something to show a person. The
@@ -1905,7 +1986,8 @@
       tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No recall events yet.</td></tr>';
       return;
     }
-    data.forEach(function(row) {
+    var recallRows = data;
+    visibleRows(recallRows, 'recalls').forEach(function(row) {
       var tr = el('tr', {});
       tr.innerHTML =
         '<td class="mono" style="color:var(--text-muted);white-space:nowrap">' + relativeTime(row.timestamp) + '</td>' +
@@ -1919,6 +2001,8 @@
         '<td>' + badge(row.status) + '</td>';
       tbody.appendChild(tr);
     });
+    appendShowAllRow(tbody, 'recalls', recallRows.length, 9,
+                     function() { renderRecalls(recallRows); });
   }
 
   function renderHealth(h) {
@@ -1985,6 +2069,38 @@
     }
   }
 
+  // A desk that only shows recalls cannot tell a contributor from a freeloader.
+  function renderAgentContribution(c, agent) {
+    c = c || {};
+    var chunks = c.chunks || 0;
+    document.getElementById('ap-contrib-chunks').textContent = chunks ? fmt(chunks) : '0';
+    document.getElementById('ap-contrib-tokens').textContent =
+      chunks ? fmt(c.tokens || 0) + ' tokens' : 'nothing ingested from this agent yet';
+    document.getElementById('ap-contrib-projects').textContent = fmt(c.projects || 0);
+    document.getElementById('ap-contrib-last').textContent =
+      c.last_seen ? 'last written ' + new Date(c.last_seen * 1000).toLocaleDateString() : '–';
+
+    var tbody = document.getElementById('ap-contrib-body');
+    tbody.innerHTML = '';
+    var rows = c.by_project || [];
+    if (!rows.length) {
+      // Named rather than blank: an agent memor cannot read from is a wiring
+      // gap the user can act on, not an absence of activity.
+      tbody.innerHTML = '<tr><td colspan="3" class="empty-state">' +
+        esc(agentLabel(agent)) + ' has written nothing to the shared store. ' +
+        'Either it has not been used, or memor has no ingest source for it.' +
+        '</td></tr>';
+      return;
+    }
+    rows.forEach(function(r) {
+      var tr = el('tr');
+      tr.innerHTML = '<td>' + esc(r.project || 'unknown') + '</td>' +
+        '<td class="num">' + fmt(r.chunks || 0) + '</td>' +
+        '<td class="num">' + fmt(r.tokens || 0) + '</td>';
+      tbody.appendChild(tr);
+    });
+  }
+
   async function loadAgentPane(agent) {
     document.getElementById('agent-pane-title').textContent = agentLabel(agent) + ' desk';
     var deskHealth = document.getElementById('ap-desk-health');
@@ -2016,6 +2132,8 @@
         document.getElementById('ap-saved-sub').textContent =
           'no proxy data';
       }
+
+      renderAgentContribution(data.contribution, agent);
 
       var trend = (data.recall_trend || []).map(function(d) {
         return { day: d.day, cumulative_saved: d.recalls };
@@ -2325,19 +2443,30 @@
     }
   }
 
+  // Overview loads only what it renders. It previously fired all 19 endpoints
+  // regardless of which pane was showing, so moving sections out would have cut
+  // the clutter while leaving the request cost exactly where it was.
   async function refreshOverview() {
     await Promise.allSettled([
-      loadSummary(), loadProjects(), loadEfficiency(), loadSessionEfficiency(),
-      loadHealth(), loadTrend(), loadRecalls(), loadROI(), loadROITrend(),
-      loadQuality(), loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(),
-      loadProxySavingsByAgent(), loadRecallWorth(), loadRecallBaseline(), loadCompression(),
-      loadSavingsPeriods(), loadCrossTool(),
+      loadSummary(), loadProjects(), loadHealth(), loadRecalls(),
+      loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(), loadCrossTool(),
+    ]);
+    document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+  }
+
+  async function refreshMeasure() {
+    await Promise.allSettled([
+      loadEfficiency(), loadSessionEfficiency(), loadTrend(), loadROI(), loadROITrend(),
+      loadQuality(), loadProxySavingsByAgent(), loadRecallWorth(), loadRecallBaseline(),
+      loadCompression(), loadSavingsPeriods(),
     ]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
   }
 
   async function refresh() {
     if (activePane === 'overview') await refreshOverview();
+    else if (activePane === 'measure') await refreshMeasure();
+    else if (activePane === 'provenance') await loadProvenance();
     else {
       await loadAgentPane(activePane);
       document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
