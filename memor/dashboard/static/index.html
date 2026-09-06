@@ -2013,11 +2013,43 @@
                      function() { renderRecalls(recallRows); });
   }
 
+  //: A compression path that has recorded nothing for this long is treated as
+  //: stopped rather than quiet. Two days is past a weekend of light use but
+  //: well inside the fortnight this machine spent with its services down and
+  //: nothing on the dashboard saying so.
+  var PATH_IDLE_WARN_DAYS = 2;
+
+  function idlePathWarning(h) {
+    var paths = (h && h.compression_paths) || {};
+    var stale = [];
+    ['hook', 'proxy'].forEach(function(name) {
+      var p = paths[name];
+      // null means the path has never recorded anything, which is a setup
+      // state the onboarding banner already covers -- not a regression.
+      if (p && p.idle_days != null && p.idle_days >= PATH_IDLE_WARN_DAYS) {
+        stale.push(name + ' (' + p.idle_days + 'd)');
+      }
+    });
+    return stale;
+  }
+
   function renderHealth(h) {
     var banner = document.getElementById('banner');
     var msg = document.getElementById('banner-msg');
     var status = h.onboarding_status;
-    if (status === 'full') { banner.style.display = 'none'; return; }
+    if (status === 'full') {
+      // Onboarding being complete is not the same as the thing still working.
+      var stale = idlePathWarning(h);
+      if (stale.length) {
+        banner.style.display = 'flex';
+        msg.innerHTML = 'No compression recorded on ' + esc(stale.join(' and ')) +
+          '. A stopped service looks the same as a quiet week here — check ' +
+          '<code>memor service status</code>.';
+        return;
+      }
+      banner.style.display = 'none';
+      return;
+    }
     banner.style.display = 'flex';
     if (status === 'no_artifacts')
       msg.innerHTML = 'No artifacts ingested yet. Run <code>memor service install</code> to start the daemon.';

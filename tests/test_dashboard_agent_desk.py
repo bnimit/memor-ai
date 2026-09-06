@@ -361,3 +361,47 @@ def test_hero_heading_and_value_do_not_disagree(tmp_path):
     assert "cum" not in live, live
     # And the value must not restate the qualifier the heading already carries.
     assert "saved all time" not in html
+
+
+def test_health_reports_how_long_each_compression_path_has_been_silent(tmp_path):
+    """A stopped service and a quiet week render identically without this.
+
+    On the development machine the launchd services were not running between
+    22 Aug and 6 Sep. Claude ran daily throughout. The only symptom anywhere in
+    the product was a savings curve that stopped moving -- which is exactly what
+    a genuinely quiet fortnight looks like. The dashboard could not tell the
+    user which of the two had happened, so it said nothing at all.
+    """
+    db_path = str(tmp_path / "idle.db")
+    s = SqliteStore(db_path, dim=16)
+    now = time.time()
+    s.record_proxy_savings({
+        "timestamp": now - 20 * 86400, "agent": "claude", "provider": "anthropic",
+        "session_id": "old", "tokens_before": 1000, "tokens_after": 100,
+        "content_types": {"log": 1}, "passthrough": 0,
+    })
+    s.record_proxy_savings({
+        "timestamp": now, "agent": "claude", "provider": "hook",
+        "session_id": "new", "tokens_before": 500, "tokens_after": 50,
+        "content_types": {"log": 1}, "passthrough": 0,
+    })
+    from memor.dashboard.server import create_app
+
+    paths = TestClient(create_app(db_path)).get("/api/health").json()["compression_paths"]
+    assert paths["proxy"]["idle_days"] >= 19
+    assert paths["hook"]["idle_days"] < 1
+
+
+def test_a_path_that_never_ran_is_not_reported_as_stale(tmp_path):
+    """Never-configured and stopped are different problems.
+
+    Reporting an absent path as a regression would fire the warning on every
+    fresh install, which is the fastest way to teach someone to ignore it.
+    """
+    db_path = str(tmp_path / "fresh.db")
+    SqliteStore(db_path, dim=16)
+    from memor.dashboard.server import create_app
+
+    paths = TestClient(create_app(db_path)).get("/api/health").json()["compression_paths"]
+    assert paths["proxy"]["idle_days"] is None
+    assert paths["hook"]["idle_days"] is None

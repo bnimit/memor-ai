@@ -490,12 +490,39 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "SELECT MAX(created_at) as t FROM artifacts"
         ).fetchone()["t"]
         dim_row = store.db.execute("SELECT value FROM meta WHERE key='dim'").fetchone()
+
+        # A compression path that stopped recording looks exactly like a quiet
+        # week: the curve flattens and nothing complains. That is not
+        # hypothetical -- the launchd services on this machine were not running
+        # between 22 Aug and 6 Sep, Claude ran daily throughout, and the only
+        # symptom was a savings figure that stopped moving. Silence and zero
+        # must not render identically, so the age of the newest row on each
+        # path is published and the UI can say which one went quiet.
+        import time as _time
+
+        def _last(where: str) -> float | None:
+            row = store.db.execute(
+                f"SELECT MAX(timestamp) AS t FROM proxy_savings WHERE {where}"
+            ).fetchone()
+            return row["t"] if row and row["t"] else None
+
+        now = _time.time()
+        paths = {}
+        for name, where in (("hook", "provider='hook'"),
+                            ("proxy", "provider<>'hook'")):
+            last = _last(where)
+            paths[name] = {
+                "last_timestamp": last,
+                "idle_days": round((now - last) / 86400, 1) if last else None,
+            }
+
         return {
             "onboarding_status": store.get_onboarding_status(),
             "db_size_bytes": db_size,
             "artifact_counts": counts,
             "last_ingest_timestamp": last_ingest,
             "embedder_dim": int(dim_row["value"]) if dim_row else None,
+            "compression_paths": paths,
         }
 
     @app.get("/api/provenance")
