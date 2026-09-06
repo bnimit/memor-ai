@@ -458,3 +458,61 @@ def test_a_path_that_never_ran_is_still_not_reported_as_stale(tmp_path):
         "/api/health").json()["compression_paths"]
     assert paths["proxy"]["idle_days"] is None
     assert paths["hook"]["idle_days"] is None
+
+
+def test_a_long_running_path_that_records_nothing_still_warns(tmp_path):
+    """Measuring from restart must not create a blind spot.
+
+    Taking max(last_row, restart) fixes the false alarm after a reinstall, but
+    it would be worse than useless if a restart silenced the warning forever: a
+    proxy that has been up for weeks recording nothing is exactly the failure
+    this banner exists to surface. The restart resets the clock; it does not
+    stop it.
+    """
+    db_path = str(tmp_path / "long.db")
+    s = SqliteStore(db_path, dim=16)
+    now = time.time()
+    s.record_proxy_savings({
+        "timestamp": now - 40 * 86400, "agent": "claude", "provider": "anthropic",
+        "session_id": "old", "tokens_before": 1000, "tokens_after": 100,
+        "content_types": {"log": 1}, "passthrough": 0,
+    })
+    from memor.dashboard.server import create_app
+
+    app = _isolated(create_app(db_path))
+
+    # Up for ten days, still no rows: that is a real fault and must be said.
+    app.state.proxy_started_at = lambda: now - 10 * 86400
+    assert TestClient(app).get("/api/health").json()[
+        "compression_paths"]["proxy"]["idle_days"] == 10.0
+
+    # Not answering at all: fall back to the ledger, which is older still.
+    app.state.proxy_started_at = lambda: None
+    assert TestClient(app).get("/api/health").json()[
+        "compression_paths"]["proxy"]["idle_days"] >= 39
+
+
+def test_a_long_uptime_does_not_outrank_recent_activity(tmp_path):
+    """A proxy running since before its newest row is healthy, not idle.
+
+    This is the case that separates max(last, restart) from a naive
+    "restart wins": a proxy up for 30 days that recorded a row an hour ago is
+    working perfectly. Preferring the restart time would report it as 30 days
+    idle and fire the warning on a completely healthy path.
+    """
+    db_path = str(tmp_path / "uptime.db")
+    s = SqliteStore(db_path, dim=16)
+    now = time.time()
+    s.record_proxy_savings({
+        "timestamp": now - 3600, "agent": "claude", "provider": "anthropic",
+        "session_id": "recent", "tokens_before": 1000, "tokens_after": 100,
+        "content_types": {"log": 1}, "passthrough": 0,
+    })
+    from memor.dashboard.server import create_app
+
+    app = _isolated(create_app(db_path))
+    app.state.proxy_started_at = lambda: now - 30 * 86400
+
+    idle = TestClient(app).get("/api/health").json()[
+        "compression_paths"]["proxy"]["idle_days"]
+    assert idle == 0.0, "recent activity must win over a long uptime"
