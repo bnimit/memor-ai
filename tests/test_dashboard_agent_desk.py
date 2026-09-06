@@ -231,3 +231,71 @@ def test_efficiency_carries_its_own_latency(tmp_path):
     d = TestClient(app).get("/api/efficiency").json()
     assert d["total_recalls"] > 0
     assert d["p50_latency_ms"] > 0
+
+
+def _pane_of(html: str) -> dict:
+    """Map every element id to the pane that actually contains it.
+
+    Substring checks on the raw HTML cannot tell a moved section from a
+    duplicated one, and the sections were relocated by a script. This parses
+    the real nesting instead.
+    """
+    from html.parser import HTMLParser
+
+    class _P(HTMLParser):
+        VOID = {"br", "img", "input", "meta", "link", "hr"}
+
+        def __init__(self):
+            super().__init__()
+            self.stack: list = []
+            self.owner: dict = {}
+
+        def handle_starttag(self, tag, attrs):
+            el_id = dict(attrs).get("id")
+            pane = next(
+                (x for x in reversed(self.stack) if x and x.startswith("pane-")), None
+            )
+            if el_id:
+                self.owner[el_id] = pane
+            if tag not in self.VOID:
+                self.stack.append(el_id)
+
+        def handle_endtag(self, tag):
+            if self.stack:
+                self.stack.pop()
+
+    p = _P()
+    p.feed(html)
+    return p.owner
+
+
+def test_moved_sections_are_nested_in_the_pane_that_loads_them(tmp_path):
+    """A section rendered under a pane whose loader never runs stays blank.
+
+    That is not hypothetical: the efficiency card kept its markup and lost its
+    number this way, and nothing failed loudly. Parentage is asserted in the
+    parsed DOM rather than by substring, which would pass just as happily on a
+    section accidentally left behind in the overview.
+    """
+    app, _ = _seed(tmp_path)
+    owner = _pane_of(TestClient(app).get("/").text)
+    for el_id in ("savings-periods-section", "recall-baseline-section",
+                  "quality-section", "proxy-savings-section", "trend-chart",
+                  "e-latency"):
+        assert owner.get(el_id) == "pane-measure", el_id
+    for el_id in ("projects-body", "recalls-body", "savings-equity",
+                  "cum-saved-lifetime", "agent-compare-section"):
+        assert owner.get(el_id) == "pane-overview", el_id
+    assert owner.get("ap-contrib-body") == "pane-agent"
+
+
+def test_the_split_did_not_duplicate_or_drop_any_element(tmp_path):
+    """Sections were relocated by a text splice, which can do both silently."""
+    import collections
+    import re
+
+    app, _ = _seed(tmp_path)
+    html = TestClient(app).get("/").text
+    ids = re.findall(r'\bid="([^"]+)"', html)
+    assert [i for i, n in collections.Counter(ids).items() if n > 1] == []
+    assert html.count("<section") == html.count("</section>")
