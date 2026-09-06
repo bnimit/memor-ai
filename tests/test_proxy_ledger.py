@@ -75,3 +75,23 @@ def test_lifetime_total_does_not_shrink_as_traffic_ages_out(tmp_path):
 
     assert s.get_proxy_savings_summary(days=30)["tokens_saved"] == 9_000
     assert s.get_proxy_savings_summary(days=None)["tokens_saved"] == 909_000
+
+
+def test_hook_and_proxy_savings_are_split(tmp_path):
+    """The two paths do not carry the same caveat, so the hero must not blend.
+
+    A hook rewrite lands before the payload enters the transcript, so there is
+    no cached prefix to invalidate. A proxy rewrite may hit one. format_report
+    has always kept them apart; the dashboard ledger endpoint did not, and on
+    the real store every recent row is provider='hook'.
+    """
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    hook = _row(1000, 100)
+    hook["provider"] = "hook"
+    s.record_proxy_savings(hook)
+    s.record_proxy_savings(_row(500, 300))
+
+    summary = s.get_proxy_savings_summary(days=None)
+    assert summary["hook_saved"] == 900
+    assert summary["proxy_saved"] == 200
+    assert summary["hook_saved"] + summary["proxy_saved"] == summary["tokens_saved"]

@@ -1547,6 +1547,12 @@ class SqliteStore:
         Coverage is reported alongside rather than folded in, so a low
         compressible share stays visible instead of being disguised as a weak
         compressor. ``days=None`` reports lifetime.
+
+        The two write paths are also split out. A hook rewrite happens before
+        the payload enters the transcript, so it carries no cache-invalidation
+        risk; a proxy rewrite may hit an already-cached prefix. ``format_report``
+        has always kept them apart for that reason, and this endpoint fed a
+        blended figure to the dashboard hero.
         """
         import time as _time
         clauses: list[str] = []
@@ -1565,6 +1571,10 @@ class SqliteStore:
                    SUM(CASE WHEN passthrough=0 THEN tokens_after ELSE 0 END)
                        AS tokens_after,
                    SUM(CASE WHEN passthrough=0 THEN 1 ELSE 0 END) AS compressed,
+                   SUM(CASE WHEN passthrough=0 AND provider='hook'
+                            THEN tokens_before - tokens_after ELSE 0 END) AS hook_saved,
+                   SUM(CASE WHEN passthrough=0 AND provider<>'hook'
+                            THEN tokens_before - tokens_after ELSE 0 END) AS proxy_saved,
                    COUNT(*) AS requests
             FROM proxy_savings{where}
             """,
@@ -1584,6 +1594,8 @@ class SqliteStore:
             "requests": requests,
             "compressed_requests": compressed,
             "coverage_pct": round(coverage, 1),
+            "hook_saved": max(0, row["hook_saved"] or 0),
+            "proxy_saved": max(0, row["proxy_saved"] or 0),
         }
 
     def get_proxy_savings_series(self, days: int = 30, agent: str | None = None) -> list[dict]:

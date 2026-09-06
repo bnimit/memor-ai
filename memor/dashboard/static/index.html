@@ -1463,8 +1463,9 @@
     if (lifeEl) {
       var life = data.lifetime;
       lifeEl.textContent = life && life.tokens_saved
-        ? fmt(life.tokens_saved) + ' saved all time · ' + life.pct_saved + '% on '
-          + fmt(life.compressed_requests) + ' compressible requests'
+        ? fmt(life.tokens_saved) + ' saved all time · ' + fmt(life.hook_saved)
+          + ' hook + ' + fmt(life.proxy_saved) + ' proxy · '
+          + life.coverage_pct + '% of requests had anything compressible'
         : '';
     }
 
