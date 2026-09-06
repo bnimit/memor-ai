@@ -273,3 +273,38 @@ def test_the_distiller_does_not_treat_notes_as_sessions(tmp_path):
     memories = store.db.execute(
         "SELECT COUNT(*) FROM artifacts WHERE kind='memory'").fetchone()[0]
     assert memories == 0, "notes must not be distilled as if they were transcripts"
+
+
+def test_a_credentials_file_is_never_ingested(tmp_path):
+    """Redaction cannot save this one, so the file must not be read at all.
+
+    Every pattern in redact.py matches a *structured* secret: an sk- key, a
+    JWT, a PEM block. A page of 2FA recovery codes is bare digits. Run against
+    a real backup-codes file found on this machine, redact_text applied zero
+    redactions -- it would have gone into the store verbatim, and no regex can
+    fix that without destroying every note that contains numbers.
+
+    Watching a folder is what makes this urgent: ingest-doc was aimed at one
+    file by a human who could see what it was.
+    """
+    root = tmp_path / "notes"
+    _write(root, "Backup-codes-acct.txt",
+           "SAVE YOUR BACKUP CODES\n\n1. 6480 4732\t\t6. 3960 6307\n2. 2412 6763\n")
+    _write(root, "architecture-review.md", _NOTE)
+
+    found = {d.path.name for d in scan_document_files(root)}
+    assert found == {"architecture-review.md"}
+
+
+def test_secret_filename_matching_is_broad_but_not_greedy(tmp_path):
+    """Refusing by name only works if the list covers how people name things."""
+    from memor.ingest.document_watch import looks_like_secret_file
+
+    for name in ("backup-codes.txt", "recovery_codes.md", "2fa-setup.md",
+                 "my-passwords.txt", ".env", "totp-seeds.txt",
+                 "prod-credentials.md", "id_rsa"):
+        assert looks_like_secret_file(Path(name)), name
+
+    for name in ("architecture-review.md", "incident-2026-08.md",
+                 "onboarding.md", "runbook.md", "decisions.md"):
+        assert not looks_like_secret_file(Path(name)), name

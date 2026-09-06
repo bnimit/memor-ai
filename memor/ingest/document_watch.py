@@ -46,6 +46,22 @@ SKIP_DIRS = frozenset({
     ".next", "target", "vendor", ".tox", "site-packages", ".obsidian",
 })
 
+#: Filenames that announce they hold credentials. Redaction is pattern-based
+#: and every pattern it knows is a *structured* secret -- an sk- key, a JWT, a
+#: PEM block. A page of 2FA recovery codes is bare digits and sails straight
+#: through: `redact_text` applied 0 redactions to a real backup-codes file on
+#: this machine. No regex can fix that without shredding every note containing
+#: numbers, so these are refused at the door instead.
+#:
+#: Matched against the lowercased filename, because the risk is the file's
+#: purpose rather than any line inside it.
+SECRET_NAME_HINTS = (
+    "backup-code", "backup_code", "backupcode", "recovery-code",
+    "recovery_code", "recoverycode", "2fa", "mfa", "totp",
+    "password", "passwd", "credential", "secret", ".env",
+    "private-key", "private_key", "id_rsa", "keystore",
+)
+
 #: Above this a file is not a note. The largest legitimate note on this machine
 #: is a few tens of KB; past a megabyte it is a log, a dump, or generated.
 MAX_BYTES = 1_000_000
@@ -91,6 +107,8 @@ def scan_document_files(root: Path) -> list[DocumentFile]:
             continue
         if any(part in SKIP_DIRS for part in path.parts):
             continue
+        if looks_like_secret_file(path):
+            continue
         try:
             stat = path.stat()
         except OSError:
@@ -100,6 +118,17 @@ def scan_document_files(root: Path) -> list[DocumentFile]:
         out.append(DocumentFile(path=path, project=_project_for(path, root),
                                 mtime=stat.st_mtime))
     return out
+
+
+def looks_like_secret_file(path: Path) -> bool:
+    """True when a filename says the contents are credentials.
+
+    Refusing by name is cruder than reading the file, and that is the point:
+    the failure being prevented is a secret that redaction cannot recognise, so
+    the decision has to be made before the bytes are parsed.
+    """
+    name = path.name.lower()
+    return any(hint in name for hint in SECRET_NAME_HINTS)
 
 
 def document_state_key(path: Path) -> str:

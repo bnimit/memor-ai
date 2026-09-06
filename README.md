@@ -77,6 +77,12 @@ file is retired rather than left to answer from a deleted draft. Nothing is
 auto-discovered — `document_dirs` starts empty, because indexing a repo's own
 `docs/` duplicates files the agent can already open.
 
+Files whose names announce credentials — `backup-codes`, `recovery_codes`,
+`2fa`, `password`, `.env`, `id_rsa` — are skipped entirely rather than
+redacted. Redaction matches *structured* secrets (an `sk-` key, a JWT, a PEM
+block); a page of 2FA recovery codes is bare digits and passes straight
+through, so the decision is made before the file is read.
+
 `memor ingest-doc <file> --project <name>` still exists for a one-shot import,
 but it does not notice later edits. Secrets are redacted on the way in, the
 same as every other ingest path.
