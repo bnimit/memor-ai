@@ -343,3 +343,40 @@ def test_the_watched_root_may_itself_be_a_repo(tmp_path):
     _write(root, "notes.md", _NOTE)
     (root / ".git").mkdir(parents=True)
     assert [d.path.name for d in scan_document_files(root)] == ["notes.md"]
+
+
+def test_a_pruned_walk_does_not_descend_into_nested_repos(tmp_path):
+    """Scan cost must not scale with what is inside a skipped repo.
+
+    The filtering implementation returned the right 6 files from a real folder
+    and took 115 seconds to do it, because it walked all 614,130 paths beneath
+    46 nested repos before discarding them. The daemon polls every 30 seconds,
+    so it could never have kept up.
+
+    Asserting wall-clock is flaky; asserting the walk never reaches the file is
+    not. A file deep inside a nested repo is unreadable here, so any
+    implementation that touches it fails rather than merely being slow.
+    """
+    root = tmp_path / "notes"
+    _write(root, "decisions.md", _NOTE)
+
+    buried = root / "cloned-repo" / "deep"
+    (root / "cloned-repo" / ".git").mkdir(parents=True)
+    buried.mkdir(parents=True)
+    trap = buried / "trap.md"
+    trap.write_text("# should never be read\n")
+    trap.chmod(0o000)
+    try:
+        found = scan_document_files(root)
+        assert [d.path.name for d in found] == ["decisions.md"]
+    finally:
+        trap.chmod(0o644)
+
+
+def test_hidden_directories_are_never_walked(tmp_path):
+    """.git alone holds tens of thousands of objects and nothing anyone wrote."""
+    root = tmp_path / "notes"
+    _write(root, "keep.md", _NOTE)
+    _write(root, ".obsidian/cache.md", "# cache\n\nnot a note\n")
+    _write(root, ".hidden/notes.md", "# hidden\n\nalso not\n")
+    assert [d.path.name for d in scan_document_files(root)] == ["keep.md"]
