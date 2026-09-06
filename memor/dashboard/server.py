@@ -477,6 +477,50 @@ def create_app(db_path: str | None = None) -> FastAPI:
             pass
         return {"version": __version__, "asset": asset}
 
+    def _hook_installed_at() -> float | None:
+        """When the PostToolUse compression hook was last (re)installed.
+
+        The hook has no process of its own to ask -- it runs per tool call and
+        exits -- so its settings file is the only witness. Returns None when
+        the hook is absent, so a machine that never installed it is not
+        reported as one where it stopped working.
+        """
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+
+            path = _Path.home() / ".claude" / "settings.json"
+            if not path.exists():
+                return None
+            hooks = _json.loads(path.read_text() or "{}").get("hooks") or {}
+            entries = hooks.get("PostToolUse") or []
+            text = _json.dumps(entries)
+            if "memor" not in text:
+                return None
+            return path.stat().st_mtime
+        except Exception:
+            return None
+
+    def _proxy_started_at() -> float | None:
+        """When the running proxy came up, or None if it is not answering.
+
+        A freshly installed proxy has recorded nothing yet, and that is not the
+        same as a proxy that stopped recording. Asking it directly is the only
+        way to tell those apart.
+        """
+        try:
+            import urllib.request
+            from memor.config import proxy_port
+
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{proxy_port()}/health", timeout=1.0
+            ) as resp:
+                import json as _json
+
+                return float(_json.loads(resp.read()).get("started_at") or 0.0) or None
+        except Exception:
+            return None
+
     @app.get("/api/health")
     def health():
         store = _store()
@@ -506,14 +550,27 @@ def create_app(db_path: str | None = None) -> FastAPI:
             ).fetchone()
             return row["t"] if row and row["t"] else None
 
+        # Idle is measured from whichever is later: the last recorded row, or
+        # the moment the path was (re)started. Reinstalling a proxy writes no
+        # ledger row -- the next real request does -- so measuring from the row
+        # alone left the warning up after the user had already fixed it, which
+        # is how a banner teaches people to ignore banners. Restarting resets
+        # the clock and the warning returns only if the path stays silent.
+        # Overridable so a test never reads the developer's own running proxy
+        # or ~/.claude/settings.json -- four tests did exactly that and passed
+        # or failed depending on whether the machine had memor installed.
+        started = getattr(app.state, "proxy_started_at", _proxy_started_at)()
+        hook_installed = getattr(app.state, "hook_installed_at", _hook_installed_at)()
         now = _time.time()
         paths = {}
         for name, where in (("hook", "provider='hook'"),
                             ("proxy", "provider<>'hook'")):
             last = _last(where)
+            reference = started if name == "proxy" else hook_installed
+            since = max(last or 0.0, reference or 0.0)
             paths[name] = {
                 "last_timestamp": last,
-                "idle_days": round((now - last) / 86400, 1) if last else None,
+                "idle_days": round((now - since) / 86400, 1) if since else None,
             }
 
         return {

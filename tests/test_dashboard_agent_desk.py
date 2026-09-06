@@ -387,7 +387,8 @@ def test_health_reports_how_long_each_compression_path_has_been_silent(tmp_path)
     })
     from memor.dashboard.server import create_app
 
-    paths = TestClient(create_app(db_path)).get("/api/health").json()["compression_paths"]
+    paths = TestClient(_isolated(create_app(db_path))).get(
+        "/api/health").json()["compression_paths"]
     assert paths["proxy"]["idle_days"] >= 19
     assert paths["hook"]["idle_days"] < 1
 
@@ -402,6 +403,58 @@ def test_a_path_that_never_ran_is_not_reported_as_stale(tmp_path):
     SqliteStore(db_path, dim=16)
     from memor.dashboard.server import create_app
 
-    paths = TestClient(create_app(db_path)).get("/api/health").json()["compression_paths"]
+    paths = TestClient(_isolated(create_app(db_path))).get(
+        "/api/health").json()["compression_paths"]
+    assert paths["proxy"]["idle_days"] is None
+    assert paths["hook"]["idle_days"] is None
+
+
+def _isolated(app):
+    """Detach health from this machine's real proxy and Claude settings."""
+    app.state.proxy_started_at = lambda: None
+    app.state.hook_installed_at = lambda: None
+    return app
+
+
+def test_a_reinstalled_path_is_not_reported_as_idle(tmp_path, monkeypatch):
+    """Fixing the problem must clear the warning, or the warning is noise.
+
+    Reinstalling a proxy writes no ledger row -- the next real request does.
+    Measuring idleness from the last row alone left the banner up after the
+    user had already done what it asked, which is exactly how a banner teaches
+    people to ignore banners. It happened: the proxy was reinstalled, reported
+    healthy on :8421, and the dashboard still said 15.4 days.
+    """
+    db_path = str(tmp_path / "idle.db")
+    s = SqliteStore(db_path, dim=16)
+    now = time.time()
+    s.record_proxy_savings({
+        "timestamp": now - 20 * 86400, "agent": "claude", "provider": "anthropic",
+        "session_id": "old", "tokens_before": 1000, "tokens_after": 100,
+        "content_types": {"log": 1}, "passthrough": 0,
+    })
+
+    from memor.dashboard.server import create_app
+
+    app = _isolated(create_app(db_path))
+    # Nothing answering on the proxy port: the row is all we have, so 20 days.
+    stale = TestClient(app).get("/api/health").json()["compression_paths"]["proxy"]
+    assert stale["idle_days"] >= 19
+
+    # The same store, but a proxy that just came up: the clock resets even
+    # though no new row exists yet. This is the case the user hit.
+    app.state.proxy_started_at = lambda: now
+    fresh = TestClient(app).get("/api/health").json()["compression_paths"]["proxy"]
+    assert fresh["idle_days"] == 0.0, "reinstalling must clear the warning"
+
+
+def test_a_path_that_never_ran_is_still_not_reported_as_stale(tmp_path):
+    """Never-configured stays distinct from stopped, after the restart change."""
+    db_path = str(tmp_path / "fresh.db")
+    SqliteStore(db_path, dim=16)
+    from memor.dashboard.server import create_app
+
+    paths = TestClient(_isolated(create_app(db_path))).get(
+        "/api/health").json()["compression_paths"]
     assert paths["proxy"]["idle_days"] is None
     assert paths["hook"]["idle_days"] is None
