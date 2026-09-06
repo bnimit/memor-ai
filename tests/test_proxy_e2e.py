@@ -276,3 +276,82 @@ def test_sanitize_response_headers_keeps_content_type():
         "request-id": "abc",
     })
     assert cleaned == {"Content-Type": "application/json", "request-id": "abc"}
+
+
+def _ledger(db_path: str) -> list[dict]:
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM proxy_savings ORDER BY id")]
+    finally:
+        conn.close()
+
+
+def test_a_compressed_streamed_request_records_what_it_was_billed(proxy_client):
+    """The measurement chain, end to end, on the case that matters most.
+
+    Gross savings are computed by memor from its own compressor, so they cannot
+    say whether the bill moved. Only the provider's usage counters can, and on
+    a compressed request they are the difference between a saving and a
+    cache-busting loss.
+
+    Every unit in this path was already tested -- the sniffer, the ledger
+    update, the net-of-cache arithmetic -- and the whole still produced a
+    ledger where 0 of 671 compressed proxy rows carried usage. Unit tests
+    cannot see that; only driving the real endpoint can.
+    """
+    client, db_path = proxy_client
+    body = _compressible_body()
+    body["stream"] = True          # the branch agents actually take
+    r = client.post(
+        "/v1/messages",
+        json=body,
+        headers={"x-test-stream": "1", "x-agent": "claude",
+                 "x-session-id": "s-net"},
+    )
+    assert r.status_code == 200
+    assert b"message_start" in r.content
+
+    rows = [x for x in _ledger(db_path) if not x["passthrough"]]
+    assert rows, "compression happened but nothing reached the ledger"
+    row = rows[-1]
+
+    # Gross: memor's own view of what it removed.
+    assert row["tokens_before"] > row["tokens_after"]
+    # Net: the provider's view of what it charged for. Without these the
+    # dashboard can only ever report a number nobody can bill against.
+    assert row["upstream_input_tokens"] == 10
+    assert row["upstream_cache_read_tokens"] == 500
+    assert row["upstream_cache_creation_tokens"] == 40
+
+
+def test_usage_is_captured_on_compressed_and_passthrough_alike(proxy_client):
+    """Usage capture must not correlate with whether compression fired.
+
+    On the real ledger it did, and starkly: 30.7% of passthrough rows carried
+    usage against 0.1% of compressed ones. That asymmetry is what makes the
+    net-of-cache figure unavailable exactly where it is needed, so it is
+    asserted rather than assumed.
+    """
+    client, db_path = proxy_client
+    # Too small to compress: this is the passthrough arm.
+    tiny = {"model": "claude-sonnet-4-0", "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}]}
+    for body in (tiny, _compressible_body()):
+        body = dict(body, stream=True)
+        r = client.post(
+            "/v1/messages",
+            json=body,
+            headers={"x-test-stream": "1", "x-agent": "claude"},
+        )
+        assert r.status_code == 200
+        assert b"message_start" in r.content
+
+    rows = _ledger(db_path)
+    assert {r["passthrough"] for r in rows} == {0, 1}, "need both arms"
+    for r in rows:
+        assert r["upstream_input_tokens"] is not None, (
+            f"passthrough={r['passthrough']} row has no usage")
