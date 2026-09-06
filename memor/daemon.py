@@ -172,6 +172,21 @@ def ingest_file(path: Path, project: str, store: SqliteStore, embedder) -> int:
     return ingest_unit(unit, store, embedder)
 
 
+def _configured_document_dirs() -> list[Path]:
+    """Folders of notes the user asked the daemon to watch.
+
+    Empty by default: nothing is auto-discovered, because indexing a repo's
+    own docs duplicates a file the agent can already open. Set via
+    ``memor docs watch <dir>``.
+    """
+    try:
+        from memor.config import load_config
+
+        return [Path(p).expanduser() for p in (load_config().get("document_dirs") or [])]
+    except Exception:
+        return []
+
+
 def ingest_unit(unit: IngestUnit, store: SqliteStore, embedder) -> int:
     """Ingest one source unit. Returns number of chunks ingested."""
     arts = unit.parse()
@@ -179,6 +194,20 @@ def ingest_unit(unit: IngestUnit, store: SqliteStore, embedder) -> int:
         return 0
     vecs = embedder.embed([a.text for a in arts])
     store.add_artifacts(arts, vecs)
+
+    # A rewritten document must not leave its old paragraphs alive in recall.
+    # Chunk ids are content-hashed, so an edited section produces a new id and
+    # the old one simply stops appearing -- it has to be retired explicitly or
+    # the store accumulates every draft the file ever had. This is the check
+    # that makes watching a folder safe rather than a stale-duplicate factory.
+    if unit.agent == "document" and unit.path is not None:
+        from memor.ingest.document_watch import stale_chunk_ids
+
+        for dead in stale_chunk_ids(store, unit.path, {a.id for a in arts}):
+            try:
+                store.deactivate(dead, superseded_by=arts[0].id)
+            except Exception:
+                pass
 
     if unit.agent == "claude" and unit.path is not None:
         from memor.ingest.claude_code import parse_session_usage
@@ -324,6 +353,7 @@ def run_poll_cycle(
     goose_db_path: Path | None = None,
     jcode_sessions_dir: Path | None = None,
     codex_sessions_dir: Path | None = None,
+    document_dirs: list[Path] | None = None,
 ) -> tuple[dict[str, float], set[str], dict[str, int]]:
     """Run one poll cycle: ingest new units, then distill new sessions.
 
@@ -344,6 +374,7 @@ def run_poll_cycle(
         goose_db_path=goose_db_path,
         jcode_sessions_dir=jcode_sessions_dir,
         codex_sessions_dir=codex_sessions_dir,
+        document_dirs=document_dirs,
     )
 
     pending = [
@@ -503,6 +534,7 @@ def run_backfill(
     goose_db_path: Path | None = None,
     jcode_sessions_dir: Path | None = None,
     codex_sessions_dir: Path | None = None,
+    document_dirs: list[Path] | None = None,
     llm=None,
 ) -> dict[str, int]:
     """One-shot ingest across local agent sources. Returns chunk counts by agent."""
@@ -535,6 +567,10 @@ def run_backfill(
         codex_sessions_dir=(
             codex_sessions_dir if codex_sessions_dir is not None
             else paths["codex_sessions_dir"]
+        ),
+        document_dirs=(
+            document_dirs if document_dirs is not None
+            else _configured_document_dirs()
         ),
     )
     save_state(state)
@@ -599,6 +635,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     goose_db = paths["goose_db_path"]
     jcode_dir = paths["jcode_sessions_dir"]
     codex_dir = paths["codex_sessions_dir"]
+    doc_dirs = _configured_document_dirs()
 
     llm = _make_llm()
 
@@ -614,6 +651,8 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     print(f"                 {goose_db}")
     print(f"                 {jcode_dir}")
     print(f"                 {codex_dir}")
+    for _d in doc_dirs:
+        print(f"                 {_d} (documents)")
     print(f"  db:            {DEFAULT_DB}")
     print(f"  embeddings:    local model2vec (dim={embedder.dim})")
     print(f"  poll interval: {poll_interval}s")
@@ -631,6 +670,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
                 goose_db_path=goose_db,
                 jcode_sessions_dir=jcode_dir,
                 codex_sessions_dir=codex_dir,
+                document_dirs=doc_dirs,
             )
             save_state(state)
             save_distilled_state(distilled)

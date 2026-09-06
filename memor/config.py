@@ -15,6 +15,12 @@ _DEFAULTS = {
     # Compress tool payloads the agent has moved past, not just the newest one.
     # Off until measured on real traffic — it changes what the model sees.
     "compress_older_turns": False,
+    # Folders of notes the daemon ingests on every poll, like a session store.
+    # A memory layer that needs to be told about a file by hand is not a memory
+    # layer, so documents are watched rather than imported: point this at the
+    # directories where decisions live outside any repo (an obsidian vault, a
+    # docs/ tree, an incident log) and they stay in step with the files.
+    "document_dirs": [],
 }
 
 def load_config() -> dict:

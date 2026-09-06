@@ -63,13 +63,23 @@ authoritative source, and a stale memory is worse than none: it costs tokens
 *and* misleads.
 
 For notes that live outside the repo — an onboarding brief, an incident
-writeup, a decision record in a wiki — import them explicitly:
+writeup, a decision record in a wiki — point the daemon at the folder and it
+keeps them ingested the same way it keeps transcripts:
 
 ```bash
-memor ingest-doc notes/postmortem-2026-08.md --project plirin
+memor docs watch ~/notes        # ingested on every poll, like a session store
+memor docs list                 # what is watched, and what reached the store
 ```
 
-Secrets are redacted on the way in, the same as every other ingest path.
+Watching is safe because chunk ids are content-hashed: an unchanged file
+re-reads to the same rows for free, and a chunk that no longer appears in the
+file is retired rather than left to answer from a deleted draft. Nothing is
+auto-discovered — `document_dirs` starts empty, because indexing a repo's own
+`docs/` duplicates files the agent can already open.
+
+`memor ingest-doc <file> --project <name>` still exists for a one-shot import,
+but it does not notice later edits. Secrets are redacted on the way in, the
+same as every other ingest path.
 
 ### Is the memory half working? Partly, and it now says so
 
@@ -600,7 +610,9 @@ memor scan --purge                   Redact secrets in place
 memor setup-model                    Download/retry the embedding model
 memor ingest-cc <file>               Ingest a single transcript
 memor ingest-project <dir>           Bulk ingest a project directory
-memor ingest-doc <file>              Ingest a markdown document
+memor docs watch <dir>               Keep a folder of notes ingested
+memor docs list                      Watched folders + notes in the store
+memor ingest-doc <file>              One-shot import of a single document
 memor distill --project <name>       Run distillation manually
 memor eval <cases.json>              Run eval suite
 memor eval-counterfactual --project  Win/tie/loss vs no-memory baseline
@@ -633,7 +645,8 @@ memor/
 │   ├── jcode.py                  ~/.jcode/sessions/ + journal appends
 │   ├── goose.py                  Goose sessions.db (SQLite)
 │   ├── kimi.py                   ~/.kimi/sessions/ wire.jsonl
-│   ├── documents.py              Markdown / text files
+│   ├── documents.py              Markdown / text parsing
+│   ├── document_watch.py         Watched note folders (auto-ingested)
 │   └── sources.py                Registry used by daemon + backfill
 │
 ├── hook_cli.py                 Hook entry point

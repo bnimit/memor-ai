@@ -1,4 +1,4 @@
-"""Multi-agent ingest source registry — Claude, Codex, Kimi, Goose, jcode."""
+"""Multi-agent ingest source registry — Claude, Codex, Kimi, Goose, jcode, docs."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Callable
 
 from memor.ingest.claude_code import parse_transcript
+from memor.ingest.document_watch import (
+    document_state_key,
+    parse_document_file,
+    scan_document_files,
+)
 from memor.ingest.codex import (
     CODEX_SESSIONS_DIR,
     parse_session as parse_codex_session,
@@ -182,6 +187,31 @@ def scan_codex_units(sessions_dir: Path) -> list[IngestUnit]:
     return units
 
 
+def scan_document_units(dirs: list[Path]) -> list[IngestUnit]:
+    """One unit per watched document.
+
+    Documents are the only source whose unit is a single file rather than a
+    session, so a vault of 200 notes is 200 units. That is deliberate: a note
+    edited alone should re-ingest alone, and mtime per file is what makes the
+    daemon's pending check skip the other 199.
+    """
+    units: list[IngestUnit] = []
+    for root in dirs:
+        for doc in scan_document_files(Path(root)):
+            def _parse(d=doc) -> list[Artifact]:
+                return parse_document_file(d)
+
+            units.append(IngestUnit(
+                state_key=document_state_key(doc.path),
+                mtime=doc.mtime,
+                project=doc.project,
+                agent="document",
+                parse=_parse,
+                path=doc.path,
+            ))
+    return units
+
+
 def scan_all_sources(
     *,
     claude_projects_dir: Path | None = None,
@@ -190,6 +220,7 @@ def scan_all_sources(
     goose_db_path: Path | None = None,
     jcode_sessions_dir: Path | None = None,
     codex_sessions_dir: Path | None = None,
+    document_dirs: list[Path] | None = None,
 ) -> list[IngestUnit]:
     """Scan enabled sources. Pass None to skip a source (except Claude when dir given).
 
@@ -210,6 +241,8 @@ def scan_all_sources(
         units.extend(scan_jcode_units(jcode_sessions_dir))
     if codex_sessions_dir is not None:
         units.extend(scan_codex_units(codex_sessions_dir))
+    if document_dirs:
+        units.extend(scan_document_units(document_dirs))
     return units
 
 

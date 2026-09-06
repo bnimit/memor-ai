@@ -501,16 +501,11 @@ def ingest_project(project_dir: str, project: str = typer.Option(...),
 def ingest_doc(path: str, project: str = typer.Option(...), kind: str = "note",
                db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
                fake: bool = False):
-    """Import a markdown or text file as memories for a project.
+    """Import one markdown or text file, once.
 
-    Explicit rather than automatic, and deliberately so. The daemon ingests
-    session transcripts because they are a byproduct nobody else keeps: once a
-    session scrolls away, the reasoning in it is gone. A design doc in the repo
-    is the opposite -- it is a live file the agent can read, and copying it into
-    memory creates a stale duplicate of an authoritative source.
-
-    Use this for notes that live *outside* the repo: an onboarding brief, an
-    incident writeup, a decision record kept in a wiki.
+    For a folder that should stay in step with its files, use
+    ``memor docs watch <dir>`` instead: this command is a one-shot import and
+    does not notice later edits.
 
     Secrets are redacted on the way in, the same as every other ingest path.
     """
@@ -519,6 +514,107 @@ def ingest_doc(path: str, project: str = typer.Option(...), kind: str = "note",
     arts = parse_document(Path(path), project=project, kind=kind)
     s.add_artifacts(arts, e.embed([a.text for a in arts]))
     typer.echo(f"ingested {len(arts)} chunks from {path}")
+
+
+docs_app = typer.Typer(no_args_is_help=True, help="Watch folders of notes as memory.")
+app.add_typer(docs_app, name="docs")
+
+
+def _doc_dirs() -> list[str]:
+    from memor.config import load_config
+    return list(load_config().get("document_dirs") or [])
+
+
+@docs_app.command("watch")
+def docs_watch(path: str):
+    """Watch a folder of notes, so the daemon keeps it ingested.
+
+    ``ingest-doc`` imported a file once and never looked again, which made
+    documents the only source a user had to remember to feed. A memory layer
+    with a manual step is one the user stops using, and on this machine the
+    result was zero documents against 33,367 session chunks.
+
+    Watching is safe because chunk ids are content-hashed: an unchanged file
+    costs nothing to re-read, and a chunk that no longer appears in the file is
+    retired rather than left to answer questions from a deleted draft.
+
+    Point this at notes that live outside a repo. Pointing it at a repo's own
+    docs/ is allowed but usually wrong -- the agent can already open those.
+    """
+    from memor.config import load_config, save_config
+
+    target = Path(path).expanduser().resolve()
+    if not target.is_dir():
+        typer.echo(f"not a directory: {target}", err=True)
+        raise typer.Exit(1)
+
+    cfg = load_config()
+    dirs = list(cfg.get("document_dirs") or [])
+    if str(target) in dirs:
+        typer.echo(f"already watching {target}")
+        return
+    dirs.append(str(target))
+    cfg["document_dirs"] = dirs
+    save_config(cfg)
+
+    from memor.ingest.document_watch import scan_document_files
+
+    found = scan_document_files(target)
+    typer.echo(f"watching {target}")
+    typer.echo(f"  {len(found)} documents found; the daemon ingests them on its next poll")
+    if not found:
+        typer.echo("  (nothing matched .md/.markdown/.txt/.rst)")
+
+
+@docs_app.command("unwatch")
+def docs_unwatch(path: str):
+    """Stop watching a folder. Already-ingested notes stay in the store."""
+    from memor.config import load_config, save_config
+
+    target = str(Path(path).expanduser().resolve())
+    cfg = load_config()
+    dirs = [d for d in (cfg.get("document_dirs") or []) if d != target]
+    if len(dirs) == len(cfg.get("document_dirs") or []):
+        typer.echo(f"not watching {target}")
+        return
+    cfg["document_dirs"] = dirs
+    save_config(cfg)
+    typer.echo(f"stopped watching {target}")
+
+
+@docs_app.command("list")
+def docs_list(db: str = typer.Option(str(Path.home() / ".memor" / "memor.db"))):
+    """Show watched folders and how many notes are actually in the store."""
+    dirs = _doc_dirs()
+    if not dirs:
+        typer.echo("No document folders watched.")
+        typer.echo("  memor docs watch ~/notes")
+        return
+
+    from memor.ingest.document_watch import scan_document_files
+
+    for d in dirs:
+        found = scan_document_files(Path(d))
+        typer.echo(f"{d}  ({len(found)} documents on disk)")
+
+    path = _db_path(db)
+    if Path(path).exists():
+        import sqlite3
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT project, COUNT(*) FROM artifacts "
+                "WHERE kind='note' AND active=1 GROUP BY project ORDER BY 2 DESC"
+            ).fetchall()
+        finally:
+            conn.close()
+        typer.echo("")
+        if rows:
+            typer.echo("In the store:")
+            for proj, n in rows:
+                typer.echo(f"  {proj}: {n} chunks")
+        else:
+            typer.echo("In the store: nothing yet — run `memor backfill` or wait for the daemon.")
 
 
 @app.command("reingest")
