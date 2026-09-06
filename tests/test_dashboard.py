@@ -136,3 +136,19 @@ def test_index_html_served(tmp_path):
     r = client.get("/")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
+
+
+def test_page_is_never_served_from_cache(tmp_path):
+    """A cached page renders old markup against a correctly-updated API.
+
+    That failure is indistinguishable from a backend bug: the fix ships, the
+    endpoint returns the new number, and the user still sees the old one. It
+    happened with the lifetime savings total, which was right on the wire and
+    stale on screen. The page's own /api/version poll cannot save it, because
+    that only runs once the new page has loaded at least once.
+    """
+    from fastapi.testclient import TestClient
+
+    app = _make_app(tmp_path)
+    r = TestClient(app).get("/")
+    assert "no-store" in r.headers.get("cache-control", "")

@@ -47,12 +47,32 @@ def create_app(db_path: str | None = None) -> FastAPI:
             _episodes_cache.append((_time.time(), episodes))
             return episodes
 
+    #: The page carries its own JS, so a cached copy keeps rendering old markup
+    #: against a correctly-updated API. That is indistinguishable from a backend
+    #: bug: the fix ships, the endpoint returns the new figure, and the user
+    #: still sees the old one. It happened -- the lifetime savings total was
+    #: correct on the wire and stale on screen.
+    #:
+    #: The page already polls /api/version to reload itself, but that only fires
+    #: after the first successful load of the *new* page, and a served-from-cache
+    #: response never gets there. no-store rather than no-cache: this is a
+    #: 110KB localhost document, revalidation buys nothing and a stale render
+    #: costs a debugging session.
+    _NO_STORE = {
+        "Cache-Control": "no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
     @app.get("/", response_class=HTMLResponse)
     def index():
         html_path = STATIC_DIR / "index.html"
         if html_path.exists():
-            return HTMLResponse(html_path.read_text())
-        return HTMLResponse("<h1>Memor Dashboard</h1><p>index.html not found</p>")
+            return HTMLResponse(html_path.read_text(), headers=_NO_STORE)
+        return HTMLResponse(
+            "<h1>Memor Dashboard</h1><p>index.html not found</p>",
+            headers=_NO_STORE,
+        )
 
     @app.get("/api/summary")
     def summary():
