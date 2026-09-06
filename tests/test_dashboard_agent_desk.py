@@ -94,7 +94,10 @@ def test_dashboard_html_has_desk_tabs(tmp_path):
     assert "desk-tabs" in html
     assert "pane-overview" in html
     assert "pane-agent" in html
-    assert "Cumulative tokens saved" in html
+    # Was "Cumulative tokens saved" while showing a rolling 30d window, so the
+    # figure fell as old traffic aged out and read as a regression.
+    assert "Tokens saved (last 30d)" in html
+    assert "cum-saved-lifetime" in html
     assert "badge-cursor" in html
     # The Cursor wire MITM was removed — no chip, colour, or label may survive.
     assert "cursor-wire" not in html

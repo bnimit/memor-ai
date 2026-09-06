@@ -1531,34 +1531,59 @@ class SqliteStore:
         except sqlite3.Error as exc:
             print(f"[memor] usage ledger update skipped: {exc}", file=sys.stderr)
 
-    def get_proxy_savings_summary(self, days: int = 30, agent: str | None = None) -> dict:
+    def get_proxy_savings_summary(
+        self, days: int | None = 30, agent: str | None = None
+    ) -> dict:
+        """Realized proxy savings over a window, passthroughs excluded.
+
+        Passthrough rows carry ``tokens_before == tokens_after``: the request
+        held nothing compressible and was forwarded untouched. Counting them in
+        the denominator makes the headline percentage a function of traffic mix
+        rather than of the compressor, and the real ledger is ~86% passthrough,
+        which drags a genuine 83.7% rate down to 8.1%. The per-day series
+        already filtered them out, so the hero percentage and the equity curve
+        below it were computed from different populations.
+
+        Coverage is reported alongside rather than folded in, so a low
+        compressible share stays visible instead of being disguised as a weak
+        compressor. ``days=None`` reports lifetime.
+        """
         import time as _time
-        cutoff = _time.time() - (days * 86400)
-        clauses = ["timestamp >= ?"]
-        params: list = [cutoff]
+        clauses: list[str] = []
+        params: list = []
+        if days is not None:
+            clauses.append("timestamp >= ?")
+            params.append(_time.time() - (days * 86400))
         if agent:
             clauses.append("agent=?")
             params.append(agent)
-        where = " AND ".join(clauses)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         row = self.db.execute(
             f"""
-            SELECT SUM(tokens_before) as tokens_before,
-                   SUM(tokens_after) as tokens_after
-            FROM proxy_savings
-            WHERE {where}
+            SELECT SUM(CASE WHEN passthrough=0 THEN tokens_before ELSE 0 END)
+                       AS tokens_before,
+                   SUM(CASE WHEN passthrough=0 THEN tokens_after ELSE 0 END)
+                       AS tokens_after,
+                   SUM(CASE WHEN passthrough=0 THEN 1 ELSE 0 END) AS compressed,
+                   COUNT(*) AS requests
+            FROM proxy_savings{where}
             """,
             params,
         ).fetchone()
         tokens_before = row["tokens_before"] or 0
         tokens_after = row["tokens_after"] or 0
-        if tokens_before > 0:
-            pct_saved = (1 - tokens_after / tokens_before) * 100
-        else:
-            pct_saved = 0.0
+        requests = row["requests"] or 0
+        compressed = row["compressed"] or 0
+        pct_saved = (1 - tokens_after / tokens_before) * 100 if tokens_before else 0.0
+        coverage = (compressed / requests * 100) if requests else 0.0
         return {
             "tokens_before": tokens_before,
             "tokens_after": tokens_after,
+            "tokens_saved": max(0, tokens_before - tokens_after),
             "pct_saved": round(pct_saved, 1),
+            "requests": requests,
+            "compressed_requests": compressed,
+            "coverage_pct": round(coverage, 1),
         }
 
     def get_proxy_savings_series(self, days: int = 30, agent: str | None = None) -> list[dict]:

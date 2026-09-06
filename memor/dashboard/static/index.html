@@ -459,8 +459,9 @@
       <div class="chart-panel">
         <div class="chart-head">
           <div>
-            <div class="chart-title">Cumulative tokens saved</div>
+            <div class="chart-title">Tokens saved (last 30d)</div>
             <div class="chart-big" id="cum-saved-big">–</div>
+            <div class="chart-meta" id="cum-saved-lifetime"></div>
           </div>
           <div class="chart-meta" id="cum-saved-meta">30d equity curve · all proxied agents</div>
         </div>
@@ -1454,6 +1455,18 @@
     }
     document.getElementById('cum-saved-big').textContent = fmt(cum) + ' saved';
     renderEquityChart('savings-equity', series, 'cumulative_saved', '#2fd67b');
+
+    // "Cumulative" is a rolling 30d window, so the headline shrinks as old
+    // traffic ages out of it and reads as a regression rather than as a quiet
+    // month. The lifetime total never falls, so it is shown next to it.
+    var lifeEl = document.getElementById('cum-saved-lifetime');
+    if (lifeEl) {
+      var life = data.lifetime;
+      lifeEl.textContent = life && life.tokens_saved
+        ? fmt(life.tokens_saved) + ' saved all time · ' + life.pct_saved + '% on '
+          + fmt(life.compressed_requests) + ' compressible requests'
+        : '';
+    }
 
     // A cumulative total is indistinguishable from a broken one when it stops
     // moving: the figure looks current whether the proxy saved nothing today

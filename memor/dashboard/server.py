@@ -534,6 +534,8 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
         return {
             "summary": summary,
+            "lifetime": store.get_proxy_savings_summary(days=None, agent=agent),
+            "window_days": days,
             "per_day": [
                 {
                     "day": r["day"],
