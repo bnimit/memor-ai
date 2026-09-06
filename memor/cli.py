@@ -669,7 +669,7 @@ def scan(db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
 @app.command("daemon")
 def daemon(poll_interval: int = typer.Option(30, help="Seconds between polls"),
            projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/")):
-    """Run the auto-ingest daemon (foreground). Watches Claude, Kimi, and Goose sessions."""
+    """Run the auto-ingest daemon (foreground). Watches Claude, Codex, Kimi, Goose and jcode sessions."""
     from memor.daemon import run_daemon, CLAUDE_PROJECTS_DIR
     d = Path(projects_dir) if projects_dir else CLAUDE_PROJECTS_DIR
     run_daemon(poll_interval=poll_interval, projects_dir=d)
@@ -714,7 +714,7 @@ def backfill(
     projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/"),
     db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
 ):
-    """One-shot ingest of Claude, Kimi, and Goose sessions into the memory store."""
+    """One-shot ingest of Claude, Codex, Kimi, Goose and jcode sessions into the memory store."""
     from memor.daemon import (
         CLAUDE_PROJECTS_DIR, DEFAULT_DB, _make_embedder, _make_llm, run_backfill,
     )

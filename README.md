@@ -570,7 +570,7 @@ memor grade-recalls                  Settle verdicts on recalls the daemon passe
 memor compress-older                 Show or set whether payloads the agent has
                                      moved past get compressed by the proxy
 memor cost-compare                   Did a change actually lower the bill?
-memor daemon                         Auto-ingest + distill (Claude, Kimi, Goose)
+memor daemon                         Auto-ingest + distill (Claude, Codex, Kimi, Goose, jcode)
 memor backfill                       One-shot ingest of past local agent sessions
 memor dashboard                      Web dashboard on localhost:8420
 memor version                        Print installed version
@@ -622,6 +622,7 @@ memor/
 │
 ├── ingest/                     Passive capture — no agent cooperation needed
 │   ├── claude_code.py            ~/.claude/projects/ JSONL
+│   ├── codex.py                  ~/.codex/sessions/ rollout JSONL
 │   ├── jcode.py                  ~/.jcode/sessions/ + journal appends
 │   ├── goose.py                  Goose sessions.db (SQLite)
 │   ├── kimi.py                   ~/.kimi/sessions/ wire.jsonl

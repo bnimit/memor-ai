@@ -1,4 +1,4 @@
-"""Multi-agent ingest source registry — Claude, Kimi, Goose, jcode."""
+"""Multi-agent ingest source registry — Claude, Codex, Kimi, Goose, jcode."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Callable
 
 from memor.ingest.claude_code import parse_transcript
+from memor.ingest.codex import (
+    CODEX_SESSIONS_DIR,
+    parse_session as parse_codex_session,
+    scan_codex_sessions,
+)
 from memor.ingest.goose import (
     GOOSE_DB_PATH,
     goose_state_key,
@@ -149,6 +154,34 @@ def scan_jcode_units(sessions_dir: Path) -> list[IngestUnit]:
     return units
 
 
+def scan_codex_units(sessions_dir: Path) -> list[IngestUnit]:
+    """One unit per Codex rollout.
+
+    Codex was the one wired agent memor served recalls to without ever reading
+    from, so work done there was unrecallable everywhere including in Codex.
+    """
+    units: list[IngestUnit] = []
+    for path, project, session_id in scan_codex_sessions(sessions_dir):
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+
+        def _parse(p=path, proj=project, sid=session_id) -> list[Artifact]:
+            return parse_codex_session(p, project=proj, filter_noise=True,
+                                       session_id=sid)
+
+        units.append(IngestUnit(
+            state_key=str(path),
+            mtime=mtime,
+            project=project,
+            agent="codex",
+            parse=_parse,
+            path=path,
+        ))
+    return units
+
+
 def scan_all_sources(
     *,
     claude_projects_dir: Path | None = None,
@@ -156,11 +189,12 @@ def scan_all_sources(
     kimi_json_path: Path | None = None,
     goose_db_path: Path | None = None,
     jcode_sessions_dir: Path | None = None,
+    codex_sessions_dir: Path | None = None,
 ) -> list[IngestUnit]:
     """Scan enabled sources. Pass None to skip a source (except Claude when dir given).
 
     Claude is scanned when ``claude_projects_dir`` is not None.
-    Kimi/Goose/jcode are scanned only when their paths are not None.
+    Kimi/Goose/jcode/Codex are scanned only when their paths are not None.
     """
     units: list[IngestUnit] = []
     if claude_projects_dir is not None:
@@ -174,6 +208,8 @@ def scan_all_sources(
         units.extend(scan_goose_units(goose_db_path))
     if jcode_sessions_dir is not None:
         units.extend(scan_jcode_units(jcode_sessions_dir))
+    if codex_sessions_dir is not None:
+        units.extend(scan_codex_units(codex_sessions_dir))
     return units
 
 
@@ -185,4 +221,5 @@ def default_local_source_paths() -> dict[str, Path]:
         "kimi_json_path": KIMI_JSON_PATH,
         "goose_db_path": GOOSE_DB_PATH,
         "jcode_sessions_dir": JCODE_SESSIONS_DIR,
+        "codex_sessions_dir": CODEX_SESSIONS_DIR,
     }

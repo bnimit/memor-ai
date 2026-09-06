@@ -323,6 +323,7 @@ def run_poll_cycle(
     kimi_json_path: Path | None = None,
     goose_db_path: Path | None = None,
     jcode_sessions_dir: Path | None = None,
+    codex_sessions_dir: Path | None = None,
 ) -> tuple[dict[str, float], set[str], dict[str, int]]:
     """Run one poll cycle: ingest new units, then distill new sessions.
 
@@ -342,6 +343,7 @@ def run_poll_cycle(
         kimi_json_path=kimi_json_path,
         goose_db_path=goose_db_path,
         jcode_sessions_dir=jcode_sessions_dir,
+        codex_sessions_dir=codex_sessions_dir,
     )
 
     pending = [
@@ -500,6 +502,7 @@ def run_backfill(
     kimi_json_path: Path | None = None,
     goose_db_path: Path | None = None,
     jcode_sessions_dir: Path | None = None,
+    codex_sessions_dir: Path | None = None,
     llm=None,
 ) -> dict[str, int]:
     """One-shot ingest across local agent sources. Returns chunk counts by agent."""
@@ -528,6 +531,10 @@ def run_backfill(
         jcode_sessions_dir=(
             jcode_sessions_dir if jcode_sessions_dir is not None
             else paths["jcode_sessions_dir"]
+        ),
+        codex_sessions_dir=(
+            codex_sessions_dir if codex_sessions_dir is not None
+            else paths["codex_sessions_dir"]
         ),
     )
     save_state(state)
@@ -591,6 +598,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     kimi_json = paths["kimi_json_path"]
     goose_db = paths["goose_db_path"]
     jcode_dir = paths["jcode_sessions_dir"]
+    codex_dir = paths["codex_sessions_dir"]
 
     llm = _make_llm()
 
@@ -605,6 +613,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     print(f"                 {kimi_dir}")
     print(f"                 {goose_db}")
     print(f"                 {jcode_dir}")
+    print(f"                 {codex_dir}")
     print(f"  db:            {DEFAULT_DB}")
     print(f"  embeddings:    local model2vec (dim={embedder.dim})")
     print(f"  poll interval: {poll_interval}s")
@@ -621,6 +630,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
                 kimi_json_path=kimi_json,
                 goose_db_path=goose_db,
                 jcode_sessions_dir=jcode_dir,
+                codex_sessions_dir=codex_dir,
             )
             save_state(state)
             save_distilled_state(distilled)

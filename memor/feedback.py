@@ -443,6 +443,33 @@ def stamped_turns_from_kimi(wire_path: Path) -> list[StampedTurn]:
     return turns
 
 
+def stamped_turns_from_codex(rollout_path: Path) -> list[StampedTurn]:
+    """Turns from a Codex rollout.
+
+    The prose lives in ``response_item`` records; ``event_msg`` duplicates them
+    and would double-count every turn the grader sees. Tool blocks are inlined
+    into assistant prose by Codex Desktop and are dropped through the ingest
+    parser's own rule, so the grader reads the same text the store keeps.
+    """
+    from memor.ingest.codex import _TOOL_BLOCK_RE, _records, _text_of
+
+    turns: list[StampedTurn] = []
+    for rec in _records(rollout_path):
+        if rec.get("type") != "response_item":
+            continue
+        payload = rec.get("payload") or {}
+        if payload.get("type") != "message":
+            continue
+        role = payload.get("role")
+        if role not in ("assistant", "user"):
+            continue
+        text = _text_of(payload.get("content"))
+        if not text or _TOOL_BLOCK_RE.match(text):
+            continue
+        turns.append((_record_epoch(rec), role, text.lower()))
+    return turns
+
+
 def turns_for_unit(unit) -> list[StampedTurn]:
     """Normalised turns for one ingest unit, whatever agent produced it.
 
@@ -458,6 +485,8 @@ def turns_for_unit(unit) -> list[StampedTurn]:
         return stamped_turns_from_claude(path)
     if agent == "jcode" and path is not None:
         return stamped_turns_from_jcode(path)
+    if agent == "codex" and path is not None:
+        return stamped_turns_from_codex(path)
     if agent == "kimi" and path is not None:
         return stamped_turns_from_kimi(path)
     if agent == "goose":
