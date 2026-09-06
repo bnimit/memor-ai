@@ -308,3 +308,38 @@ def test_secret_filename_matching_is_broad_but_not_greedy(tmp_path):
     for name in ("architecture-review.md", "incident-2026-08.md",
                  "onboarding.md", "runbook.md", "decisions.md"):
         assert not looks_like_secret_file(Path(name)), name
+
+
+def test_a_nested_repo_is_a_boundary(tmp_path):
+    """Watching a folder above a pile of clones must not ingest all of them.
+
+    ~/Documents/Eukarya on this machine holds 3 loose notes above 14 cloned
+    repos. Without this boundary, watching it ingests 3,194 files instead of 3
+    -- the "duplicate the repo into memory" failure the manual-only design was
+    right to fear, arriving through the back door.
+
+    A repo the user works in already reaches memory through its transcripts,
+    and its docs are files the agent can open directly.
+    """
+    # Deliberately NOT under a SKIP_DIRS name like vendor/ -- that would pass
+    # for the wrong reason and hide a missing boundary.
+    root = tmp_path / "notes"
+    _write(root, "decisions.md", _NOTE)
+    _write(root, "cloned-repo/README.md", "# cloned\n\nnot my note\n")
+    _write(root, "cloned-repo/docs/guide.md", "# guide\n\nalso not mine\n")
+    (root / "cloned-repo" / ".git").mkdir(parents=True)
+
+    found = {d.path.name for d in scan_document_files(root)}
+    assert found == {"decisions.md"}
+
+
+def test_the_watched_root_may_itself_be_a_repo(tmp_path):
+    """Pointing at a repo's own docs/ is a choice, not an accident.
+
+    Excluding the root would make `docs watch` silently ingest nothing, which
+    is a worse failure than ingesting what was asked for.
+    """
+    root = tmp_path / "myrepo"
+    _write(root, "notes.md", _NOTE)
+    (root / ".git").mkdir(parents=True)
+    assert [d.path.name for d in scan_document_files(root)] == ["notes.md"]
