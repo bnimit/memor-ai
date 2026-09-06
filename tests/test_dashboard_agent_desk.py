@@ -343,3 +343,21 @@ def test_hero_leads_with_the_total_that_never_falls(tmp_path):
         r"getElementById\('cum-saved-big'\)\.textContent\s*=\s*([^;]+);", js)
     assert writes, "hero never writes the headline"
     assert "lifetimeSaved" in writes[-1], writes[-1]
+
+
+def test_hero_heading_and_value_do_not_disagree(tmp_path):
+    """The heading promises lifetime, so the value may only ever be lifetime.
+
+    Falling back to the 30d total when lifetime is missing would print a
+    window's figure under an all-time heading -- the same swap this panel has
+    been fixed for twice.
+    """
+    app, _ = _seed(tmp_path)
+    html = TestClient(app).get("/").text
+    assert "Tokens saved (lifetime)" in html
+    js = html.split("function renderSavingsHero")[1].split("\n  function ")[0]
+    live = js.split("getElementById('cum-saved-big').textContent =")[-1].split(";")[0]
+    assert "lifetimeSaved" in live
+    assert "cum" not in live, live
+    # And the value must not restate the qualifier the heading already carries.
+    assert "saved all time" not in html

@@ -29,7 +29,8 @@ const body = html.match(/function renderSavingsHero\\(data\\)\\s*\\{([\\s\\S]*?)
 const payload = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
 const els = {};
 ["savings-pct","savings-before","savings-after","cum-saved-big",
- "cum-saved-meta","content-types-list"].forEach(id => els[id] = {id, textContent: ""});
+ "cum-saved-lifetime","cum-saved-meta","content-types-list"]
+  .forEach(id => els[id] = {id, textContent: ""});
 const document = {getElementById: id => els[id] || null};
 const fmt = n => Number(n).toLocaleString("en-US");
 const esc = s => String(s);
@@ -53,10 +54,19 @@ def render(payload: dict, tmp_path: Path) -> dict[str, str]:
     return json.loads(proc.stdout)
 
 
-def _payload(day: str, saved: int) -> dict:
+def _payload(day: str, saved: int, lifetime: int | None = None) -> dict:
+    """A savings-ledger response. ``lifetime`` defaults to the window total.
+
+    The endpoint gained a ``lifetime`` block when the hero stopped leading with
+    the rolling window, and the headline reads from it. A fixture without one
+    renders 0, so it is part of the shape now rather than optional.
+    """
+    total = saved if lifetime is None else lifetime
     return {
         "summary": {"tokens_before": 100, "tokens_after": 100 - saved,
                     "pct_saved": saved},
+        "lifetime": {"tokens_saved": total, "hook_saved": total,
+                     "proxy_saved": 0, "coverage_pct": 100.0},
         "per_day": [{"day": day, "tokens_before": 100,
                      "tokens_after": 100 - saved, "tokens_saved": saved,
                      "cumulative_saved": saved}],
@@ -79,7 +89,7 @@ def test_a_stale_curve_says_when_it_last_moved(tmp_path):
     assert stale in out["cum-saved-meta"]
     assert "4d ago" in out["cum-saved-meta"]
     # The total itself is still shown; it is not wrong, only unexplained.
-    assert "50 saved" in out["cum-saved-big"]
+    assert out["cum-saved-big"] == "50"
 
 
 def test_a_window_with_no_savings_says_so(tmp_path):
@@ -93,3 +103,19 @@ def test_yesterday_is_not_flagged_as_stale(tmp_path):
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     out = render(_payload(yesterday, 50), tmp_path)
     assert "last saved" not in out["cum-saved-meta"]
+
+
+def test_headline_is_lifetime_even_when_the_window_is_quiet(tmp_path):
+    """The reported symptom, as a test: a quiet 30d must not shrink the hero.
+
+    A window holding 50 against a lifetime of 2,500,000 has to render the
+    lifetime figure. Rendering the window is what made a quiet fortnight look
+    like savings had collapsed from 2.5M to 256K.
+    """
+    out = render(_payload(date.today().isoformat(), 50, lifetime=2_500_000),
+                 tmp_path)
+    # The harness stubs fmt() as plain locale grouping, so this asserts the
+    # value the hero chose, not the production abbreviation.
+    assert out["cum-saved-big"] == "2,500,000"
+    # The window is not discarded, it is demoted to context.
+    assert "50 in the last 30d" in out["cum-saved-lifetime"]
