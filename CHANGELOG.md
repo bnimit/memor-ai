@@ -63,6 +63,15 @@ All notable changes to this project will be documented in this file.
   before the payload enters the transcript and carries no cache risk; a proxy
   rewrite may hit a cached prefix. `format_report` always kept them apart, but
   the dashboard endpoint blended them.
+- **The idle-compression warning did not clear when the problem was fixed.**
+  It measured idleness from the newest ledger row, and reinstalling a proxy
+  writes no row -- the next real request does -- so the banner survived the fix
+  it had asked for. A warning that stays up after you have acted on it is how
+  people learn to ignore warnings. Idleness is now measured from whichever is
+  later, the last row or the moment the path came back: the proxy reports its
+  own `started_at`, and the hook, having no process to ask, uses its settings
+  file. A restart resets the clock without stopping it, so a proxy up for days
+  with nothing recorded is still reported.
 - **The dashboard page was served with no cache headers**, so a browser kept
   rendering old markup against a correctly-updated API -- indistinguishable
   from a backend bug, and mistaken for one.
