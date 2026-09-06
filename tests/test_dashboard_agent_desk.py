@@ -95,8 +95,11 @@ def test_dashboard_html_has_desk_tabs(tmp_path):
     assert "pane-overview" in html
     assert "pane-agent" in html
     # Was "Cumulative tokens saved" while showing a rolling 30d window, so the
-    # figure fell as old traffic aged out and read as a regression.
-    assert "Tokens saved (last 30d)" in html
+    # figure fell as old traffic aged out and read as a regression. Naming the
+    # window in the title was not enough either: the big number was still the
+    # 30d one. The panel is now titled for the lifetime total it leads with.
+    assert "Tokens saved" in html
+    assert "(last 30d)" not in html
     assert "cum-saved-lifetime" in html
     assert "badge-cursor" in html
     # The Cursor wire MITM was removed — no chip, colour, or label may survive.
@@ -299,3 +302,44 @@ def test_the_split_did_not_duplicate_or_drop_any_element(tmp_path):
     ids = re.findall(r'\bid="([^"]+)"', html)
     assert [i for i, n in collections.Counter(ids).items() if n > 1] == []
     assert html.count("<section") == html.count("</section>")
+
+
+def test_hero_leads_with_the_total_that_never_falls(tmp_path):
+    """The big number must be lifetime, not a rolling window.
+
+    Labelling the window was not sufficient. A panel called "Tokens saved"
+    whose headline is 30 days still reads as *the* figure, and still drops when
+    a quiet fortnight ages old traffic out -- which is exactly what was
+    reported, twice, after the first fix. Lifetime is monotonic, so it leads
+    and the window becomes context beneath it.
+    """
+    import re
+
+    db_path = str(tmp_path / "hero.db")
+    s = SqliteStore(db_path, dim=16)
+    now = time.time()
+    # Old traffic, far outside the 30d window, carrying most of the savings.
+    s.record_proxy_savings({
+        "timestamp": now - 90 * 86400, "agent": "claude", "provider": "anthropic",
+        "session_id": "old", "tokens_before": 1_000_000, "tokens_after": 100_000,
+        "content_types": {"log": 1}, "passthrough": 0,
+    })
+    s.record_proxy_savings({
+        "timestamp": now, "agent": "claude", "provider": "hook",
+        "session_id": "new", "tokens_before": 10_000, "tokens_after": 1_000,
+        "content_types": {"log": 1}, "passthrough": 0,
+    })
+    from memor.dashboard.server import create_app
+
+    client = TestClient(create_app(db_path))
+    data = client.get("/api/savings-ledger?days=30").json()
+    assert data["lifetime"]["tokens_saved"] == 909_000
+    assert data["summary"]["tokens_saved"] == 9_000
+
+    html = client.get("/").text
+    js = html.split("function renderSavingsHero")[1].split("\n  function ")[0]
+    # The first assignment is the empty-state dash; the live one is the last.
+    writes = re.findall(
+        r"getElementById\('cum-saved-big'\)\.textContent\s*=\s*([^;]+);", js)
+    assert writes, "hero never writes the headline"
+    assert "lifetimeSaved" in writes[-1], writes[-1]

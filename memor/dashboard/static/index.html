@@ -466,7 +466,7 @@
       <div class="chart-panel">
         <div class="chart-head">
           <div>
-            <div class="chart-title">Tokens saved (last 30d)</div>
+            <div class="chart-title">Tokens saved</div>
             <div class="chart-big" id="cum-saved-big">–</div>
             <div class="chart-meta" id="cum-saved-lifetime"></div>
           </div>
@@ -1494,19 +1494,23 @@
         return Object.assign({}, d, { tokens_saved: saved, cumulative_saved: cum });
       });
     }
-    document.getElementById('cum-saved-big').textContent = fmt(cum) + ' saved';
+    // The lifetime total leads. Naming the window in the title was not enough:
+    // a panel called "Tokens saved" whose big number is a rolling 30 days still
+    // reads as the headline figure, and still falls as old traffic ages out.
+    // The number that answers "how much has memor saved me" is the one that
+    // never goes down, so it gets the large type and the window becomes context.
+    var life = data.lifetime || {};
+    var lifetimeSaved = life.tokens_saved || 0;
+    document.getElementById('cum-saved-big').textContent =
+      lifetimeSaved ? fmt(lifetimeSaved) + ' saved all time' : fmt(cum) + ' saved';
     renderEquityChart('savings-equity', series, 'cumulative_saved', '#2fd67b');
 
-    // "Cumulative" is a rolling 30d window, so the headline shrinks as old
-    // traffic ages out of it and reads as a regression rather than as a quiet
-    // month. The lifetime total never falls, so it is shown next to it.
     var lifeEl = document.getElementById('cum-saved-lifetime');
     if (lifeEl) {
-      var life = data.lifetime;
-      lifeEl.textContent = life && life.tokens_saved
-        ? fmt(life.tokens_saved) + ' saved all time · ' + fmt(life.hook_saved)
-          + ' hook + ' + fmt(life.proxy_saved) + ' proxy · '
-          + life.coverage_pct + '% of requests had anything compressible'
+      lifeEl.textContent = lifetimeSaved
+        ? fmt(life.hook_saved) + ' hook + ' + fmt(life.proxy_saved) + ' proxy · '
+          + fmt(cum) + ' in the last 30d · ' + life.coverage_pct
+          + '% of requests had anything compressible'
         : '';
     }
 
