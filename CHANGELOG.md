@@ -4,6 +4,92 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-06
+
+### Two sources that were never being read, and figures that were quietly wrong
+
+**Added**
+
+- **Codex sessions are ingested.** memor already served recalls *to* Codex --
+  the skill and retrieve tool are wired for it, and the ledger shows 38 recalls
+  delivered to `agent='codex'` -- while never reading its transcripts back.
+  Work done in Codex was unrecallable everywhere, including in Codex. 85MB and
+  32 rollouts sat unread on the development machine; the backfill produced
+  4,602 chunks across 12 projects. Three format traps handled: `event_msg`
+  duplicates `response_item` (reading both doubles every artifact), Codex
+  Desktop inlines tool calls into assistant prose as
+  `[external_agent_tool_call: ...]` (33,932 of 44,772 messages, filtered), and
+  `cwd` exists only in the `session_meta` header, so a rollout without one is
+  filed `unknown` rather than guessed into a project.
+- **Watched document folders** (`memor docs watch <dir>`). `ingest-doc`
+  imported one file, once, and never looked again, which made documents the
+  only source with a manual step. The outcome was predictable: 33,367 session
+  chunks and **zero** notes. Watching is safe because chunk ids are
+  content-hashed -- an unchanged file re-reads to the same rows for free, and a
+  chunk that no longer appears in the file is retired rather than left to
+  answer from a deleted draft. Nothing is auto-discovered; `document_dirs`
+  starts empty.
+- **A measurement pane, and per-agent contribution.** The overview had grown to
+  13 sections and 6 tables on one scroll, with 44 project rows and 50 recall
+  rows rendered in full. Evidence moved to its own pane; long tables collapse
+  behind a labelled "show all N rows". Agent desks now report what an agent
+  *wrote*, not only what it read -- every prior KPI was a read metric, which is
+  how Codex went months as a pure consumer with no panel able to say so.
+- **Idle-path warning.** A compression path that stops recording looks exactly
+  like a quiet week. `/api/health` now publishes how long each path has been
+  silent and the banner names the one that stopped.
+
+**Fixed**
+
+- **Credential files are refused before they are read.** `redact_text` matches
+  *structured* secrets -- an `sk-` key, a JWT, a PEM block. Run against a real
+  2FA backup-codes file it applied **zero** redactions: bare digits sail
+  through, and no regex fixes that without shredding every note containing
+  numbers. Filenames announcing credentials (`backup-code`, `recovery_code`,
+  `2fa`, `totp`, `password`, `.env`, `id_rsa`, `keystore`) are skipped
+  entirely. This only became urgent with watching: `ingest-doc` was aimed at
+  one file by a human who could see what it was.
+- **The savings headline was a decaying window.** It read 2.5M, then 256K, with
+  no code change and nothing lost. Both figures were a rolling 30 days while
+  the panel said "Cumulative", so old savings aged out and a quiet fortnight
+  read as a regression. Lifetime now leads; the window is context beneath it.
+- **The savings percentage divided by the wrong denominator.** Passthrough
+  requests carry `before == after` because nothing in them was compressible.
+  Counting them made the figure track traffic mix rather than the compressor:
+  a genuine 83.7% rate reported as 8.1%. The per-day series already excluded
+  them, so the hero and the curve directly below it came from different
+  populations.
+- **Hook and proxy savings are reported separately.** A hook rewrite lands
+  before the payload enters the transcript and carries no cache risk; a proxy
+  rewrite may hit a cached prefix. `format_report` always kept them apart, but
+  the dashboard endpoint blended them.
+- **The dashboard page was served with no cache headers**, so a browser kept
+  rendering old markup against a correctly-updated API -- indistinguishable
+  from a backend bug, and mistaken for one.
+- **Watched-folder scanning stopped at nested repositories.** A folder holding
+  3 loose notes above 14 clones ingested 3,194 files. Fixing it by filtering
+  made the scan take 115 seconds against a 30-second poll, because `rglob`
+  still walked 614,130 paths before discarding them; `os.walk` with in-place
+  pruning returns the same 6 files in 2ms.
+- **Notes were dated to the epoch.** `parse_document` defaulted `created_at` to
+  0.0, the worst possible prior in a recency-weighted store. They now carry the
+  file's mtime.
+- **A vault fragmented into one project per subdirectory**, because project
+  scope used `resolve_project`, which falls back to the file's parent folder.
+- **`/api/efficiency` carries its own p50 latency.** The Efficiency card read
+  it from `/api/summary`, which the measurement pane does not load, so the
+  figure silently blanked when the panel moved.
+
+**Known limits**
+
+- No harness runs an agent at a task and checks whether it succeeded, so memor
+  cannot claim it makes agents more effective in either direction.
+  `docs/plans/2026-09-06-task-outcome-benchmark-design.md` sets out what such a
+  benchmark needs and why SWE-bench cannot be borrowed: its instances carry no
+  prior session history, so a memory layer scores as baseline by construction.
+- `docs/graft-comparison-2026-09.md` records what the closest comparable
+  project does differently.
+
 ### The memory half became measurable
 
 memor exists so a decision recorded in one agent is available in another. That
