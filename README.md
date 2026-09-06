@@ -152,6 +152,13 @@ breakdown for your own sessions.
 > makes a coding agent better. The honest end-to-end number is worse and is
 > published in the changelog: a counterfactual win rate that read 63.8% before
 > the harness was corrected to call production `recall()`, and 8.6% after.
+>
+> No harness here runs an agent at a task and checks whether it succeeded, so
+> memor cannot currently claim it makes agents more effective, in either
+> direction. `docs/plans/2026-09-06-task-outcome-benchmark-design.md` sets out
+> what such a benchmark would have to look like and why SWE-bench cannot be
+> borrowed for it: its instances carry no prior session history, so a memory
+> layer has nothing to remember and scores as baseline by construction.
 
 > Beware the image trap. A base64 screenshot tokenises as a vast string — a
 > 161 KB PNG counts as 113,367 tokens if you feed the encoded text to a
