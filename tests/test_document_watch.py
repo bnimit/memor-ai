@@ -192,3 +192,84 @@ def test_markdown_and_plain_text_are_both_accepted(tmp_path):
     for name in ("a.md", "b.markdown", "c.txt", "d.rst"):
         _write(root, name, _NOTE)
     assert len(scan_document_files(root)) == len(DOCUMENT_SUFFIXES)
+
+
+def test_a_watched_note_is_actually_recallable(tmp_path):
+    """Stored is not the same as retrievable, and only the second one matters.
+
+    Every other test here proves a note reaches the artifacts table. This is
+    the acceptance path: a question asked against the project must come back
+    with the note's own text, through the same recall() the hook calls.
+    """
+    from memor.daemon import run_poll_cycle
+    from memor.embed.local import LocalEmbedder
+    from memor.recall import recall
+
+    _write(tmp_path / "notes", "incident.md",
+           "# Incident: payment webhook storm\n\n"
+           "The root cause was a retry loop with no ceiling in billing/client.py,\n"
+           "which turned a downstream outage into a self-inflicted denial of service.\n")
+
+    db = str(tmp_path / "m.db")
+    embedder = LocalEmbedder()
+    store = SqliteStore(db, dim=embedder.dim)
+    run_poll_cycle({}, store, embedder, projects_dir=tmp_path / "nonexistent",
+                   document_dirs=[tmp_path / "notes"])
+    store.db.commit()
+
+    project = store.db.execute(
+        "SELECT DISTINCT project FROM artifacts WHERE kind='note'").fetchone()[0]
+    result = recall("what caused the payment webhook storm",
+                    project=project, db_path=db, threshold=0.15)
+
+    assert result.hits_count > 0, "a watched note must be retrievable, not just stored"
+    assert "retry loop" in (result.formatted_context or "")
+
+
+def test_maintenance_never_retires_a_note_for_being_unread(tmp_path):
+    """Notes are not distilled memories and must not decay like them.
+
+    get_stale_memories and decay_quality both retire artifacts that have not
+    been recalled recently. A runbook nobody asked about for a month is still
+    the runbook; deactivating it would delete the user's own writing from the
+    store without anyone touching the file.
+    """
+    import time
+
+    store = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    embedder = FakeEmbedder(dim=16)
+    _write(tmp_path / "notes", "runbook.md", _NOTE)
+    _ingest(store, embedder, scan_document_files(tmp_path / "notes")[0])
+
+    # Backdate well past every staleness threshold in the codebase.
+    old = time.time() - 400 * 86400
+    store.db.execute("UPDATE artifacts SET created_at=? WHERE kind='note'", (old,))
+    store.db.commit()
+
+    assert store.get_stale_memories(days=30) == []
+    store.deactivate_stale(days=30)
+    store.decay_quality(stale_days=14)
+
+    live = store.db.execute(
+        "SELECT COUNT(*) FROM artifacts WHERE kind='note' AND active=1").fetchone()[0]
+    assert live == 2, "an unread note is still the user's note"
+
+
+def test_the_distiller_does_not_treat_notes_as_sessions(tmp_path):
+    """distill_new_sessions groups by meta.session_id, which a note lacks.
+
+    Without the kind filter every note in the store would land in one bogus
+    "?" session and be distilled into a memory summarising unrelated files.
+    """
+    from memor.daemon import distill_new_sessions
+
+    store = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    embedder = FakeEmbedder(dim=16)
+    _write(tmp_path / "notes", "runbook.md", _NOTE)
+    _ingest(store, embedder, scan_document_files(tmp_path / "notes")[0])
+
+    distill_new_sessions(store, embedder, None, set())
+
+    memories = store.db.execute(
+        "SELECT COUNT(*) FROM artifacts WHERE kind='memory'").fetchone()[0]
+    assert memories == 0, "notes must not be distilled as if they were transcripts"
