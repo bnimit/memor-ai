@@ -49,6 +49,11 @@ class CompressionSummary:
     by_agent: dict[str, dict] = field(default_factory=dict)
     #: Requests where the provider actually reported usage back to us.
     usage_requests: int = 0
+    #: Of those, the ones where something was actually compressed. This is the
+    #: only population whose cache behaviour is attributable to compression:
+    #: a passthrough request rewrote nothing, so its cache writes are the
+    #: agent's own doing and say nothing about what compression cost.
+    compressed_usage_requests: int = 0
     upstream_input: int = 0
     cache_read: int = 0
     cache_creation: int = 0
@@ -127,6 +132,39 @@ class CompressionSummary:
     USAGE_COVERAGE_MIN_PCT = 80.0
 
     @property
+    def compressed_requests(self) -> int:
+        return max(0, self.requests - self.passthroughs)
+
+    #: The overhead is only attributable to compression if a real share of the
+    #: compressed requests reported usage themselves. One row out of hundreds
+    #: is an accident, not a sample: the author's store had exactly one, which
+    #: made a naive "greater than zero" check pass on a population that was
+    #: otherwise entirely passthrough.
+    ATTRIBUTABLE_MIN_PCT = 50.0
+
+    @property
+    def compressed_usage_pct(self) -> float:
+        if not self.compressed_requests:
+            return 0.0
+        return self.compressed_usage_requests / self.compressed_requests * 100
+
+    @property
+    def usage_population_matches(self) -> bool:
+        """Whether the usage sample overlaps the requests that were compressed.
+
+        The net figure subtracts cache overhead from gross savings. Savings come
+        from compressed requests; overhead comes from whichever requests
+        reported usage. On the author's store those sets were almost disjoint --
+        1,451 of 1,452 usage-bearing rows were **passthrough** -- so the
+        subtraction charged compression for cache writes made by requests it
+        never touched. Coverage alone cannot detect that: 26% coverage looks
+        merely thin, not mismatched.
+        """
+        if not self.compressed_requests:
+            return False
+        return self.compressed_usage_pct >= self.ATTRIBUTABLE_MIN_PCT
+
+    @property
     def net_is_reliable(self) -> bool:
         """Whether the net figure rests on comparable populations.
 
@@ -138,6 +176,7 @@ class CompressionSummary:
         """
         return (
             self.cache_writes_observed
+            and self.usage_population_matches
             and self.usage_coverage_pct >= self.USAGE_COVERAGE_MIN_PCT
         )
 
@@ -225,6 +264,8 @@ def summarize_savings(rows: list[dict]) -> CompressionSummary:
         cache_creation = row.get("upstream_cache_creation_tokens")
         if any(v is not None for v in (upstream_in, cache_read, cache_creation)):
             s.usage_requests += 1
+            if not row.get("passthrough"):
+                s.compressed_usage_requests += 1
             s.upstream_input += int(upstream_in or 0)
             s.cache_read += int(cache_read or 0)
             s.cache_creation += int(cache_creation or 0)
@@ -461,6 +502,31 @@ def _cache_lines(summary: CompressionSummary) -> list[str]:
             "  above is a floor of zero rather than a measurement. Treat the"
         )
         lines.append("  net figure as provisional until fresh traffic accumulates.")
+    elif not summary.usage_population_matches and summary.passthroughs:
+        # Ordered before the coverage warning only when passthrough traffic is
+        # present, because that is what makes the populations differ in kind
+        # rather than in size. With no passthrough rows a low attributable
+        # share is simply thin coverage, and the sample-size wording below is
+        # the more useful diagnosis.
+        #
+        # The sharper failure, and the one a coverage percentage hides: the
+        # overhead is not merely from fewer requests, it is from requests that
+        # were never compressed. Nothing here is attributable to compression.
+        lines.append(
+            f"  NOT ATTRIBUTABLE: only {summary.compressed_usage_requests:,} of"
+            f" {summary.compressed_requests:,} compressed"
+        )
+        lines.append(
+            f"  requests reported usage ({summary.compressed_usage_pct:.0f}%)."
+            " The cache activity above is"
+        )
+        lines.append(
+            "  almost entirely passthrough traffic, which rewrote nothing, so it"
+        )
+        lines.append(
+            "  cannot price what compression cost. Ignore the net figure until"
+        )
+        lines.append("  compressed requests report usage of their own.")
     elif not summary.net_is_reliable:
         lines.append(
             f"  Usage was reported on only {summary.usage_coverage_pct:.0f}% of"

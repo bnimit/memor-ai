@@ -253,3 +253,92 @@ def test_hook_path_savings_are_reported_separately():
 def test_proxy_only_report_omits_the_hook_section():
     rows = [_row() for _ in range(MIN_REQUESTS + 5)]
     assert "HOOK PATH" not in "\n".join(format_report(summarize_savings(rows)))
+
+
+# --- attribution: is the overhead even about compression? --------------------
+
+
+def _usage_row(passthrough, before=1000, after=400, cache_creation=500):
+    return {
+        "agent": "claude",
+        "tokens_before": before,
+        "tokens_after": after,
+        "passthrough": passthrough,
+        "content_types": json.dumps({"log": 1}),
+        "upstream_input_tokens": 900,
+        "upstream_cache_read_tokens": 8000,
+        "upstream_cache_creation_tokens": cache_creation,
+    }
+
+
+def test_overhead_from_passthrough_traffic_is_not_attributable():
+    """The author's store: 1,451 of 1,452 usage rows rewrote nothing.
+
+    Savings come from compressed requests, overhead from whichever requests
+    reported usage. When those are different sets, the subtraction charges
+    compression for cache writes it never caused.
+    """
+    rows = [_row() for _ in range(MIN_REQUESTS)]
+    rows += [_usage_row(passthrough=1) for _ in range(50)]
+
+    s = summarize_savings(rows)
+
+    assert s.compressed_usage_requests == 0
+    assert not s.usage_population_matches
+    assert not s.net_is_reliable
+
+
+def test_a_single_compressed_usage_row_is_not_a_sample():
+    """Exactly the shape that made a naive >0 check pass on real data."""
+    rows = [_row() for _ in range(MIN_REQUESTS)]
+    rows += [_usage_row(passthrough=1) for _ in range(50)]
+    rows += [_usage_row(passthrough=0)]
+
+    s = summarize_savings(rows)
+
+    assert s.compressed_usage_requests == 1
+    assert not s.usage_population_matches
+
+
+def test_usage_from_compressed_requests_is_attributable():
+    rows = [_usage_row(passthrough=0) for _ in range(MIN_REQUESTS)]
+
+    s = summarize_savings(rows)
+
+    assert s.compressed_usage_pct == 100.0
+    assert s.usage_population_matches
+    assert s.net_is_reliable
+
+
+def test_report_names_the_mismatch_rather_than_the_sample_size():
+    """A coverage warning reads as "thin data"; this is a wrong population."""
+    rows = [_row() for _ in range(MIN_REQUESTS)]
+    rows += [_usage_row(passthrough=1) for _ in range(50)]
+
+    text = "\n".join(format_report(summarize_savings(rows)))
+
+    assert "NOT ATTRIBUTABLE" in text
+    assert "passthrough traffic" in text
+
+
+def test_attributable_traffic_reports_no_mismatch_warning():
+    rows = [_usage_row(passthrough=0) for _ in range(MIN_REQUESTS)]
+
+    text = "\n".join(format_report(summarize_savings(rows)))
+
+    assert "NOT ATTRIBUTABLE" not in text
+
+
+def test_thin_coverage_without_passthrough_reads_as_sample_size():
+    """Both warnings can be true; the useful one depends on why they differ.
+
+    With no passthrough traffic there is no wrong population, only a small
+    one, so the sample-size wording is the more actionable diagnosis.
+    """
+    rows = [_usage_row(passthrough=0) for _ in range(10)]
+    rows += [_row() for _ in range(90)]
+
+    text = "\n".join(format_report(summarize_savings(rows)))
+
+    assert "upper bound" in text
+    assert "NOT ATTRIBUTABLE" not in text
