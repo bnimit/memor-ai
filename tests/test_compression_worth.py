@@ -382,3 +382,72 @@ def test_a_proxy_only_headline_makes_no_hook_disclosure():
         summarize_savings([_row() for _ in range(MIN_REQUESTS)])))
 
     assert "hook rows that never went through the proxy" not in text
+
+
+# --- output tokens: the cost an input-only ledger cannot see -----------------
+
+
+def _out_row(passthrough, output, before=1000, after=400):
+    return {
+        "agent": "claude", "tokens_before": before, "tokens_after": after,
+        "passthrough": passthrough, "content_types": json.dumps({"log": 1}),
+        "upstream_input_tokens": 900, "upstream_cache_read_tokens": 100,
+        "upstream_cache_creation_tokens": 50, "upstream_output_tokens": output,
+    }
+
+
+def test_output_expansion_is_reported_as_a_cost():
+    """arXiv:2603.23527 measured up to 56x output expansion under compression.
+
+    Output bills at ~5x input, so a shorter prompt with a longer answer can
+    cost money while every input-side figure reports a saving. The ledger
+    stored upstream_output_tokens and never read it, so this was invisible.
+    """
+    rows = [_out_row(0, 3000) for _ in range(30)]
+    rows += [_out_row(1, 500, after=1000) for _ in range(30)]
+
+    s = summarize_savings(rows)
+
+    assert s.output_comparable
+    assert round(s.output_expansion_pct) == 500
+    text = "\n".join(format_report(s))
+    assert "500% longer on compressed requests" in text
+    assert "base-input equivalents" in text
+
+
+def test_shorter_answers_are_reported_without_alarm():
+    rows = [_out_row(0, 400) for _ in range(30)]
+    rows += [_out_row(1, 800, after=1000) for _ in range(30)]
+
+    text = "\n".join(format_report(summarize_savings(rows)))
+
+    assert "50% shorter on compressed requests" in text
+
+
+def test_a_thin_arm_reports_unmeasured_rather_than_zero():
+    """One side with a handful of rows cannot support a comparison."""
+    rows = [_out_row(0, 3000) for _ in range(30)]
+    rows += [_out_row(1, 500, after=1000) for _ in range(3)]
+
+    s = summarize_savings(rows)
+
+    assert not s.output_comparable
+    assert s.output_expansion_pct == 0.0
+    text = "\n".join(format_report(s))
+    assert "unmeasured, not zero" in text
+
+
+def test_the_comparison_is_labelled_observational():
+    """Compressed and passthrough requests differ in content, not just treatment."""
+    rows = [_out_row(0, 3000) for _ in range(30)]
+    rows += [_out_row(1, 500, after=1000) for _ in range(30)]
+
+    text = "\n".join(format_report(summarize_savings(rows)))
+
+    assert "Observational, not randomized" in text
+
+
+def test_no_output_data_produces_no_output_section():
+    rows = [_row() for _ in range(MIN_REQUESTS)]
+
+    assert "OUTPUT TOKENS" not in "\n".join(format_report(summarize_savings(rows)))

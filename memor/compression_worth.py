@@ -32,6 +32,16 @@ MIN_REQUESTS = 25
 CACHE_WRITE_MULTIPLIER = 1.25
 CACHE_READ_MULTIPLIER = 0.1
 
+#: An output token costs about five times a base input token across current
+#: frontier models (Anthropic Sonnet/Opus and GPT-class alike). Output is
+#: tracked because compression can *raise* it: shortening a prompt can strip
+#: the context that kept an answer brief, and arXiv:2603.23527 measured output
+#: expansion of up to 56x under aggressive compression, enough to swamp any
+#: input saving. A ledger that only counts input tokens cannot see that
+#: happening, which is the difference between reporting savings and reporting
+#: cost.
+OUTPUT_MULTIPLIER = 5.0
+
 
 @dataclass
 class TypeStats:
@@ -54,6 +64,14 @@ class CompressionSummary:
     #: a passthrough request rewrote nothing, so its cache writes are the
     #: agent's own doing and say nothing about what compression cost.
     compressed_usage_requests: int = 0
+    #: Output tokens the provider billed, split by whether the request was
+    #: compressed. Kept apart because the comparison between them is the only
+    #: in-ledger signal that compression changed how much the model wrote, and
+    #: a single blended total would average that effect away.
+    compressed_output: int = 0
+    passthrough_output: int = 0
+    compressed_output_requests: int = 0
+    passthrough_output_requests: int = 0
     upstream_input: int = 0
     cache_read: int = 0
     cache_creation: int = 0
@@ -164,6 +182,51 @@ class CompressionSummary:
             return False
         return self.compressed_usage_pct >= self.ATTRIBUTABLE_MIN_PCT
 
+    #: Both arms need at least this many observations before their means are
+    #: worth comparing. Output length varies enormously per request, so a
+    #: handful of rows either side says nothing.
+    OUTPUT_COMPARISON_MIN = 20
+
+    @property
+    def mean_compressed_output(self) -> float:
+        if not self.compressed_output_requests:
+            return 0.0
+        return self.compressed_output / self.compressed_output_requests
+
+    @property
+    def mean_passthrough_output(self) -> float:
+        if not self.passthrough_output_requests:
+            return 0.0
+        return self.passthrough_output / self.passthrough_output_requests
+
+    @property
+    def output_comparable(self) -> bool:
+        """Whether both arms carry enough billed output to compare."""
+        return (
+            self.compressed_output_requests >= self.OUTPUT_COMPARISON_MIN
+            and self.passthrough_output_requests >= self.OUTPUT_COMPARISON_MIN
+        )
+
+    @property
+    def output_expansion_pct(self) -> float:
+        """How much longer the model's answer ran on compressed requests.
+
+        Positive means compression made the model write more. This is an
+        observational comparison, not a randomized one: compressed and
+        passthrough requests differ in what they contained as well as in
+        whether memor rewrote them, so a difference here is a signal to
+        investigate rather than an effect estimate.
+        """
+        base = self.mean_passthrough_output
+        if base <= 0 or not self.output_comparable:
+            return 0.0
+        return (self.mean_compressed_output - base) / base * 100
+
+    @property
+    def output_cost_units(self) -> float:
+        """Billed output on compressed requests, in base-input equivalents."""
+        return self.compressed_output * OUTPUT_MULTIPLIER
+
     @property
     def net_is_reliable(self) -> bool:
         """Whether the net figure rests on comparable populations.
@@ -271,6 +334,15 @@ def summarize_savings(rows: list[dict]) -> CompressionSummary:
             s.cache_creation += int(cache_creation or 0)
             if cache_creation is not None:
                 s.cache_write_observations += 1
+
+        output = row.get("upstream_output_tokens")
+        if output is not None:
+            if row.get("passthrough"):
+                s.passthrough_output += int(output)
+                s.passthrough_output_requests += 1
+            else:
+                s.compressed_output += int(output)
+                s.compressed_output_requests += 1
 
         agent = row.get("agent") or "unknown"
         bucket = s.by_agent.setdefault(
@@ -492,8 +564,67 @@ def format_report(summary: CompressionSummary, *, days: int = 30) -> list[str]:
         lines.append(
             "  saw the uncompressed payload, so no invoice can confirm this."
         )
+    lines.extend(_output_lines(summary))
     lines.append("")
     lines.append("  Says nothing about answer quality.")
+    return lines
+
+
+def _output_lines(summary: CompressionSummary) -> list[str]:
+    """What the model wrote back, which the input-only ledger cannot see.
+
+    Output is billed at roughly five times input, so a compression that
+    shortens the prompt and lengthens the answer can cost money while every
+    input-side figure above reports a saving. arXiv:2603.23527 measured
+    exactly that, up to 56x expansion on one benchmark. This section exists so
+    the ledger can no longer be silent about it.
+    """
+    if not summary.compressed_output_requests:
+        return []
+
+    lines = ["", "OUTPUT TOKENS (billed at ~5x input)"]
+    lines.append(
+        f"  compressed requests: {summary.compressed_output:,} tokens over "
+        f"{summary.compressed_output_requests:,} requests "
+        f"({summary.mean_compressed_output:,.0f} mean)"
+    )
+    if summary.passthrough_output_requests:
+        lines.append(
+            f"  passthrough requests: {summary.passthrough_output:,} tokens over "
+            f"{summary.passthrough_output_requests:,} requests "
+            f"({summary.mean_passthrough_output:,.0f} mean)"
+        )
+
+    if not summary.output_comparable:
+        lines.append(
+            "  Too few observations on one side to compare the two, so whether"
+        )
+        lines.append(
+            "  compression changed answer length is unmeasured, not zero."
+        )
+        return lines
+
+    expansion = summary.output_expansion_pct
+    if expansion > 0:
+        lines.append(
+            f"  Answers ran {expansion:.0f}% longer on compressed requests, costing"
+            f" ~{summary.mean_compressed_output - summary.mean_passthrough_output:,.0f}"
+        )
+        lines.append(
+            f"  extra output tokens each — about"
+            f" {(summary.mean_compressed_output - summary.mean_passthrough_output) * OUTPUT_MULTIPLIER:,.0f}"
+            " base-input equivalents."
+        )
+    else:
+        lines.append(
+            f"  Answers ran {abs(expansion):.0f}% shorter on compressed requests."
+        )
+    lines.append(
+        "  Observational, not randomized: the two sets differ in content as"
+    )
+    lines.append(
+        "  well as in treatment, so this flags a question rather than settles it."
+    )
     return lines
 
 
