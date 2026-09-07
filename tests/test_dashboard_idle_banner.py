@@ -34,22 +34,36 @@ pytestmark = pytest.mark.skipif(
 #: Extracts the banner decision path verbatim from the shipped page and runs it
 #: against a stub DOM. Copying the logic into the test would prove only that the
 #: copy works.
+#:
+#: renderHealth also drives the Agents chip and the stale-reader warning, so
+#: those are pulled in too. Stubbing them instead would let the extracted
+#: function drift from the shipped one, which is the failure this harness
+#: exists to prevent.
 _HARNESS = """
 import fs from "node:fs";
 const html = fs.readFileSync(process.argv[2], "utf8");
 const warn = html.match(/var PATH_IDLE_WARN_DAYS = \\d+;/)[0];
+const consts = html.match(/var READER_STALE = '[a-z]+';\\n  var READER_UNATTRIBUTED = '[a-z]+';/)[0];
 const idleFn = html.match(/function idlePathWarning\\(h\\) \\{[\\s\\S]*?\\n  \\}/)[0];
+const readerFn = html.match(/function staleReaderWarning\\(h\\) \\{[\\s\\S]*?\\n  \\}/)[0];
+const chipFn = html.match(/function renderAgentsChip\\(\\) \\{[\\s\\S]*?\\n  \\}/)[0];
 const healthFn = html.match(/function renderHealth\\(h\\) \\{[\\s\\S]*?\\n  \\}\\n/)[0];
-const els = {banner:{style:{display:"none"}}, "banner-msg":{innerHTML:""}};
+const els = {banner:{style:{display:"none"}}, "banner-msg":{innerHTML:""},
+             "status-agents":{textContent:""}};
 const document = {getElementById: id => els[id] || null};
 const esc = s => String(s);
+const agentLabel = a => a.charAt(0).toUpperCase() + a.slice(1);
 const renderHealth = new Function(
-  "document","esc", warn+"\\n"+idleFn+"\\n"+healthFn+"\\nreturn renderHealth;"
-)(document, esc);
+  "document","esc","agentLabel",
+  "var agentConfig = null; var agentReaders = null;\\n" +
+  warn+"\\n"+consts+"\\n"+idleFn+"\\n"+readerFn+"\\n"+chipFn+"\\n"+healthFn+
+  "\\nreturn renderHealth;"
+)(document, esc, agentLabel);
 renderHealth(JSON.parse(process.argv[3]));
 console.log(JSON.stringify({
   display: els.banner.style.display,
   msg: els["banner-msg"].innerHTML,
+  agents: els["status-agents"].textContent,
 }));
 """
 
@@ -129,4 +143,87 @@ def test_a_page_talking_to_an_older_server_does_not_crash(tmp_path):
     state rather than a hypothetical one.
     """
     out = render({"onboarding_status": "full"}, tmp_path)
+    assert out["display"] == "none"
+
+
+def _reader(agent, status, days, recalls=30) -> dict:
+    return {"agent": agent, "status": status, "recalls": recalls,
+            "recent_recalls": recalls, "hit_rate": 0.5,
+            "days_since_recall": days, "notes": []}
+
+
+def _readers(*entries, status="full") -> dict:
+    health = _health(0.0, 0.0, status=status)
+    health["readers"] = list(entries)
+    return health
+
+
+def test_an_agent_that_stopped_reading_is_named(tmp_path):
+    """Cursor read 427 times, then stopped on 11 Aug. Nothing said so.
+
+    Writing without reading is still a broken memory layer, and it is the half
+    that leaves no trace anywhere in the product.
+    """
+    out = render(_readers(_reader("cursor", "stale", 27.0)), tmp_path)
+
+    assert out["display"] == "flex"
+    assert "Cursor (27d)" in out["msg"]
+    assert "memor doctor" in out["msg"]
+
+
+def test_a_reader_that_resumes_clears_the_warning(tmp_path):
+    """Recovery matters as much as detection, for the same reason as above."""
+    assert render(_readers(_reader("cursor", "stale", 27.0)),
+                  tmp_path)["display"] == "flex"
+    assert render(_readers(_reader("cursor", "live", 0.5)),
+                  tmp_path)["display"] == "none"
+
+
+def test_unattributed_recalls_never_raise_the_reader_warning(tmp_path):
+    """"unknown" is a bucket for headerless requests, not a tool to go fix."""
+    out = render(_readers(_reader("unknown", "stale", 27.0)), tmp_path)
+
+    assert out["display"] == "none"
+
+
+def test_an_agent_that_never_read_does_not_warn(tmp_path):
+    """A tool you have not wired yet is not a tool that broke."""
+    out = render(_readers(_reader("goose", "never", None, recalls=0)), tmp_path)
+
+    assert out["display"] == "none"
+
+
+def test_a_silent_compression_path_is_reported_before_a_silent_reader(tmp_path):
+    """Both broken means the write path is the more fundamental failure."""
+    health = _readers(_reader("cursor", "stale", 27.0))
+    health["compression_paths"] = {"hook": {"idle_days": 15.1},
+                                   "proxy": {"idle_days": 15.1}}
+
+    out = render(health, tmp_path)
+
+    assert "compression" in out["msg"]
+
+
+def test_the_agents_chip_flags_a_silent_reader(tmp_path):
+    """The chip listed configured agents, so it read healthy while nothing ran."""
+    health = _readers(_reader("claude", "live", 0.1),
+                      _reader("cursor", "stale", 27.0))
+
+    out = render(health, tmp_path)
+
+    assert "Claude" in out["agents"]
+    assert "Cursor (silent 27d)" in out["agents"]
+
+
+def test_the_chip_includes_readers_the_proxy_config_never_knew(tmp_path):
+    """jcode and Cursor read via hooks and MCP, never through the proxy."""
+    out = render(_readers(_reader("jcode", "live", 0.1)), tmp_path)
+
+    assert "Jcode" in out["agents"]
+
+
+def test_a_page_without_the_readers_field_does_not_crash(tmp_path):
+    """Same long-lived-tab argument as compression_paths above."""
+    out = render(_health(0.0, 0.0), tmp_path)
+
     assert out["display"] == "none"

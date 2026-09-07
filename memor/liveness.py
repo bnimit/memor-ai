@@ -41,6 +41,12 @@ STALE_DAYS = 21
 #: direction. The Codex misreading came from treating 38 rows as a verdict.
 MIN_SAMPLE = 20
 
+#: Not an agent. The proxy writes this label when a request carries no agent
+#: header and the protocol matches more than one configured agent, so it is a
+#: bucket of unattributed recalls. Reporting it as a tool that "stopped
+#: reading" invites someone to go fix an integration that does not exist.
+UNATTRIBUTED = "unknown"
+
 _DAY = 86_400
 
 #: Commits that changed how a recall resolves its project or gets logged.
@@ -178,8 +184,14 @@ def _notes_for(entry: AgentLiveness) -> list[str]:
             f"only {entry.recent_recalls} current recalls, too few to judge"
         )
 
-    if entry.status == "stale":
+    if entry.status == "stale" and entry.agent != UNATTRIBUTED:
         notes.append("stopped reading; check the integration is still wired")
+
+    if entry.agent == UNATTRIBUTED:
+        notes.append(
+            "unattributed recalls, not an agent; the request carried no agent "
+            "header"
+        )
 
     return notes
 

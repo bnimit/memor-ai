@@ -1435,6 +1435,53 @@
     led.classList.toggle('on', !!on);
   }
 
+  /* The Agents chip used to list whatever `proxy_agents` had enabled, which is
+     configuration, not health: Cursor and jcode both sat silent for weeks while
+     something claimed to be fine. It was also too narrow — those two read
+     through hooks and MCP, never the proxy, so 459 of their recalls were
+     invisible to a chip fed only by proxy config.
+
+     So the chip is the union: everything configured, plus everything that has
+     actually read. Config says who should be reading, recall_log says who is,
+     and disagreement between them is the whole point. The two arrive from
+     different endpoints, so whichever lands second re-renders. */
+  var agentConfig = null;
+  var agentReaders = null;
+  var READER_STALE = 'stale';
+  var READER_UNATTRIBUTED = 'unknown';
+
+  function renderAgentsChip() {
+    var el = document.getElementById('status-agents');
+    if (!el) return;
+
+    var byAgent = {};
+    (agentReaders || []).forEach(function(r) {
+      if (r.agent !== READER_UNATTRIBUTED) byAgent[r.agent] = r;
+    });
+
+    var names = Object.keys(agentConfig || {}).filter(function(a) {
+      return agentConfig[a];
+    });
+    Object.keys(byAgent).forEach(function(a) {
+      if (names.indexOf(a) === -1 && byAgent[a].recalls > 0) names.push(a);
+    });
+    if (!names.length) { el.textContent = 'None'; return; }
+
+    // Until the readers payload arrives there is nothing to grade against, so
+    // show plain names rather than implying every agent is stale.
+    var known = agentReaders !== null;
+    names.sort();
+    el.textContent = names.map(function(a) {
+      var reader = byAgent[a];
+      if (!known) return agentLabel(a);
+      if (!reader || !reader.recalls) return agentLabel(a) + ' (never read)';
+      if (reader.status === READER_STALE) {
+        return agentLabel(a) + ' (silent ' + Math.round(reader.days_since_recall) + 'd)';
+      }
+      return agentLabel(a);
+    }).join(', ');
+  }
+
   function renderProxyStatus(data) {
     var proxyOn = !!data.proxy;
     var hookOn = !!data.hook;
@@ -1449,10 +1496,8 @@
     document.getElementById('status-daemon').textContent = daemonOn ? 'On' : 'Off';
 
     var agents = data.proxy_agents || {};
-    var active = Object.keys(agents).filter(function(a) { return agents[a]; });
-    document.getElementById('status-agents').textContent = active.length
-      ? active.map(agentLabel).join(', ')
-      : 'None';
+    agentConfig = agents;
+    renderAgentsChip();
   }
 
   function renderSummary(d) {
@@ -2039,7 +2084,27 @@
     return stale;
   }
 
+  /* Which agents were reading memory and stopped.
+
+     Only agents that actually read before are reported. One that never read is
+     a setup state the onboarding banner covers, and warning about a tool the
+     user simply does not use is how a banner teaches people to ignore banners.
+     The staleness threshold lives server-side in memor/liveness.py so the
+     dashboard and `memor doctor` cannot drift apart. */
+  function staleReaderWarning(h) {
+    return (h && h.readers ? h.readers : [])
+      .filter(function(r) {
+        return r.status === READER_STALE && r.recalls > 0 &&
+               r.agent !== READER_UNATTRIBUTED;
+      })
+      .map(function(r) {
+        return agentLabel(r.agent) + ' (' + Math.round(r.days_since_recall) + 'd)';
+      });
+  }
+
   function renderHealth(h) {
+    agentReaders = h.readers || [];
+    renderAgentsChip();
     var banner = document.getElementById('banner');
     var msg = document.getElementById('banner-msg');
     var status = h.onboarding_status;
@@ -2051,6 +2116,16 @@
         msg.innerHTML = 'No compression recorded on ' + esc(stale.join(' and ')) +
           '. A stopped service looks the same as a quiet week here — check ' +
           '<code>memor service status</code>.';
+        return;
+      }
+      // Writing but not reading is still a broken memory layer, and it is the
+      // half that leaves no trace, so it gets the same banner treatment.
+      var silent = staleReaderWarning(h);
+      if (silent.length) {
+        banner.style.display = 'flex';
+        msg.innerHTML = 'No memories recalled by ' + esc(silent.join(' and ')) +
+          '. Memory is still being written, but these agents stopped reading it — ' +
+          'check <code>memor doctor</code>.';
         return;
       }
       banner.style.display = 'none';

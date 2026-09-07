@@ -1901,7 +1901,7 @@ def doctor(
     "is it still running", which fails silently: a dead integration and an
     unused one look identical from the outside.
     """
-    from memor.liveness import MIN_SAMPLE, agent_liveness
+    from memor.liveness import MIN_SAMPLE, UNATTRIBUTED, agent_liveness
     from memor.store.sqlite_store import SqliteStore, read_dim
 
     db_path = _db_path(db) if db else str(Path.home() / ".memor" / "memor.db")
@@ -1930,7 +1930,12 @@ def doctor(
         for note in entry.notes:
             typer.echo(f"     - {note}")
 
-    stale = [a.agent for a in agents if a.status == "stale"]
+    # "unknown" is a bucket of unattributed recalls, not a tool, so it is never
+    # named as something to go and fix.
+    stale = [
+        a.agent for a in agents
+        if a.status == "stale" and a.agent != UNATTRIBUTED
+    ]
     if stale:
         typer.echo("")
         typer.echo(f"Stopped reading: {', '.join(stale)}.")

@@ -5,6 +5,7 @@ import time as _time
 from pathlib import Path
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
+from memor.liveness import liveness_summary
 from memor.store.sqlite_store import SqliteStore
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -580,6 +581,12 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "last_ingest_timestamp": last_ingest,
             "embedder_dim": int(dim_row["value"]) if dim_row else None,
             "compression_paths": paths,
+            # The same argument as compression_paths above, applied to the read
+            # path, where it had never been made. An agent that stops recalling
+            # writes no row, so the read side of a dead integration is pure
+            # silence -- which is how Cursor and jcode each went weeks without
+            # reading and nothing said so.
+            "readers": liveness_summary(store)["agents"],
         }
 
     @app.get("/api/provenance")
