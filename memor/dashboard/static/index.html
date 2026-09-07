@@ -1448,6 +1448,7 @@
   var agentConfig = null;
   var agentReaders = null;
   var READER_STALE = 'stale';
+  var READER_QUIET = 'quiet';
   var READER_UNATTRIBUTED = 'unknown';
 
   function renderAgentsChip() {
@@ -1475,7 +1476,13 @@
       var reader = byAgent[a];
       if (!known) return agentLabel(a);
       if (!reader || !reader.recalls) return agentLabel(a) + ' (never read)';
-      if (reader.status === READER_STALE) {
+      // Quiet is deliberately shown here but never in the banner. A week or
+      // two of silence is genuinely ambiguous — an unused tool looks the same
+      // as a broken one — so it does not deserve an alarm. Rendering it as
+      // plain health would still be the original mistake in miniature: this
+      // chip is the glance surface, and jcode sat silent for 16 days looking
+      // exactly like a working integration.
+      if (reader.status === READER_STALE || reader.status === READER_QUIET) {
         return agentLabel(a) + ' (silent ' + Math.round(reader.days_since_recall) + 'd)';
       }
       return agentLabel(a);

@@ -43,7 +43,7 @@ _HARNESS = """
 import fs from "node:fs";
 const html = fs.readFileSync(process.argv[2], "utf8");
 const warn = html.match(/var PATH_IDLE_WARN_DAYS = \\d+;/)[0];
-const consts = html.match(/var READER_STALE = '[a-z]+';\\n  var READER_UNATTRIBUTED = '[a-z]+';/)[0];
+const consts = html.match(/var READER_STALE = '[a-z]+';\\n  var READER_QUIET = '[a-z]+';\\n  var READER_UNATTRIBUTED = '[a-z]+';/)[0];
 const idleFn = html.match(/function idlePathWarning\\(h\\) \\{[\\s\\S]*?\\n  \\}/)[0];
 const readerFn = html.match(/function staleReaderWarning\\(h\\) \\{[\\s\\S]*?\\n  \\}/)[0];
 const chipFn = html.match(/function renderAgentsChip\\(\\) \\{[\\s\\S]*?\\n  \\}/)[0];
@@ -226,4 +226,17 @@ def test_a_page_without_the_readers_field_does_not_crash(tmp_path):
     """Same long-lived-tab argument as compression_paths above."""
     out = render(_health(0.0, 0.0), tmp_path)
 
+    assert out["display"] == "none"
+
+
+def test_the_chip_shows_a_quiet_reader_without_raising_a_banner(tmp_path):
+    """jcode sat silent 16 days looking exactly like a working integration.
+
+    Quiet is genuinely ambiguous, so it must not raise an alarm; but rendering
+    it as plain health on the glance surface is the original mistake in
+    miniature.
+    """
+    out = render(_readers(_reader("jcode", "quiet", 16.0)), tmp_path)
+
+    assert "Jcode (silent 16d)" in out["agents"]
     assert out["display"] == "none"
