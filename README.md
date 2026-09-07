@@ -236,6 +236,7 @@ own traffic at any time:
 
 ```bash
 memor compression-worth             # realized savings, coverage, and net of cache
+memor doctor                        # is each wired agent still reading memory?
 ```
 
 `memor service install` also starts the dashboard as a background service, so it's already live at http://localhost:8420 (and is recycled whenever you stop/restart/uninstall the service). To run it in the foreground instead:
@@ -593,8 +594,11 @@ memor grade-recalls                  Settle verdicts on recalls the daemon passe
 memor compress-older                 Show or set whether payloads the agent has
                                      moved past get compressed by the proxy
 memor cost-compare                   Did a change actually lower the bill?
-memor daemon                         Auto-ingest + distill (Claude, Codex, Kimi, Goose, jcode)
+memor daemon                         Auto-ingest + distill (Claude, Codex, Cursor, Kimi, Goose, jcode)
 memor backfill                       One-shot ingest of past local agent sessions
+memor doctor                         Is each wired agent still reading memory?
+                                     Names any that silently stopped, and hides
+                                     hit rates that predate a behaviour change
 memor dashboard                      Web dashboard on localhost:8420
 memor version                        Print installed version
 memor service install                Run daemon + dashboard as background services (launchd/systemd)

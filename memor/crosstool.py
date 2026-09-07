@@ -24,12 +24,15 @@ from memor.store.sqlite_store import SqliteStore
 #: cross-tool.
 INTERNAL_SOURCES = frozenset({"distill", "promotion"})
 
-#: The harness whose transcripts each reading agent produces. Cursor has no
-#: ingest source of its own -- it reads Claude Code's store -- so a Cursor
-#: recall of a ``claude_code`` artifact is the same tool by a different name.
+#: The harness whose transcripts each reading agent produces. Cursor used to map
+#: to ``claude_code`` because it had no ingest source of its own and could only
+#: read another tool's store. It now writes its own artifacts (``source:
+#: "cursor"``, read from Cursor's composer store), so mapping it to
+#: ``claude_code`` would score a Cursor recall of a Cursor memory as cross-tool
+#: and inflate the one number this module exists to keep honest.
 READER_TO_WRITER = {
     "claude": "claude_code",
-    "cursor": "claude_code",
+    "cursor": "cursor",
     "jcode": "jcode",
     "goose": "goose",
     "kimi": "kimi",

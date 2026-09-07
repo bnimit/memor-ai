@@ -1891,6 +1891,58 @@ def uninstall_proxy(
         raise typer.Exit(1)
 
 
+@app.command("doctor")
+def doctor(
+    db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+):
+    """Report whether each wired agent is still reading memory.
+
+    Every other command answers "how well is memor working". This one answers
+    "is it still running", which fails silently: a dead integration and an
+    unused one look identical from the outside.
+    """
+    from memor.liveness import MIN_SAMPLE, agent_liveness
+    from memor.store.sqlite_store import SqliteStore, read_dim
+
+    db_path = _db_path(db) if db else str(Path.home() / ".memor" / "memor.db")
+    if not Path(db_path).exists():
+        typer.echo("memor: no memory store yet.")
+        return
+
+    store = SqliteStore(db_path, dim=read_dim(db_path, 384))
+    agents = agent_liveness(store)
+    if not agents:
+        typer.echo("No agent has ever read from this store.")
+        typer.echo("Wire one with `memor install-hook` or `memor install-mcp`.")
+        return
+
+    marks = {"live": "ok", "quiet": "--", "stale": "!!", "never": "??"}
+    typer.echo(f"{'':3s}{'agent':10s}{'status':8s}{'last read':12s}"
+               f"{'current':9s}{'hit rate':9s}")
+    for entry in agents:
+        days = entry.days_since_recall
+        when = "never" if days is None else f"{days:.0f}d ago"
+        rate = "n/a" if entry.hit_rate is None else f"{entry.hit_rate:.0%}"
+        typer.echo(
+            f"{marks.get(entry.status, '??'):3s}{entry.agent:10s}"
+            f"{entry.status:8s}{when:12s}{entry.recent_recalls:<9d}{rate:9s}"
+        )
+        for note in entry.notes:
+            typer.echo(f"     - {note}")
+
+    stale = [a.agent for a in agents if a.status == "stale"]
+    if stale:
+        typer.echo("")
+        typer.echo(f"Stopped reading: {', '.join(stale)}.")
+        typer.echo("Re-run the installer for those agents to check the wiring.")
+    typer.echo("")
+    typer.echo(
+        f"Hit rates cover recalls since the last behaviour change, and are "
+        f"withheld below {MIN_SAMPLE} of them: a total that spans a fix "
+        "reports the old bug as though it were current."
+    )
+
+
 @app.command("version")
 def version():
     """Print the memor version."""
