@@ -91,6 +91,15 @@ class CompressionSummary:
     hook_before: int = 0
     hook_after: int = 0
 
+    #: Randomized arms. Unlike every other comparison here these differ only in
+    #: the treatment, so a gap between them is an effect rather than a
+    #: correlation. Counted separately from the observational totals because
+    #: mixing the two would forfeit exactly that property.
+    arm_requests: dict = field(default_factory=dict)
+    arm_billed_units: dict = field(default_factory=dict)
+    arm_output: dict = field(default_factory=dict)
+    arm_usage_requests: dict = field(default_factory=dict)
+
     @property
     def hook_saved(self) -> int:
         return max(0, self.hook_before - self.hook_after)
@@ -227,6 +236,43 @@ class CompressionSummary:
         """Billed output on compressed requests, in base-input equivalents."""
         return self.compressed_output * OUTPUT_MULTIPLIER
 
+    #: Per-arm requests needed before a measured result is worth printing.
+    #: Derived from this store's own variance: the per-request kept-ratio has a
+    #: CV of 0.38, which needs ~57 observations per arm to detect a 20% effect
+    #: at 80% power. Session-level assignment would have needed ~790.
+    ARM_MIN_REQUESTS = 57
+
+    @property
+    def measured_arms_ready(self) -> bool:
+        from memor.proxy.experiment import ARM_CONTROL, ARM_TREATMENT
+
+        return all(
+            self.arm_usage_requests.get(arm, 0) >= self.ARM_MIN_REQUESTS
+            for arm in (ARM_CONTROL, ARM_TREATMENT)
+        )
+
+    @property
+    def measured_saving_pct(self) -> float:
+        """Billed cost difference between the randomized arms.
+
+        Positive means the compressed arm cost less. This is the only figure
+        here that is causal: assignment was random, so the arms differ in the
+        treatment and nothing else. It prices input, cache and output together,
+        because compression that shortens a prompt and lengthens an answer has
+        to be able to come out negative.
+        """
+        from memor.proxy.experiment import ARM_CONTROL, ARM_TREATMENT
+
+        control_n = self.arm_usage_requests.get(ARM_CONTROL, 0)
+        treat_n = self.arm_usage_requests.get(ARM_TREATMENT, 0)
+        if not control_n or not treat_n:
+            return 0.0
+        control = self.arm_billed_units.get(ARM_CONTROL, 0.0) / control_n
+        treat = self.arm_billed_units.get(ARM_TREATMENT, 0.0) / treat_n
+        if control <= 0:
+            return 0.0
+        return (control - treat) / control * 100
+
     @property
     def net_is_reliable(self) -> bool:
         """Whether the net figure rests on comparable populations.
@@ -344,6 +390,23 @@ def summarize_savings(rows: list[dict]) -> CompressionSummary:
                 s.compressed_output += int(output)
                 s.compressed_output_requests += 1
 
+        # Randomized arms, tallied only when the row carries billed numbers.
+        # A request the provider never reported on contributes nothing to a
+        # cost comparison, and counting it would dilute the arm it landed in.
+        arm = row.get("experiment_arm")
+        if arm:
+            s.arm_requests[arm] = s.arm_requests.get(arm, 0) + 1
+            if upstream_in is not None or cache_read is not None:
+                billed = (
+                    int(upstream_in or 0)
+                    + int(cache_read or 0) * CACHE_READ_MULTIPLIER
+                    + int(cache_creation or 0) * CACHE_WRITE_MULTIPLIER
+                    + int(output or 0) * OUTPUT_MULTIPLIER
+                )
+                s.arm_billed_units[arm] = s.arm_billed_units.get(arm, 0.0) + billed
+                s.arm_output[arm] = s.arm_output.get(arm, 0) + int(output or 0)
+                s.arm_usage_requests[arm] = s.arm_usage_requests.get(arm, 0) + 1
+
         agent = row.get("agent") or "unknown"
         bucket = s.by_agent.setdefault(
             agent, {"requests": 0, "tokens_before": 0, "tokens_after": 0}
@@ -392,6 +455,12 @@ def load_savings_rows(
                 "upstream_input_tokens",
                 "upstream_cache_read_tokens",
                 "upstream_cache_creation_tokens",
+                # Both of these were written to the ledger and never selected
+                # here, so the columns existed while every report that depended
+                # on them silently saw None. Output is what prices an answer
+                # that grew; the arm is what makes a comparison causal.
+                "upstream_output_tokens",
+                "experiment_arm",
             ) if c in have
         ]
         columns = ", ".join(
@@ -564,9 +633,66 @@ def format_report(summary: CompressionSummary, *, days: int = 30) -> list[str]:
         lines.append(
             "  saw the uncompressed payload, so no invoice can confirm this."
         )
+    lines.extend(_measured_lines(summary))
     lines.extend(_output_lines(summary))
     lines.append("")
     lines.append("  Says nothing about answer quality.")
+    return lines
+
+
+def _measured_lines(summary: CompressionSummary) -> list[str]:
+    """The randomized result: the only causal number in this report.
+
+    Everything else compares requests that differ in content as well as in
+    treatment. Here assignment was random, so the arms differ only in whether
+    memor rewrote the payload, and the gap between their billed cost is an
+    effect rather than a correlation.
+    """
+    from memor.proxy.experiment import ARM_CONTROL, ARM_TREATMENT
+
+    if not summary.arm_requests:
+        return []
+
+    control_n = summary.arm_usage_requests.get(ARM_CONTROL, 0)
+    treat_n = summary.arm_usage_requests.get(ARM_TREATMENT, 0)
+    lines = ["", "MEASURED (randomized holdout)"]
+
+    if not summary.measured_arms_ready:
+        lines.append(
+            f"  {treat_n:,} compressed and {control_n:,} held-out requests have"
+            " billed numbers;"
+        )
+        lines.append(
+            f"  {summary.ARM_MIN_REQUESTS} per arm are needed before the"
+            " difference means anything."
+        )
+        lines.append(
+            "  Until then the figures above remain estimates, not measurements."
+        )
+        return lines
+
+    pct = summary.measured_saving_pct
+    if pct >= 0:
+        lines.append(
+            f"  Compressed requests cost {pct:.1f}% less than held-out ones,"
+        )
+    else:
+        lines.append(
+            f"  Compressed requests cost {abs(pct):.1f}% MORE than held-out ones,"
+        )
+    lines.append(
+        f"  over {treat_n:,} compressed and {control_n:,} held-out requests,"
+    )
+    lines.append(
+        "  pricing input, cache and output together as the provider billed them."
+    )
+    if pct < 0:
+        lines.append(
+            "  VERDICT: compression is costing money on this traffic. Output"
+        )
+        lines.append(
+            "  growth or cache re-formation is outweighing the input saved."
+        )
     return lines
 
 

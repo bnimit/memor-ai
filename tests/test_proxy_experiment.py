@@ -173,3 +173,96 @@ def test_the_ledger_keeps_the_arm(tmp_path) -> None:
         "SELECT experiment_arm FROM proxy_savings ORDER BY timestamp")]
 
     assert arms == [ARM_CONTROL, None]
+
+
+# --- reading the arms back: the measured result ------------------------------
+
+
+def _arm_row(arm, inp, out, before=1000, after=400):
+    import json
+    return {
+        "agent": "claude", "tokens_before": before, "tokens_after": after,
+        "passthrough": 0, "content_types": json.dumps({"log": 1}),
+        "experiment_arm": arm, "upstream_input_tokens": inp,
+        "upstream_cache_read_tokens": 100,
+        "upstream_cache_creation_tokens": 10, "upstream_output_tokens": out,
+    }
+
+
+def _measured(rows):
+    from memor.compression_worth import format_report, summarize_savings
+    return "\n".join(format_report(summarize_savings(rows)))
+
+
+def test_a_real_saving_is_reported_as_measured():
+    """The only causal number memor can produce."""
+    from memor.compression_worth import CompressionSummary
+
+    n = CompressionSummary.ARM_MIN_REQUESTS
+    rows = [_arm_row(ARM_TREATMENT, 400, 200) for _ in range(n)]
+    rows += [_arm_row(ARM_CONTROL, 1000, 200) for _ in range(n)]
+
+    text = _measured(rows)
+
+    assert "MEASURED (randomized holdout)" in text
+    assert "cost 29.7% less than held-out ones" in text
+
+
+def test_output_expansion_can_make_the_measured_result_negative():
+    """arXiv:2603.23527's failure mode, which an input-only ledger cannot see.
+
+    Input falls from 1000 to 400 while the answer grows from 200 to 2000
+    tokens. Every input-side figure reports a saving; priced with output at 5x,
+    compression is losing badly.
+    """
+    from memor.compression_worth import CompressionSummary
+
+    n = CompressionSummary.ARM_MIN_REQUESTS
+    rows = [_arm_row(ARM_TREATMENT, 400, 2000) for _ in range(n)]
+    rows += [_arm_row(ARM_CONTROL, 1000, 200) for _ in range(n)]
+
+    text = _measured(rows)
+
+    assert "MORE than held-out ones" in text
+    assert "VERDICT: compression is costing money" in text
+
+
+def test_thin_arms_report_how_many_more_are_needed():
+    # Above the report's own 25-request floor, below the 57-per-arm one, so
+    # the arm message is what the reader sees rather than the generic one.
+    rows = [_arm_row(ARM_TREATMENT, 400, 200) for _ in range(20)]
+    rows += [_arm_row(ARM_CONTROL, 1000, 200) for _ in range(20)]
+
+    text = _measured(rows)
+
+    assert "per arm are needed" in text
+    assert "remain estimates, not measurements" in text
+
+
+def test_no_experiment_produces_no_measured_section():
+    import json
+    rows = [{"agent": "claude", "tokens_before": 1000, "tokens_after": 400,
+             "passthrough": 0, "content_types": json.dumps({"log": 1})}
+            for _ in range(60)]
+
+    assert "MEASURED (randomized holdout)" not in _measured(rows)
+
+
+def test_the_loader_selects_the_arm_and_output_columns(tmp_path):
+    """Both columns were written to the ledger and never read back."""
+    from memor.compression_worth import load_savings_rows
+    from memor.store.sqlite_store import SqliteStore
+
+    db = str(tmp_path / "m.db")
+    store = SqliteStore(db, dim=256)
+    store.record_proxy_savings({
+        "timestamp": __import__("time").time(), "agent": "claude",
+        "provider": "anthropic", "session_id": "s", "tokens_before": 100,
+        "tokens_after": 40, "content_types": {}, "passthrough": 0,
+        "experiment_arm": ARM_CONTROL, "upstream_output_tokens": 250,
+    })
+
+    (row,) = load_savings_rows(db, days=1)
+
+    assert row["experiment_arm"] == ARM_CONTROL
+    assert row["upstream_output_tokens"] == 250
