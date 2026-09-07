@@ -443,6 +443,17 @@ def format_report(summary: CompressionSummary, *, days: int = 30) -> list[str]:
         "coverage,"
     )
     lines.append("  not compressor quality, is what caps this number.")
+    if summary.hook_requests:
+        # The headline sums every ledger row, and hook rows are in there
+        # despite never having been proxied. Saying so matters most when the
+        # hook is carrying the number: this store's proxy has recorded nothing
+        # since 2026-08-22, so a reader seeing "proxied tokens" would credit
+        # the proxy for savings the hook produced.
+        lines.append(
+            f"  Includes {summary.hook_requests:,} hook rows that never went"
+            " through the proxy;"
+        )
+        lines.append("  see HOOK PATH below for what they can and cannot prove.")
     lines.append("")
     lines.append(
         f"ON COMPRESSIBLE REQUESTS: {summary.compressible_pct:.1f}% "
@@ -469,6 +480,18 @@ def format_report(summary: CompressionSummary, *, days: int = 30) -> list[str]:
             "  No cache risk on this path: the payload is shrunk on the way in,"
         )
         lines.append("  so no already-cached prefix is rewritten.")
+        # Said plainly because this is the number most likely to be quoted, and
+        # it is the one no provider will ever corroborate. The hook rewrites
+        # tool output before the agent builds a request, so there is no billed
+        # counterfactual: the provider never saw the original and cannot report
+        # what it would have cost. Proxy rows can be grounded against
+        # provider-reported usage; these cannot, ever, by construction.
+        lines.append(
+            "  Tokenizer estimate, not a billed measurement: the provider never"
+        )
+        lines.append(
+            "  saw the uncompressed payload, so no invoice can confirm this."
+        )
     lines.append("")
     lines.append("  Says nothing about answer quality.")
     return lines

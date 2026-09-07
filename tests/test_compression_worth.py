@@ -342,3 +342,43 @@ def test_thin_coverage_without_passthrough_reads_as_sample_size():
 
     assert "upper bound" in text
     assert "NOT ATTRIBUTABLE" not in text
+
+
+# --- what each figure can actually prove -------------------------------------
+
+
+def _hook_row(before=1000, after=100):
+    return dict(agent="claude", provider="hook", tokens_before=before,
+                tokens_after=after, content_types={"log": 1}, passthrough=0)
+
+
+def test_hook_savings_are_labelled_as_unverifiable():
+    """No invoice can ever confirm this number.
+
+    The hook rewrites tool output before the agent builds a request, so the
+    provider never saw the original and cannot report what it would have cost.
+    Proxy rows can be grounded against provider-reported usage; these cannot,
+    which makes this the number most likely to be quoted and least likely to
+    be checkable.
+    """
+    text = "\n".join(format_report(
+        summarize_savings([_hook_row() for _ in range(MIN_REQUESTS + 5)])))
+
+    assert "Tokenizer estimate, not a billed measurement" in text
+
+
+def test_the_headline_discloses_hook_rows_it_counts_as_proxied():
+    """"% of proxied tokens" sums hook rows that never touched the proxy."""
+    rows = [_row() for _ in range(MIN_REQUESTS)]
+    rows += [_hook_row() for _ in range(7)]
+
+    text = "\n".join(format_report(summarize_savings(rows)))
+
+    assert "Includes 7 hook rows that never went through the proxy" in text
+
+
+def test_a_proxy_only_headline_makes_no_hook_disclosure():
+    text = "\n".join(format_report(
+        summarize_savings([_row() for _ in range(MIN_REQUESTS)])))
+
+    assert "hook rows that never went through the proxy" not in text

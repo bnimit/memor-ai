@@ -110,6 +110,14 @@ net                 1,306,781 tokens
 Recall spends 47% of what compression saves. That is the design: compression
 funds the memory layer.
 
+Both figures are **tokenizer estimates, not billed measurements**. Memor counts
+the payload before and after it rewrites it; no provider invoice confirms the
+difference. For the hook path that gap is permanent by construction, since the
+payload is shrunk before the agent ever builds a request, so the provider never
+saw the original. Proxy traffic *can* be grounded, because the provider reports
+usage per request, and `memor compression-worth` says which of the two a given
+figure rests on rather than blending them.
+
 **Cross-tool recall is now graded.** Until 2026-08-23 the feedback loop ran for
 Claude only, so every cross-tool recall was served and never judged — the one
 capability memor exists for was the one it could not measure. All four agents
