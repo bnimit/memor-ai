@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: letter; margin: 0.5in 0.55in; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    color: #1a1a1a; font-size: 8.6px; line-height: 1.32;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 5px; margin-bottom: 7px; }
+  .head h1 { font-size: 15px; margin: 0 0 2px; letter-spacing: -0.2px; }
+  .head .sub { font-size: 8px; color: #555; }
+  .badge { text-align: right; font-size: 7.4px; color: #666; line-height: 1.35; }
+  .badge b { color: #111; }
+  .verdict { background: #f4f6f8; border-left: 3px solid #2f6fed; padding: 5px 8px; margin-bottom: 8px; font-size: 8.4px; }
+  .verdict b { color: #14213d; }
+  .cols { display: flex; gap: 10px; }
+  .col { flex: 1; }
+  h2 { font-size: 9.4px; margin: 0 0 4px; padding-bottom: 2px; border-bottom: 1px solid #ccc; text-transform: uppercase; letter-spacing: 0.4px; }
+  h2.s { color: #12692f; border-color: #bfe3c9; }
+  h2.w { color: #a12222; border-color: #f0c9c9; }
+  .item { margin-bottom: 6px; }
+  .item .t { font-weight: 700; font-size: 8.5px; }
+  .item .d { color: #333; }
+  .metric { color: #12692f; font-weight: 700; }
+  .bad { color: #a12222; font-weight: 700; }
+  .ev { color: #777; font-style: italic; font-size: 7.6px; }
+  table { border-collapse: collapse; width: 100%; margin: 4px 0 7px; font-size: 7.8px; }
+  th, td { border: 1px solid #d8d8d8; padding: 2px 4px; text-align: left; }
+  th { background: #f0f0f0; font-weight: 700; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .foot { margin-top: 8px; border-top: 1px solid #ccc; padding-top: 5px; font-size: 7.4px; color: #555; display: flex; justify-content: space-between; }
+  .rec { background: #fff8e6; border: 1px solid #f0dca0; padding: 5px 8px; margin-top: 7px; font-size: 8px; }
+  .rec b { color: #7a5b00; }
+  .tag { display: inline-block; background: #eef; color: #334; border-radius: 3px; padding: 0 4px; font-size: 7px; margin-left: 3px; }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <div>
+    <h1>Memor &mdash; Adversarial Product Review</h1>
+    <div class="sub">Local shared-memory &amp; token-compression layer for agentic coding tools &middot; evaluated as a global context layer for Codex</div>
+  </div>
+  <div class="badge">
+    <b>Reviewer:</b> Head of Product (evaluation lens)<br>
+    <b>Version:</b> v0.14.0 &middot; MIT &middot; 1,705 tests<br>
+    <b>Date:</b> 2026-09-07<br>
+    <b>Data:</b> one developer store, 40,810 artifacts
+  </div>
+</div>
+
+<div class="verdict">
+  <b>Bottom line.</b> Memor's differentiator is real and rare: it builds cross-tool memory from transcripts agents <i>already write to disk</i>, so a tool contributes memories without any plugin, MCP, or config &mdash; Goose wrote 1,256 memories having never heard of memor. Compression is honestly measured and net-of-cache. <b>But for the Codex-specific question the verdict is: not yet proven.</b> Codex is a heavy <i>writer</i> (4,602 memories) whose reading is <i>unmeasured</i> rather than broken: its 38 zero-hit recalls all predate the 2026-08-05 fix that taught the proxy to resolve a project, and only 2 recalls have been made since. The real gap is that <b>one agent does the reading</b> &mdash; Claude Code &mdash; while Cursor and jcode silently stopped weeks ago, and the product still cannot show it makes any agent measurably better at tasks.
+</div>
+
+<div class="cols">
+<div class="col">
+  <h2 class="s">Verifiable strengths (marketable)</h2>
+
+  <div class="item">
+    <div class="t">Zero-cooperation capture <span class="tag">unique</span></div>
+    <div class="d">Reads transcripts agents write for their own reasons. No save-tool call, no per-harness plugin, no screen capture.</div>
+    <div class="ev">Evidence: Goose 1,256 &amp; Kimi 95 memories with no memor integration installed. Reproducible: artifacts-by-source.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">Genuinely cross-tool, scoped by project</div>
+    <div class="d">A decision in Claude Code is recalled in Cursor/Codex. Scope is project, not agent, so memory crosses tools by default.</div>
+    <div class="ev">Evidence: 40,810 artifacts across 33 projects; 6 writer agents in one store.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">Compression is real and self-funding</div>
+    <div class="d">Lifetime <span class="metric">2,453,627 tokens</span> saved; recall injected 1.15M. Compression nets positive after paying for memory.</div>
+    <div class="ev">Evidence: proxy_savings ledger (non-passthrough). Reproduce: <code>memor compression-worth</code>.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">Honest, falsifiable measurement <span class="tag">rare</span></div>
+    <div class="d">Savings reported <b>net of prompt cache</b> (cache writes priced against reads); says <i>unmeasured</i> rather than assuming zero. Every headline has a replay command.</div>
+    <div class="ev">88.8% on a <code>pytest -v</code> payload; 47.7% on the Bash output it engages; all via <code>memor hook-worth</code>.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">Local-first, no vendor lock-in</div>
+    <div class="d">Runs entirely on localhost, no memor API key, forwards your existing provider credentials. Local embedding (~2ms).</div>
+    <div class="ev">Evidence: proxy forwards Anthropic/OpenAI creds; hybrid dense+BM25 retrieval with relevance gate.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">Retriever works in isolation</div>
+    <div class="d">95.0% any-hit, 86.7% all-gold on LongMemEval_S (n=120).</div>
+    <div class="ev">Reproduce: <code>memor eval-longmemeval</code>. See caveat &mdash; scores retrieval, not task success.</div>
+  </div>
+</div>
+
+<div class="col">
+  <h2 class="w">Drawbacks to fix before we'd ship it</h2>
+
+  <div class="item">
+    <div class="t">Only one agent actually reads <span class="tag">blocker</span></div>
+    <div class="d">Claude Code made <span class="bad">689 of 727</span> recalls since 2026-08-05. Cursor last read 2026-08-11, jcode 2026-08-22, and nothing surfaced either. Codex's 38 zero-hit recalls are <i>pre-fix June rows</i>, not evidence of a broken integration &mdash; a lifetime total spanning a fix reported retired code as current. Cross-tool memory cannot be judged when one tool does the reading.</div>
+    <div class="ev">The one integration OpenAI cares about is the least proven.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">No task-outcome benchmark <span class="tag">blocker</span></div>
+    <div class="d">Cannot show it makes an agent <i>better</i>. Its own counterfactual win rate is <span class="bad">8.6%</span> (was reported 63.8% before the harness was fixed). SWE-bench can't be borrowed (no prior session history).</div>
+    <div class="ev">Design-only plan exists; benchmark unbuilt.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">2 in 5 recalls return nothing</div>
+    <div class="d"><span class="bad">39.2% miss rate</span> (1,758 / 4,485). Some are correct declines, but the share is high enough to erode trust.</div>
+    <div class="ev">recall_log, all agents. Claude 1,544/3,986 miss.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">Quality graded on a razor-thin sample</div>
+    <div class="d">Only 453 "used" verdicts vs 40,810 artifacts (<span class="bad">~1%</span>). Cross-tool &mdash; the whole point &mdash; is barely judged. Rejection detector was blind before Aug&nbsp;23.</div>
+    <div class="ev">recall_outcomes: 453 used / 1,235 unused / 133 pending.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">Silent reliability failures</div>
+    <div class="d">Proxy savings recorded only <span class="bad">17 days total</span> and nothing since Aug&nbsp;22, and two agents stopped reading without a word. A layer you forget is running is a layer that silently stops. <i>Partly addressed: <code>memor doctor</code> now names any agent that stopped reading.</i></div>
+    <div class="ev">proxy_savings spans 2026-08-01 &rarr; 08-22 only.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">Blended compression looks tiny (0.8%)</div>
+    <div class="d">Arithmetically honest (tool results are 33% of a request) but a hard marketing story. Real ceiling ~3.9% of a whole request.</div>
+    <div class="ev">Only tool results are rewritable; args/convo/images are not.</div>
+  </div>
+
+  <div class="item">
+    <div class="t">Security posture is deny-list based</div>
+    <div class="d">Credential <i>filenames</i> are refused and structured secrets redacted, but bare-digit secrets (2FA codes) once passed through. Filename heuristics are brittle.</div>
+    <div class="ev">Fixed reactively after a real backup-codes file leaked past redaction.</div>
+  </div>
+</div>
+</div>
+
+<div class="rec">
+  <b>What would make this marketable for Codex:</b>
+  (1) <s>Land Codex recall via the Responses API</s> &mdash; <b>misdiagnosed</b>. Recall already resolves the project from the system prompt and tool paths (fixed 2026-08-05); Codex's MCP registration simply omitted its agent label, so its reads were filed under jcode. Both now fixed and tested.
+  (2) Get more than one agent reading, then ship a task-outcome benchmark with prior session history; a credible win-rate is the only claim buyers act on, and it cannot be measured on a store only Claude Code reads.
+  (3) <b>Done:</b> <code>memor doctor</code> reports per-agent staleness and withholds hit rates drawn from pre-fix data.
+  (4) Grow graded cross-tool verdicts from ~1% to a defensible sample.
+  (5) Move security from filename deny-list to content-based secret detection.
+</div>
+
+<div class="rec">
+  <b>Correction (2026-09-07, after this review shipped).</b> The original draft called Codex "write-only in practice" on the strength of 38 recalls with 0 hits. Every figure was pulled live and the conclusion was still wrong: all 38 rows date from June, before the fix that gave the proxy a project to search, so the metric described code that no longer runs. A lifetime aggregate hides the moment a bug was fixed. Any per-agent statistic here is now windowed against the last behaviour change, which is what <code>memor doctor</code> enforces.
+</div>
+
+<div class="foot">
+  <span>All figures pulled live from <code>~/.memor/memor.db</code> and repo on 2026-09-07. Every strength is reproducible via a named CLI command.</span>
+  <span>Illustrative single-developer store, not a benchmark.</span>
+</div>
+
+</body>
+</html>
