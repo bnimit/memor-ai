@@ -118,6 +118,20 @@ saw the original. Proxy traffic *can* be grounded, because the provider reports
 usage per request, and `memor compression-worth` says which of the two a given
 figure rests on rather than blending them.
 
+**To measure instead of estimate**, hold out a share of payloads at random and
+compare the provider's own billed tokens between the two arms:
+
+```bash
+export MEMOR_HOLDOUT_FRACTION=0.1   # off by default
+```
+
+Randomization is per payload, not per session. Session-level holdout is the
+obvious design and it does not work here: session sizes on this store vary 53x
+(CV 1.42), which needs roughly 790 sessions per arm to detect a 20% effect.
+Comparing the same kind of payload within a conversation brings that to about
+57 requests per arm. The holdout share is the savings deliberately given up to
+learn whether the rest are real.
+
 **Cross-tool recall is now graded.** Until 2026-08-23 the feedback loop ran for
 Claude only, so every cross-tool recall was served and never judged — the one
 capability memor exists for was the one it could not measure. All four agents

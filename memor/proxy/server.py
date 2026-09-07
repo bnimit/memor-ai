@@ -170,6 +170,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
                 "passthrough": int(result.passthrough),
+                "experiment_arm": result.experiment_arm,
             }
             row.update((upstream_usage or UsageSniffer("anthropic").usage).as_row())
             store.record_proxy_savings(row)
@@ -208,6 +209,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
                 "passthrough": int(result.passthrough),
+                "experiment_arm": result.experiment_arm,
             })
 
             # Return streaming response - context will be managed by the generator
@@ -305,6 +307,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
                 "passthrough": int(result.passthrough),
+                "experiment_arm": result.experiment_arm,
             }
             row.update((upstream_usage or UsageSniffer("openai").usage).as_row())
             store.record_proxy_savings(row)
@@ -342,6 +345,7 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
                 "tokens_after": result.tokens_after,
                 "content_types": result.content_types,
                 "passthrough": int(result.passthrough),
+                "experiment_arm": result.experiment_arm,
             })
             
             # Return streaming response - context will be managed by the generator

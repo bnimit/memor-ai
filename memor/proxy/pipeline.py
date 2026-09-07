@@ -99,8 +99,17 @@ class PipelineResult:
     content_types: dict
     passthrough: bool
     ccr_ids: list[str]
+    #: How many eligible payloads were left uncompressed by the holdout. Zero
+    #: when the experiment is off, which is the default.
+    holdout_payloads: int = 0
 
-def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResult:
+def run_pipeline(
+    provider: str,
+    body: dict,
+    store: SqliteStore,
+    *,
+    held_out=None,
+) -> PipelineResult:
     """Run the compression pipeline on latest-turn tool payloads.
     
     Compresses only the latest turn's tool payloads, leaving earlier turns
@@ -164,11 +173,26 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
     total_tokens_before = 0
     total_tokens_after = 0
     success_count = 0
+    holdout_count = 0
     
     for payload in payloads:
         # Our own earlier output. Leave it alone and keep it out of the
         # denominator, or the rate drops the better the compressor does.
         if already_compressed(payload.text):
+            continue
+
+        # Holdout: leave this payload alone so it can serve as a control.
+        # Assigned per payload rather than per request, and keyed on the text
+        # so the same tool output keeps its arm across the many requests that
+        # resend it -- flipping arms mid-conversation would rewrite the cached
+        # prefix repeatedly and charge the experiment for cache writes that
+        # measure nothing.
+        if held_out is not None and held_out(payload.text):
+            compressed_payloads.append((payload.path, payload.text, None))
+            tokens = count_tokens(payload.text)
+            total_tokens_before += tokens
+            total_tokens_after += tokens
+            holdout_count += 1
             continue
 
         result = _compress_payload(
@@ -227,5 +251,6 @@ def run_pipeline(provider: str, body: dict, store: SqliteStore) -> PipelineResul
         tokens_after=total_tokens_after,
         content_types=content_type_counts,
         passthrough=passthrough,
-        ccr_ids=ccr_ids
+        ccr_ids=ccr_ids,
+        holdout_payloads=holdout_count,
     )

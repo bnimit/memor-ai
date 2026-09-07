@@ -31,6 +31,10 @@ class ShimResult:
     tokens_after: int
     content_types: dict
     passthrough: bool
+    #: Which arm of the holdout experiment this request landed in, or None when
+    #: the experiment is off. None must not be read as "compressed": rows from
+    #: before the experiment existed are not evidence about it.
+    experiment_arm: str | None = None
 
 
 def _passthrough_shim(original_body: dict) -> ShimResult:
@@ -62,7 +66,16 @@ def prepare_request_body(
         return _passthrough_shim(original_body)
 
     try:
-        result = run_pipeline(provider, original_body, store)
+        from memor.proxy.experiment import (
+            ARM_CONTROL, ARM_TREATMENT, assign_arm, is_enabled,
+        )
+
+        experimenting = is_enabled()
+        held_out = (
+            (lambda text: assign_arm(text) == ARM_CONTROL)
+            if experimenting else None
+        )
+        result = run_pipeline(provider, original_body, store, held_out=held_out)
         from memor.proxy.memory import inject_memory
 
         body = inject_memory(
@@ -90,12 +103,20 @@ def prepare_request_body(
 
         compressor_state.mode = "compress"
         compressor_state.compressor_ready = True
+        arm = None
+        if experimenting:
+            # A request is a control only when the holdout actually withheld
+            # something. One that had nothing to compress anyway is not
+            # evidence either way, and labelling it would pad the control arm
+            # with requests the treatment could never have changed.
+            arm = ARM_CONTROL if result.holdout_payloads else ARM_TREATMENT
         return ShimResult(
             body=body,
             tokens_before=result.tokens_before,
             tokens_after=result.tokens_after,
             content_types=result.content_types,
             passthrough=result.passthrough,
+            experiment_arm=arm,
         )
     except Exception:
         logger.warning("compressor failed; forwarding original body (shim)", exc_info=True)

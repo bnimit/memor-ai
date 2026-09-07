@@ -117,6 +117,7 @@ class SqliteStore:
         self._migrate_quality_range()
         self._migrate_attribute_unknown_savings()
         self._migrate_cache_creation_tokens()
+        self._migrate_experiment_arm()
         self._migrate_recall_agent()
         self._migrate_recall_conversation()
         self._migrate_repair_impossible_counts()
@@ -394,6 +395,24 @@ class SqliteStore:
                 self.db.execute(
                     "ALTER TABLE proxy_savings "
                     "ADD COLUMN upstream_cache_creation_tokens INTEGER")
+                self.db.commit()
+            except sqlite3.Error:
+                pass
+
+    def _migrate_experiment_arm(self):
+        """Add the holdout arm to ledgers that predate the experiment.
+
+        NULL has to stay distinguishable from the compressed arm. A row written
+        before the holdout existed is not evidence about it, and counting those
+        as treatment would compare years of ordinary traffic against a handful
+        of controls and call the difference an effect.
+        """
+        cols = [r[1] for r in self.db.execute(
+            "PRAGMA table_info(proxy_savings)").fetchall()]
+        if "experiment_arm" not in cols:
+            try:
+                self.db.execute(
+                    "ALTER TABLE proxy_savings ADD COLUMN experiment_arm TEXT")
                 self.db.commit()
             except sqlite3.Error:
                 pass
@@ -1548,14 +1567,16 @@ class SqliteStore:
                 "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
                 "tokens_before, tokens_after, content_types, passthrough, "
                 "upstream_input_tokens, upstream_cache_read_tokens, "
-                "upstream_output_tokens, upstream_cache_creation_tokens) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                "upstream_output_tokens, upstream_cache_creation_tokens, "
+                "experiment_arm) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (row.get("timestamp"), row.get("agent"), row.get("provider"),
                  row.get("session_id"), row.get("tokens_before"), row.get("tokens_after"),
                  content_types_json, row.get("passthrough", 0),
                  row.get("upstream_input_tokens"), row.get("upstream_cache_read_tokens"),
                  row.get("upstream_output_tokens"),
-                 row.get("upstream_cache_creation_tokens")))
+                 row.get("upstream_cache_creation_tokens"),
+                 row.get("experiment_arm")))
             self.db.commit()
             return cur.lastrowid
         except sqlite3.Error as exc:
