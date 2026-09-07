@@ -24,6 +24,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -46,11 +47,29 @@ _ROLE_BY_TYPE = {_TYPE_USER: "user", _TYPE_ASSISTANT: "assistant"}
 # Pulled off the raw JSON rather than the parsed object: the fallback only
 # needs the first workspace-looking path, and most bubbles are large.
 #
-# Paths appear at two nesting depths. Structured fields like a code block's
-# uri.path are plain JSON, but a tool's arguments are themselves a JSON string
-# inside the record, so their quotes arrive backslash-escaped. Matching only
-# the plain form missed every tool-only thread, which is most of them.
-_PATH_RE = re.compile(r'\\?"(?:path|targetFile|effectiveUri|fsPath)\\?"\s*:\s*\\?"(/[^"\\]+)')
+# Paths appear in three shapes, at two nesting depths and in prose. Structured
+# fields like a code block's uri.path are plain JSON; a tool's arguments are
+# themselves a JSON string inside the record, so their quotes arrive escaped
+# (sometimes doubly, when a payload is re-serialized); and a user often just
+# names a directory mid-sentence. Matching only the plain form left most
+# threads unattributed, so all three are collected and voted on.
+_PATH_RE = re.compile(
+    r'(?:\\{0,2}"(?:path|targetFile|effectiveUri|fsPath)\\{0,2}"\s*:\s*\\{0,2}"'
+    r'|(?<![\w/]))'
+    r'(/Users/[^"\\\s,;)\]}]+|/home/[^"\\\s,;)\]}]+)'
+)
+
+# Tooling paths, not project paths. An agent reads its own config and plugin
+# cache constantly, and Cursor's own storage holds every thread's scratch.
+_IGNORED_PATH_MARKERS = (
+    "/Library/Application Support/",
+    "/.cursor/",
+    "/.claude/",
+    "/.vscode/",
+    "/node_modules/",
+    "/.git/",
+    "/Library/Caches/",
+)
 
 # Tool output is truncated per block. A single bubble can carry a full file
 # read, and the point of ingesting tool results is the outcome, not the bulk.
@@ -63,6 +82,22 @@ _TOOL_ARGS_LIMIT = 300
 # A tool turn is kept on substance rather than phrasing. Below this it is a
 # bare call signature with no outcome attached, which recalls nothing.
 _MIN_TOOL_TOKENS = 12
+
+# Path-bearing bubbles retained per thread for the project vote. Enough for a
+# majority to be meaningful, small enough that a 143k-row scan stays cheap.
+_PROJECT_VOTE_SAMPLES = 40
+
+# How far a vanished path may be walked up before it is abandoned. A repo root
+# sits a few levels above a source file; anything deeper is a lost mount.
+_MAX_ANCESTOR_WALK = 8
+
+# Cursor names a per-workspace scratch directory after the workspace path with
+# separators replaced by dashes, which is the last resort for attribution.
+_CURSOR_PROJECT_DIR_RE = re.compile(r'/\.cursor/projects/([A-Za-z0-9_.-]+)')
+
+# The encoded reference is identical in every bubble that carries it, so a
+# couple of samples is all the last-resort tier can use.
+_ENCODED_REF_SAMPLES = 3
 
 
 def _connect_ro(path: Path) -> sqlite3.Connection:
@@ -142,24 +177,110 @@ def _project_from_paths(raw_values: list[str]) -> str:
     the bubbles live on in global storage forever. Without this fallback the
     bulk of the corpus would file under one meaningless bucket and never
     surface on a project-scoped recall.
+
+    Every candidate path votes and the most-mentioned project wins. Taking the
+    first match instead let a single incidental path decide, and the first path
+    in a thread is often a config file or a plugin under a home directory
+    rather than the repository actually being worked on.
     """
+    votes: Counter[str] = Counter()
     for raw in raw_values:
         for match in _PATH_RE.finditer(raw):
-            path = match.group(1)
-            # Skip Cursor's own scratch and extension paths.
-            if "/Library/Application Support/" in path:
+            path = match.group(1).rstrip(".,;:)\"'")
+            if _is_ignorable_path(path):
                 continue
             # Cursor records both files and directories under "path". Taking
             # .parent unconditionally walked every directory reference up one
             # level, filing a whole folder of separate repos under their shared
             # parent, so a third of threads landed in one "Projects" bucket.
-            candidate = Path(path)
-            if not candidate.is_dir():
-                candidate = candidate.parent
-            if not candidate.is_dir():
+            candidate = _nearest_existing_dir(Path(path))
+            if candidate is None:
                 continue
-            return resolve_project(str(candidate))
+            project = resolve_project(str(candidate))
+            if project:
+                votes[project] += 1
+    if not votes:
+        return ""
+    return votes.most_common(1)[0][0]
+
+
+def _nearest_existing_dir(path: Path) -> Path | None:
+    """Walk up to the closest directory that still exists.
+
+    Threads outlive the files they touched: a branch gets merged, a scratch
+    directory is cleaned up, a file is renamed. Requiring the exact path to
+    exist threw away threads whose repository is still right there, so the walk
+    stops at the first surviving ancestor and lets ``resolve_project`` find the
+    git root from there. Bounded so a path from a deleted mount cannot climb
+    all the way to ``/`` and vote for the filesystem root.
+    """
+    current = path
+    for _ in range(_MAX_ANCESTOR_WALK):
+        if current.is_dir():
+            return current
+        parent = current.parent
+        if parent == current or parent == Path.home() or parent == Path("/"):
+            return None
+        current = parent
+    return None
+
+
+def _is_ignorable_path(path: str) -> bool:
+    """Reject paths that name tooling rather than the user's project.
+
+    An agent reads its own config, plugins and caches constantly, so these
+    would otherwise outvote the repository in a short thread.
+    """
+    return any(marker in path for marker in _IGNORED_PATH_MARKERS)
+
+
+def _project_from_cursor_project_dir(raw_values: list[str]) -> str:
+    """Recover a project from a ``~/.cursor/projects/<encoded>`` reference.
+
+    Cursor names that directory after the workspace with separators replaced by
+    dashes, the same trick Claude uses. It is the last usable signal for a
+    thread whose only concrete paths point at plugin caches, which is what a
+    pure research session looks like: real work, no repository file ever
+    touched. The encoding is lossy, since a dash in a directory name is
+    indistinguishable from a separator, so candidates are checked against the
+    filesystem longest-first and the reference is dropped when none exists.
+    """
+    for raw in raw_values:
+        for match in _CURSOR_PROJECT_DIR_RE.finditer(raw):
+            resolved = _decode_dashed_path(match.group(1))
+            if resolved:
+                return resolve_project(str(resolved))
     return ""
+
+
+def _decode_dashed_path(encoded: str) -> Path | None:
+    """Turn ``Users-nimit-Documents-Projects-my-repo`` back into a real path.
+
+    The encoding is lossy: a dash may be a separator or part of a directory
+    name, and a single path can contain several of each. So this walks the
+    filesystem instead of guessing, consuming as many dash-joined parts as
+    still name a real directory at each level and preferring the longest match,
+    which keeps ``my-repo`` intact rather than splitting it into ``my/repo``.
+    """
+    parts = [p for p in encoded.strip("-").split("-") if p]
+    if not parts:
+        return None
+    return _walk_dashed(Path("/"), parts)
+
+
+def _walk_dashed(base: Path, parts: list[str]) -> Path | None:
+    if not parts:
+        return base
+    # Longest first: a directory literally named "my-repo" must win over a
+    # "my" directory that happens to also exist beside it.
+    for take in range(len(parts), 0, -1):
+        candidate = base / "-".join(parts[:take])
+        if not candidate.is_dir():
+            continue
+        resolved = _walk_dashed(candidate, parts[take:])
+        if resolved is not None:
+            return resolved
+    return None
 
 
 def _created_at(value) -> float:
@@ -395,6 +516,7 @@ def scan_cursor_sessions(
         # LIKE scan each over ~143k rows, and the daemon calls this every poll.
         latest: dict[str, float] = {}
         unresolved: dict[str, list[str]] = {}
+        encoded_refs: dict[str, list[str]] = {}
         try:
             cursor = con.execute(
                 "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'"
@@ -411,11 +533,19 @@ def scan_cursor_sessions(
             # Test for a path as we stream rather than banking the first few
             # bubbles: a thread often opens with several path-free turns, so a
             # fixed head sample finds nothing and the thread falls to
-            # "unknown". Store only the raw values that actually match.
+            # "unknown". Store only the raw values that actually match, and
+            # keep enough of them for the majority vote to mean something.
             if composer_id not in mapping:
                 samples = unresolved.setdefault(composer_id, [])
-                if len(samples) < 5 and _PATH_RE.search(raw):
+                if len(samples) < _PROJECT_VOTE_SAMPLES and _PATH_RE.search(raw):
                     samples.append(raw)
+                # Kept separately: these references sit in bubbles whose only
+                # other paths are plugin caches, so they never survive the
+                # path-vote sample and would be lost by the time it fails.
+                if _CURSOR_PROJECT_DIR_RE.search(raw):
+                    fallbacks = encoded_refs.setdefault(composer_id, [])
+                    if len(fallbacks) < _ENCODED_REF_SAMPLES:
+                        fallbacks.append(raw)
 
             stamp = 0.0
             try:
@@ -428,9 +558,16 @@ def scan_cursor_sessions(
         con.close()
 
     for composer_id, mtime in latest.items():
+        # Three tiers, most authoritative first: the workspace store, then a
+        # vote over paths the thread actually touched, then Cursor's dash
+        # encoded scratch directory for threads that touched no repo file.
         project = mapping.get(composer_id) or ""
         if not project:
             project = _project_from_paths(unresolved.get(composer_id, []))
+        if not project:
+            project = _project_from_cursor_project_dir(
+                encoded_refs.get(composer_id, [])
+            )
         if not project:
             project = "unknown"
         results.append((composer_id, project, mtime))

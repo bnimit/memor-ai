@@ -303,6 +303,120 @@ def test_scan_infers_project_from_escaped_tool_args(tmp_path: Path) -> None:
     assert sessions[0][1] == "escaped-service"
 
 
+def test_project_vote_beats_an_incidental_first_path(tmp_path: Path) -> None:
+    """The first path in a thread is often not the project being worked on."""
+    stray = tmp_path / "repos" / "stray-repo"
+    (stray / ".git").mkdir(parents=True)
+    real = tmp_path / "repos" / "real-repo"
+    (real / ".git").mkdir(parents=True)
+
+    rows = [
+        ("bubbleId:comp-8:b0", _bubble(
+            bubble_id="b0", kind=_ASSISTANT, text="",
+            code_blocks=[{"uri": {"path": str(stray / "once.py")}, "content": "x"}])),
+    ]
+    for i in range(1, 4):
+        rows.append((f"bubbleId:comp-8:b{i}", _bubble(
+            bubble_id=f"b{i}", kind=_ASSISTANT, text="",
+            code_blocks=[{"uri": {"path": str(real / f"m{i}.py")}, "content": "x"}])))
+
+    db = tmp_path / "globalStorage" / "state.vscdb"
+    _make_global_db(db, rows)
+
+    sessions = scan_cursor_sessions(db, workspace_dir=tmp_path / "missing")
+
+    assert sessions[0][1] == "real-repo"
+
+
+def test_project_survives_a_file_that_no_longer_exists(tmp_path: Path) -> None:
+    """Threads outlive the files they touched; the repo is usually still there."""
+    repo = tmp_path / "repos" / "living-repo"
+    (repo / ".git").mkdir(parents=True)
+    gone = repo / "deleted" / "branch" / "scratch.md"
+
+    db = tmp_path / "globalStorage" / "state.vscdb"
+    _make_global_db(db, [
+        ("bubbleId:comp-5:b1", _bubble(
+            bubble_id="b1", kind=_USER,
+            text=f"Review the brief at {gone} and summarize the plan")),
+    ])
+
+    sessions = scan_cursor_sessions(db, workspace_dir=tmp_path / "missing")
+
+    assert sessions[0][1] == "living-repo"
+
+
+def test_tooling_paths_do_not_win_the_project_vote(tmp_path: Path) -> None:
+    """An agent reads its own plugin cache constantly; that is not the project."""
+    repo = tmp_path / "repos" / "app-repo"
+    (repo / ".git").mkdir(parents=True)
+    plugins = tmp_path / "home" / ".claude" / "plugins" / "cache"
+    plugins.mkdir(parents=True)
+
+    rows = [
+        (f"bubbleId:comp-6:b{i}", _bubble(
+            bubble_id=f"b{i}", kind=_ASSISTANT, text="",
+            tool={
+                "name": "read_file",
+                "status": "completed",
+                "rawArgs": json.dumps({"path": str(plugins / "skill.md")}),
+                "result": json.dumps({"contents": "doc"}),
+            }))
+        for i in range(4)
+    ]
+    rows.append(("bubbleId:comp-6:b9", _bubble(
+        bubble_id="b9", kind=_ASSISTANT, text="",
+        code_blocks=[{"uri": {"path": str(repo / "main.py")}, "content": "x"}])))
+
+    db = tmp_path / "globalStorage" / "state.vscdb"
+    _make_global_db(db, rows)
+
+    sessions = scan_cursor_sessions(db, workspace_dir=tmp_path / "missing")
+
+    assert sessions[0][1] == "app-repo"
+
+
+def test_decode_dashed_path_handles_dashes_in_the_project_name() -> None:
+    """The encoding is lossy, so a real directory must settle the split."""
+    from memor.ingest.cursor import _decode_dashed_path
+
+    home = Path.home()
+    assert _decode_dashed_path(
+        str(home).lstrip("/").replace("/", "-")
+    ) == home
+    # Nothing resolves below an existing head, so the reference is abandoned
+    # rather than attributed to the home directory.
+    assert _decode_dashed_path(
+        str(home).lstrip("/").replace("/", "-") + "-no-such-project-here"
+    ) is None
+    assert _decode_dashed_path("empty-window") is None
+
+
+def test_encoded_scratch_dir_attributes_a_research_thread(tmp_path: Path) -> None:
+    """A thread that touched no repo file still names its workspace somewhere.
+
+    Pure research sessions are real work, and their only concrete paths point
+    at plugin caches, so this is the last signal available.
+    """
+    repo = tmp_path / "repos" / "research-repo"
+    (repo / ".git").mkdir(parents=True)
+    encoded = str(repo).lstrip("/").replace("/", "-")
+
+    db = tmp_path / "globalStorage" / "state.vscdb"
+    _make_global_db(db, [
+        ("bubbleId:comp-2:b1", _bubble(
+            bubble_id="b1", kind=_USER,
+            text=(
+                "Research real-time equities data sources; notes are under "
+                f"/Users/someone/.cursor/projects/{encoded}/notes"
+            ))),
+    ])
+
+    sessions = scan_cursor_sessions(db, workspace_dir=tmp_path / "missing")
+
+    assert sessions[0][1] == "research-repo"
+
+
 def test_scan_falls_back_to_unknown_without_any_path(tmp_path: Path) -> None:
     db = tmp_path / "globalStorage" / "state.vscdb"
     _make_global_db(db, [
