@@ -810,7 +810,7 @@ def backfill(
     projects_dir: str = typer.Option(None, help="Override ~/.claude/projects/"),
     db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
 ):
-    """One-shot ingest of Claude, Codex, Kimi, Goose and jcode sessions into the memory store."""
+    """One-shot ingest of Claude, Codex, Cursor, Kimi, Goose and jcode sessions into the memory store."""
     from memor.daemon import (
         CLAUDE_PROJECTS_DIR, DEFAULT_DB, _make_embedder, _make_llm, run_backfill,
     )
@@ -821,7 +821,7 @@ def backfill(
     store = SqliteStore(db_path, dim=embedder.dim)
     llm = _make_llm()
     claude_dir = Path(projects_dir) if projects_dir else CLAUDE_PROJECTS_DIR
-    typer.echo("Backfilling local agent sessions (Claude + Kimi + Goose)...")
+    typer.echo("Backfilling local agent sessions (Claude + Codex + Cursor + Kimi + Goose)...")
     counts = run_backfill(
         store,
         embedder,

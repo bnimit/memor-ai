@@ -1,4 +1,4 @@
-"""Multi-agent ingest source registry — Claude, Codex, Kimi, Goose, jcode, docs."""
+"""Multi-agent ingest source registry — Claude, Codex, Cursor, Kimi, Goose, jcode, docs."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +15,13 @@ from memor.ingest.codex import (
     CODEX_SESSIONS_DIR,
     parse_session as parse_codex_session,
     scan_codex_sessions,
+)
+from memor.ingest.cursor import (
+    CURSOR_GLOBAL_DB,
+    CURSOR_WORKSPACE_DIR,
+    cursor_state_key,
+    parse_session as parse_cursor_session,
+    scan_cursor_sessions,
 )
 from memor.ingest.goose import (
     GOOSE_DB_PATH,
@@ -187,6 +194,36 @@ def scan_codex_units(sessions_dir: Path) -> list[IngestUnit]:
     return units
 
 
+def scan_cursor_units(
+    db_path: Path,
+    *,
+    workspace_dir: Path = CURSOR_WORKSPACE_DIR,
+) -> list[IngestUnit]:
+    """One unit per Cursor composer thread.
+
+    Cursor keeps no per-session file, so the unit is a composer id inside one
+    shared multi-gigabyte store. mtime is the newest message in the thread
+    rather than a file stat, which is what lets the daemon skip the 140-odd
+    threads that did not change this cycle.
+    """
+    units: list[IngestUnit] = []
+    for composer_id, project, mtime in scan_cursor_sessions(
+        db_path, workspace_dir=workspace_dir
+    ):
+        def _parse(cid=composer_id, proj=project, db=db_path) -> list[Artifact]:
+            return parse_cursor_session(db, cid, proj, filter_noise=True)
+
+        units.append(IngestUnit(
+            state_key=cursor_state_key(composer_id),
+            mtime=mtime,
+            project=project,
+            agent="cursor",
+            parse=_parse,
+            path=None,
+        ))
+    return units
+
+
 def scan_document_units(dirs: list[Path]) -> list[IngestUnit]:
     """One unit per watched document.
 
@@ -220,6 +257,7 @@ def scan_all_sources(
     goose_db_path: Path | None = None,
     jcode_sessions_dir: Path | None = None,
     codex_sessions_dir: Path | None = None,
+    cursor_db_path: Path | None = None,
     document_dirs: list[Path] | None = None,
 ) -> list[IngestUnit]:
     """Scan enabled sources. Pass None to skip a source (except Claude when dir given).
@@ -241,6 +279,8 @@ def scan_all_sources(
         units.extend(scan_jcode_units(jcode_sessions_dir))
     if codex_sessions_dir is not None:
         units.extend(scan_codex_units(codex_sessions_dir))
+    if cursor_db_path is not None:
+        units.extend(scan_cursor_units(cursor_db_path))
     if document_dirs:
         units.extend(scan_document_units(document_dirs))
     return units
@@ -255,4 +295,5 @@ def default_local_source_paths() -> dict[str, Path]:
         "goose_db_path": GOOSE_DB_PATH,
         "jcode_sessions_dir": JCODE_SESSIONS_DIR,
         "codex_sessions_dir": CODEX_SESSIONS_DIR,
+        "cursor_db_path": CURSOR_GLOBAL_DB,
     }

@@ -353,13 +353,14 @@ def run_poll_cycle(
     goose_db_path: Path | None = None,
     jcode_sessions_dir: Path | None = None,
     codex_sessions_dir: Path | None = None,
+    cursor_db_path: Path | None = None,
     document_dirs: list[Path] | None = None,
 ) -> tuple[dict[str, float], set[str], dict[str, int]]:
     """Run one poll cycle: ingest new units, then distill new sessions.
 
-    Claude is always scanned via ``projects_dir``. Kimi/Goose are scanned only
-    when their path kwargs are provided (daemon/backfill pass home defaults;
-    unit tests omit them so only the fixture Claude tree is used).
+    Claude is always scanned via ``projects_dir``. Kimi/Goose/Cursor are scanned
+    only when their path kwargs are provided (daemon/backfill pass home
+    defaults; unit tests omit them so only the fixture Claude tree is used).
 
     Returns (updated ingest state, updated distilled set, chunks_by_agent).
     """
@@ -374,6 +375,7 @@ def run_poll_cycle(
         goose_db_path=goose_db_path,
         jcode_sessions_dir=jcode_sessions_dir,
         codex_sessions_dir=codex_sessions_dir,
+        cursor_db_path=cursor_db_path,
         document_dirs=document_dirs,
     )
 
@@ -534,6 +536,7 @@ def run_backfill(
     goose_db_path: Path | None = None,
     jcode_sessions_dir: Path | None = None,
     codex_sessions_dir: Path | None = None,
+    cursor_db_path: Path | None = None,
     document_dirs: list[Path] | None = None,
     llm=None,
 ) -> dict[str, int]:
@@ -567,6 +570,10 @@ def run_backfill(
         codex_sessions_dir=(
             codex_sessions_dir if codex_sessions_dir is not None
             else paths["codex_sessions_dir"]
+        ),
+        cursor_db_path=(
+            cursor_db_path if cursor_db_path is not None
+            else paths["cursor_db_path"]
         ),
         document_dirs=(
             document_dirs if document_dirs is not None
@@ -635,6 +642,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     goose_db = paths["goose_db_path"]
     jcode_dir = paths["jcode_sessions_dir"]
     codex_dir = paths["codex_sessions_dir"]
+    cursor_db = paths["cursor_db_path"]
     doc_dirs = _configured_document_dirs()
 
     llm = _make_llm()
@@ -651,6 +659,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
     print(f"                 {goose_db}")
     print(f"                 {jcode_dir}")
     print(f"                 {codex_dir}")
+    print(f"                 {cursor_db}")
     for _d in doc_dirs:
         print(f"                 {_d} (documents)")
     print(f"  db:            {DEFAULT_DB}")
@@ -670,6 +679,7 @@ def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_P
                 goose_db_path=goose_db,
                 jcode_sessions_dir=jcode_dir,
                 codex_sessions_dir=codex_dir,
+                cursor_db_path=cursor_db,
                 document_dirs=doc_dirs,
             )
             save_state(state)
