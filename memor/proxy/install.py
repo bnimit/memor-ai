@@ -41,6 +41,10 @@ from memor.proxy.opencode_install import (
 )
 
 _ANTHROPIC_DEFAULT = "https://api.anthropic.com/v1/messages"
+
+#: Stamped into Codex's MCP registration so the recalls it serves are labelled
+#: as Codex. Without it the server falls back to its ``jcode`` default.
+_CODEX_MCP_ENV_LINE = 'env = { MEMOR_HOOK_AGENT = "codex" }'
 _OPENAI_DEFAULT = "https://api.openai.com/v1/chat/completions"
 
 
@@ -491,7 +495,13 @@ def register_mcp_claude() -> None:
 
 
 def register_mcp_codex() -> None:
-    """Register memor_retrieve MCP server in Codex config.toml."""
+    """Register memor_retrieve MCP server in Codex config.toml.
+
+    The env line matters as much as the command. The MCP server labels every
+    recall it serves from ``MEMOR_HOOK_AGENT`` and defaults to ``jcode``, so a
+    registration without it filed Codex's reads under another agent, leaving
+    Codex looking like it never read while inflating jcode.
+    """
     config_path = Path.home() / ".codex" / "config.toml"
 
     binary = shutil.which("memor-retrieve-mcp")
@@ -523,14 +533,26 @@ def register_mcp_codex() -> None:
                 new_lines.append(line)
             elif in_memor_section and line.strip().startswith("command"):
                 new_lines.append(f'command = "{binary}"')
+            elif in_memor_section and line.strip().startswith("env"):
+                # Rewritten rather than kept: an existing registration from
+                # before the label was stamped would keep reporting Codex's
+                # recalls under another agent's name.
+                new_lines.append(_CODEX_MCP_ENV_LINE)
             else:
                 new_lines.append(line)
 
         config_text = "\n".join(new_lines)
+        if _CODEX_MCP_ENV_LINE not in config_text:
+            config_text = config_text.replace(
+                "[mcp_servers.memor_retrieve]",
+                "[mcp_servers.memor_retrieve]\n" + _CODEX_MCP_ENV_LINE,
+                1,
+            )
     else:
         mcp_section = f"""
 [mcp_servers.memor_retrieve]
 command = "{binary}"
+{_CODEX_MCP_ENV_LINE}
 """
         config_text = config_text.rstrip() + "\n" + mcp_section
 
