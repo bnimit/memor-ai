@@ -348,9 +348,12 @@ Memor runs two complementary local paths — combine them or use either alone:
               ▲
               │
        Daemon ingests sessions ── Claude ~/.claude/projects/
+                                  Codex  ~/.codex/sessions/
+                                  Cursor Cursor composer store (SQLite)
                                   Kimi   ~/.kimi/sessions/
                                   Goose  ~/.local/share/goose/...
                                   Jcode  ~/.jcode/sessions/
+                                  Docs   watched folders (memor docs watch)
 ```
 
 | Path | Purpose | Default |
@@ -548,7 +551,7 @@ memor dashboard
 
 Trading-desk style UI with an **Overview** plus per-agent panes (Claude, Cursor, Codex, Copilot, Kimi, Goose):
 
-- **Overview** — status chips (proxy / hook / daemon), portfolio KPIs, cumulative tokens-saved equity curve, recall activity, efficiency, projects, quality, recent recalls
+- **Overview** — status chips (proxy / hook / daemon, plus which agents are actually *reading* memory and how long any has been silent), portfolio KPIs, cumulative tokens-saved equity curve, recall activity, efficiency, projects, quality, recent recalls
 - **Agent desks** — click a tab (or a desk tile) for that environment’s hit rate, latency, proxy savings %, recall volume chart, savings curve, and filtered recalls
 - **Proxy savings by agent** — every agent routed through the proxy
 
@@ -767,7 +770,7 @@ cd memor-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest  # 1,270+ tests
+pytest  # 1,760+ tests
 ```
 
 ---

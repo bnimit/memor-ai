@@ -9,7 +9,7 @@ Thanks for your interest in contributing. This guide covers everything you need 
  │  Fork ──► Branch ──► Code ──► Test ──► PR ──► Review        │
  │                                                               │
  │  Every PR must:                                              │
- │    1. Pass all 1,270+ existing tests (CI runs 3.11 and 3.14) │
+ │    1. Pass all 1,760+ existing tests (CI runs 3.11 and 3.14) │
  │    2. Add tests for new functionality                        │
  │    3. Not regress eval metrics (if touching retrieval)       │
  └─────────────────────────────────────────────────────────────┘
@@ -34,7 +34,7 @@ pip install -e ".[dev,local,anthropic]"
 pytest
 ```
 
-You should see 1,270+ tests passing. If any fail, open an issue before proceeding.
+You should see 1,760+ tests passing. If any fail, open an issue before proceeding.
 
 ## Project Structure
 
