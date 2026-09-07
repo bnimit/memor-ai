@@ -44,6 +44,12 @@ One developer's store, as an illustration rather than a benchmark:
 | `goose` | 1,256 | `codex` | 38 |
 | `kimi` | 95 | `jcode` | 32 |
 
+Read those totals with a date attached. They are lifetime figures, and a
+lifetime total spans every bug it outlived: `codex`'s 38 reads are all from
+June, before a fix that taught the proxy which project to search, so they
+describe code that no longer runs. `memor doctor` reports the same numbers
+windowed against the last behaviour change, which is the honest view.
+
 Scope is by **project**, never by agent, so a memory crosses tools by default
 rather than by configuration. Note the asymmetry: writing needs only a
 transcript on disk, while reading needs an integration, which is why Goose and
@@ -290,7 +296,10 @@ To revert: `memor uninstall-proxy --agent claude`
 
 ### Optional: Full Cursor install (recommended)
 
-**Memory alone** still only needs `memor install-hook` (Claude covers Cursor). For token savings on Cursor, one command enables the full stack:
+**Memory alone** still only needs `memor install-hook` (Claude covers Cursor), and
+Cursor's own sessions are ingested from its local composer store whether or not
+anything is installed. For token savings on Cursor, one command enables the full
+stack:
 
 ```bash
 memor install-proxy --agent cursor
@@ -390,7 +399,7 @@ Both paths write to the same recall ledger, including recalls that return nothin
 |-------|----------------|-----------------|
 | **Claude Code** | Yes | Yes — `memor install-proxy --agent claude` |
 | **Codex CLI** | Yes | Experimental — `memor install-proxy --agent codex` (Chat Completions only) |
-| **Cursor** | Yes | BYOK proxy + Shell compress hooks |
+| **Cursor** | Yes — own ingest, plus hooks | BYOK proxy + Shell compress hooks |
 | **Copilot CLI** | Yes | No — hooks only |
 | **Kimi CLI** | Yes | Yes — `memor install-proxy --agent kimi` |
 | **Goose** | Yes | Yes — `memor install-proxy --agent goose` (auto-detects common Desktop custom providers like `custom_deepseek`; use `--upstream-url` if yours is custom) |
@@ -646,12 +655,15 @@ memor/
 ├── redact.py                   Secret redaction at ingest
 ├── feedback.py                 Did a served memory get used? Per-agent readers
 ├── crosstool.py                Reader × writer: did memory cross tools?
+├── liveness.py                 Is each agent still reading? Windows stats
+│                                 against the last behaviour change
 ├── backfill_feedback.py        Grade recalls the daemon already passed over
 ├── global_memories.py          Cross-project promotion to _global scope
 │
 ├── ingest/                     Passive capture — no agent cooperation needed
 │   ├── claude_code.py            ~/.claude/projects/ JSONL
 │   ├── codex.py                  ~/.codex/sessions/ rollout JSONL
+│   ├── cursor.py                 Cursor composer store (SQLite, read-only)
 │   ├── jcode.py                  ~/.jcode/sessions/ + journal appends
 │   ├── goose.py                  Goose sessions.db (SQLite)
 │   ├── kimi.py                   ~/.kimi/sessions/ wire.jsonl

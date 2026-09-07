@@ -4,6 +4,62 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### The last unread source, and a status that could not go stale
+
+**Added**
+
+- **Cursor sessions are ingested.** Cursor was the last wired agent memor
+  served recalls to but never read from. Its agent traffic rides a private
+  binary protobuf wire behind a request checksum, so interception buys nothing
+  that survives a Cursor update; everything worth remembering is already on
+  disk in Cursor's composer store. Reading that gives the whole history rather
+  than a live feed, with no CA, no DNS spoofing and no account risk: 143
+  threads and 36,534 artifacts on the development machine. Tool turns are most
+  of the corpus and carry the answers, so `toolFormerData` is decoded (one
+  session went from 423 artifacts to 3,156), and tool turns are judged on
+  substance rather than the prose scorer, which rejected 37% of them for not
+  sounding like a decision. Project attribution falls back from Cursor's
+  workspace store to a vote over paths the thread touched to Cursor's
+  dash-encoded scratch directory: 5 of 143 threads end up `unknown`, and all
+  five contain no filesystem reference of any kind.
+- **`memor doctor`.** Every other command answers "how well is this working";
+  none answered "is this still running", and those fail differently. A dead
+  integration is silent, which is what an unused one looks like. Cursor stopped
+  recalling on 11 Aug and jcode on 22 Aug, and nothing surfaced either.
+  `doctor` reports per-agent staleness, and computes hit rates **only over
+  recalls since the last behaviour change**, withholding them below 20.
+
+**Fixed**
+
+- **Statistics no longer quote bugs that were already fixed.** An adversarial
+  review of this project read "Codex: 38 recalls, 0 hits" from the live
+  database and concluded the integration was broken. Every figure was accurate
+  and the conclusion was false: all 38 rows are from June, before 44ed7fe
+  taught the proxy to resolve a project, so they describe code that no longer
+  runs. A lifetime aggregate silently spans a fix. `doctor` and the dashboard
+  now window per-agent figures against the last behaviour change, and the
+  README notes the same caveat on its own totals.
+- **Codex's MCP recalls are labelled Codex.** The MCP server reads
+  `MEMOR_HOOK_AGENT` and defaults to `jcode`; Codex's registration wrote only a
+  command line, so its reads were filed under another agent. That is how "Codex
+  never reads" and an inflated jcode count can be the same missing line.
+- **The dashboard shows who is reading, not who is configured.** The Agents
+  chip listed `proxy_agents`, which is configuration and cannot go stale, so it
+  read healthy throughout the weeks Cursor and jcode were doing nothing. It was
+  also too narrow to have noticed: both read through hooks and MCP rather than
+  the proxy, so 459 of their recalls never touched that config. The chip is now
+  the union of configured and actually-reading agents, silence is shown in-line
+  (`Cursor (silent 27d)`), and a stale reader raises the same banner a silent
+  compression path already did.
+- **`unknown` is no longer reported as a broken agent.** It is the label the
+  proxy writes for a request with no agent header, so it is a bucket of
+  unattributed recalls rather than a tool anyone can fix. Still listed, with a
+  note saying what it is.
+- **Cursor counts as its own writer in cross-tool stats.** It used to map to
+  `claude_code` because it had no ingest source; now that it has one, that
+  mapping would have scored a Cursor recall of a Cursor memory as cross-tool
+  and inflated the headline number `crosstool.py` exists to keep honest.
+
 ## [0.14.0] - 2026-09-06
 
 ### Two sources that were never being read, and figures that were quietly wrong
