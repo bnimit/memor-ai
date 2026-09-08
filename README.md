@@ -1,29 +1,51 @@
+<div align="center">
+
 ```
                                                 _
  _ __ ___   ___ _ __ ___   ___  _ __       __ _(_)
 | '_ ` _ \ / _ \ '_ ` _ \ / _ \| '__|____ / _` | |
 | | | | | |  __/ | | | | | (_) | | |_____| (_| | |
 |_| |_| |_|\___|_| |_| |_|\___/|_|        \__,_|_|
-
-  Measured memory and opt-in token savings for coding agents.
 ```
 
+### One local memory shared by every AI coding agent on your machine
+
+**Claude Code · Cursor · Codex · Copilot · Kimi · Goose · Cline · OpenCode**
+
+A decision you made in Claude Code is there when you open Cursor tomorrow.
+No API key, no cloud, no plugin for the agent to install.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1631%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1804%20passing-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/memor-cli.svg)](https://pypi.org/project/memor-cli/)
+[![Local first](https://img.shields.io/badge/local--first-no%20API%20key-8a63d2.svg)]()
 
-**One long-term memory shared by every LLM coding tool on your machine.** A
-decision recorded while using Claude Code is there when you switch to Cursor,
-Codex, jcode, Goose or Kimi. Everything runs locally. No Memor API key required.
+```bash
+pip install memor-cli && memor install-hook
+```
+
+<img src="docs/images/dashboard-overview.png" alt="memor dashboard showing cross-tool memory, token savings and per-agent recall activity" width="900">
+
+</div>
+
+---
+
+## Why this exists
+
+You explain your codebase to Claude Code. Tomorrow you open Cursor and explain
+it again. The reasoning from yesterday — why you rejected that library, the bug
+you spent an hour cornering — scrolled away with the conversation. It was never
+in the repo, so no agent can read it back.
+
+That reasoning is kept in one local store and served back to whichever agent
+you happen to open.
 
 Two things, in one install:
 
-1. **Memory** — one store, every tool. Recall past decisions and bugfixes so you
-   stop re-explaining your own codebase, in whichever agent you happen to open.
-2. **Compression** — crush noisy tool output before it reaches the model,
-   without losing what you need from it. This pays for the memory: it removes
-   more tokens than recall injects.
+1. **Memory** — one store, every tool. Stop re-explaining your own codebase.
+2. **Compression** — crush noisy tool output before it reaches the model. This
+   pays for the memory: it removes more tokens than recall injects.
 
 ### What makes it different: nothing has to cooperate
 
@@ -34,6 +56,24 @@ your agents already write to disk for their own reasons.
 The practical consequence: **Goose has contributed 1,256 memories to this
 machine's store and has never heard of memor** — no plugin, no MCP
 registration, no entry in its config. It contributed by being used.
+
+### How it compares
+
+| | memor | Cloud memory SaaS | Per-agent plugins | Provider compaction |
+|---|---|---|---|---|
+| Works across different agents | **Yes** | Yes | No, one per harness | No, one vendor |
+| Needs the agent to cooperate | **No** | Usually a `save` tool | Yes, install per tool | n/a |
+| Your code leaves the machine | **No** | Yes | Varies | Yes |
+| Needs its own API key | **No** | Yes | Varies | n/a |
+| Compresses tool output | **Yes** | No | Rarely | Conversation only |
+| Reports what it cannot prove | **Yes** | Rarely | Rarely | n/a |
+
+That last row is unusual and deliberate. See
+[what the compression numbers actually are](#what-the-compression-numbers-actually-are).
+
+**Jump to:** [Quick Start](#quick-start) · [Agent matrix](#agent-matrix) ·
+[How it works](#how-it-works-hooks-path) · [Dashboard](#dashboard) ·
+[Commands](#commands) · [Architecture](#architecture) · [Security](#security)
 
 One developer's store, as an illustration rather than a benchmark:
 
@@ -49,6 +89,11 @@ lifetime total spans every bug it outlived: `codex`'s 38 reads are all from
 June, before a fix that taught the proxy which project to search, so they
 describe code that no longer runs. `memor doctor` reports the same numbers
 windowed against the last behaviour change, which is the honest view.
+
+<img src="docs/images/doctor.svg" alt="memor doctor output showing per-agent read status: which agents are live, quiet or stale, and which statistics predate a fix" width="820">
+
+An agent that stops reading is silent, and silence looks exactly like a quiet
+week. `memor doctor` is the one command that tells them apart.
 
 Scope is by **project**, never by agent, so a memory crosses tools by default
 rather than by configuration. Note the asymmetry: writing needs only a
@@ -188,6 +233,15 @@ Any product claiming more than that on this shape of traffic is measuring a
 different denominator — typically log-heavy or document-heavy workloads where
 tool output is most of the request. `memor request-anatomy` prints this
 breakdown for your own sessions.
+
+**Every figure says what it rests on.** `memor compression-worth` separates what
+a provider could confirm from what only memor's tokenizer counted, and refuses
+to print a comparison drawn from the wrong requests:
+
+<img src="docs/images/compression-worth.svg" alt="memor compression-worth output separating realized savings from figures no invoice can confirm" width="700">
+
+Most tools report the largest number they can compute. This one reports the
+number it can defend, and names the gap where it cannot.
 
 > **What LongMemEval does and does not show.** It scores whether retrieval
 > surfaced the right session, not whether the agent then answered correctly, and

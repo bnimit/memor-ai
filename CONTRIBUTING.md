@@ -59,6 +59,24 @@ You should see 1,760+ tests passing. If any fail, open an issue before proceedin
 
 ## Making Changes
 
+### README images
+
+Every image in the README is generated from live output, never hand-made, so it
+cannot quietly disagree with the product:
+
+```bash
+memor dashboard &                    # must be running
+scripts/refresh-readme-images.sh     # rebuilds all of docs/images/
+```
+
+The dashboard shot is a real screenshot; the terminal panels are SVGs rendered
+from real command output by `scripts/render_terminal_svg.py`. SVG rather than
+PNG because it stays sharp on any display, and because it diffs as text in
+review, so a stale figure is visible in the pull request rather than only to
+whoever opens the page.
+
+If you change what a command prints, re-run the script in the same commit.
+
 ### Branch naming
 
 ```
