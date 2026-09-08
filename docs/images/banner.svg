@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="memor: one local memory shared by every AI coding agent">
+<defs>
+<radialGradient id="glow" cx="50%" cy="42%" r="55%"><stop offset="0%" stop-color="#e89320" stop-opacity="0.10"/><stop offset="100%" stop-color="#e89320" stop-opacity="0"/></radialGradient>
+<linearGradient id="rule" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#e89320" stop-opacity="0"/><stop offset="50%" stop-color="#e89320" stop-opacity="0.55"/><stop offset="100%" stop-color="#e89320" stop-opacity="0"/></linearGradient>
+</defs>
+<rect width="1280" height="320" fill="#0c0e12"/>
+<rect width="1280" height="320" fill="url(#glow)"/>
+<rect x="326" y="58" width="118" height="30" rx="15" fill="#161a22" stroke="#2a3140"/>
+<text x="385" y="78" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,sans-serif" font-size="13" fill="#a8a29a">Claude Code</text>
+<rect x="458" y="58" width="88" height="30" rx="15" fill="#161a22" stroke="#2a3140"/>
+<text x="502" y="78" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,sans-serif" font-size="13" fill="#a8a29a">Cursor</text>
+<rect x="560" y="58" width="88" height="30" rx="15" fill="#161a22" stroke="#2a3140"/>
+<text x="604" y="78" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,sans-serif" font-size="13" fill="#a8a29a">Codex</text>
+<rect x="662" y="58" width="88" height="30" rx="15" fill="#161a22" stroke="#2a3140"/>
+<text x="706" y="78" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,sans-serif" font-size="13" fill="#a8a29a">Copilot</text>
+<rect x="764" y="58" width="88" height="30" rx="15" fill="#161a22" stroke="#2a3140"/>
+<text x="808" y="78" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,sans-serif" font-size="13" fill="#a8a29a">Kimi</text>
+<rect x="866" y="58" width="88" height="30" rx="15" fill="#161a22" stroke="#2a3140"/>
+<text x="910" y="78" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,sans-serif" font-size="13" fill="#a8a29a">Goose</text>
+<path d="M 385 90 C 385 116, 640 110, 640 132" fill="none" stroke="#2a3140" stroke-width="1.2"/>
+<path d="M 502 90 C 502 116, 640 110, 640 132" fill="none" stroke="#2a3140" stroke-width="1.2"/>
+<path d="M 604 90 C 604 116, 640 110, 640 132" fill="none" stroke="#2a3140" stroke-width="1.2"/>
+<path d="M 706 90 C 706 116, 640 110, 640 132" fill="none" stroke="#2a3140" stroke-width="1.2"/>
+<path d="M 808 90 C 808 116, 640 110, 640 132" fill="none" stroke="#2a3140" stroke-width="1.2"/>
+<path d="M 910 90 C 910 116, 640 110, 640 132" fill="none" stroke="#2a3140" stroke-width="1.2"/>
+<text x="626.0" y="205" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,sans-serif" font-size="76" font-weight="600" letter-spacing="-2" fill="#e8e6e1">memor</text>
+<circle cx="762.0" cy="198" r="8" fill="#e89320"/>
+<rect x="420" y="228" width="440" height="1" fill="url(#rule)"/>
+<text x="640.0" y="262" text-anchor="middle" font-family="ui-sans-serif,-apple-system,Segoe UI,sans-serif" font-size="19" fill="#a8a29a">One local memory shared by every AI coding agent</text>
+<circle cx="418" cy="291" r="3.5" fill="#2fd67b"/>
+<text x="430" y="296" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13" fill="#6d655c">Local first</text>
+<circle cx="560" cy="291" r="3.5" fill="#2fd67b"/>
+<text x="572" y="296" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13" fill="#6d655c">No API key</text>
+<circle cx="694" cy="291" r="3.5" fill="#2fd67b"/>
+<text x="706" y="296" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13" fill="#6d655c">No plugin to install</text>
+</svg>

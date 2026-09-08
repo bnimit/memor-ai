@@ -1,16 +1,6 @@
 <div align="center">
 
-```
-                                                _
- _ __ ___   ___ _ __ ___   ___  _ __       __ _(_)
-| '_ ` _ \ / _ \ '_ ` _ \ / _ \| '__|____ / _` | |
-| | | | | |  __/ | | | | | (_) | | |_____| (_| | |
-|_| |_| |_|\___|_| |_| |_|\___/|_|        \__,_|_|
-```
-
-### One local memory shared by every AI coding agent on your machine
-
-**Claude Code · Cursor · Codex · Copilot · Kimi · Goose · Cline · OpenCode**
+<img src="docs/images/banner.svg" alt="memor: one local memory shared by every AI coding agent, working with Claude Code, Cursor, Codex, Copilot, Kimi and Goose" width="880">
 
 A decision you made in Claude Code is there when you open Cursor tomorrow.
 No API key, no cloud, no plugin for the agent to install.
@@ -34,17 +24,17 @@ pip install memor-cli && memor install-hook
 ## Why this exists
 
 You explain your codebase to Claude Code. Tomorrow you open Cursor and explain
-it again. The reasoning from yesterday — why you rejected that library, the bug
-you spent an hour cornering — scrolled away with the conversation. It was never
-in the repo, so no agent can read it back.
+it again. The reasoning from yesterday, why you rejected that library and the
+bug you spent an hour cornering, scrolled away with the conversation. It was
+never in the repo, so no agent can read it back.
 
 That reasoning is kept in one local store and served back to whichever agent
 you happen to open.
 
 Two things, in one install:
 
-1. **Memory** — one store, every tool. Stop re-explaining your own codebase.
-2. **Compression** — crush noisy tool output before it reaches the model. This
+1. **Memory.** One store, every tool. Stop re-explaining your own codebase.
+2. **Compression.** Crush noisy tool output before it reaches the model. This
    pays for the memory: it removes more tokens than recall injects.
 
 ### What makes it different: nothing has to cooperate
@@ -54,8 +44,8 @@ written per harness, or they capture your screen. memor reads the transcripts
 your agents already write to disk for their own reasons.
 
 The practical consequence: **Goose has contributed 1,256 memories to this
-machine's store and has never heard of memor** — no plugin, no MCP
-registration, no entry in its config. It contributed by being used.
+machine's store and has never heard of memor**. No plugin, no MCP registration,
+no entry in its config. It contributed by being used.
 
 ### How it compares
 
@@ -105,7 +95,7 @@ Kimi appear as writers and not yet as readers.
 Memory is built from **sessions**, automatically, because they are a byproduct
 nobody else keeps: once a conversation scrolls away, the reasoning in it is gone. Why a
 library was rejected, what was tried and abandoned, the correction you made at
-4pm — none of that survives in the repo.
+4pm. None of that survives in the repo.
 
 It does **not** crawl your codebase, and that is a design choice rather than a
 missing feature. A design doc, an ADR, a README are live files the agent can
@@ -113,8 +103,8 @@ already read. Copying them into memory creates a stale duplicate of an
 authoritative source, and a stale memory is worse than none: it costs tokens
 *and* misleads.
 
-For notes that live outside the repo — an onboarding brief, an incident
-writeup, a decision record in a wiki — point the daemon at the folder and it
+For notes that live outside the repo, such as an onboarding brief, an incident
+writeup or a decision record in a wiki, point the daemon at the folder and it
 keeps them ingested the same way it keeps transcripts:
 
 ```bash
@@ -125,11 +115,11 @@ memor docs list                 # what is watched, and what reached the store
 Watching is safe because chunk ids are content-hashed: an unchanged file
 re-reads to the same rows for free, and a chunk that no longer appears in the
 file is retired rather than left to answer from a deleted draft. Nothing is
-auto-discovered — `document_dirs` starts empty, because indexing a repo's own
+auto-discovered. `document_dirs` starts empty, because indexing a repo's own
 `docs/` duplicates files the agent can already open.
 
-Files whose names announce credentials — `backup-codes`, `recovery_codes`,
-`2fa`, `password`, `.env`, `id_rsa` — are skipped entirely rather than
+Files whose names announce credentials (`backup-codes`, `recovery_codes`,
+`2fa`, `password`, `.env`, `id_rsa`) are skipped entirely rather than
 redacted. Redaction matches *structured* secrets (an `sk-` key, a JWT, a PEM
 block); a page of 2FA recovery codes is bare digits and passes straight
 through, so the decision is made before the file is read.
@@ -178,7 +168,7 @@ Comparing the same kind of payload within a conversation brings that to about
 learn whether the rest are real.
 
 **Cross-tool recall is now graded.** Until 2026-08-23 the feedback loop ran for
-Claude only, so every cross-tool recall was served and never judged — the one
+Claude only, so every cross-tool recall was served and never judged. The one
 capability memor exists for was the one it could not measure. All four agents
 are now read. The dashboard shows the reader × writer matrix at
 `/api/cross-tool`, with cross-tool and same-tool kept apart because blending
@@ -195,9 +185,9 @@ reads *"not yet graded"* rather than 0%, because "nothing has been judged" and
 
 **Two caveats worth stating.** The 170 judged verdicts are 0.5% of a
 34,039-artifact store, so every claim about memory quality rests on a thin
-sample. And the rejection detector was blind until 2026-08-23 — it matched
+sample. And the rejection detector was blind until 2026-08-23. It matched
 phrases like *"that's incorrect"* while real users push back by asking *"didn't
-we already fix that?"* — so scores recorded before then counted hits with no
+we already fix that?"*, so scores recorded before then counted hits with no
 misses.
 
 ### What the compression numbers actually are
@@ -210,7 +200,7 @@ Compression is easy to verify and therefore easy to falsify, so these are measur
 | ...on the payloads it engages | **43.3%** saved | the subset it does not decline, same 6 sessions | `memor request-anatomy` |
 | Answer-critical retention | **96.2%** kept | 132 grounded cases from real edits | `memor eval-retention` |
 | ...against truncation at a comparable budget | **50.3%** kept | the same 132 cases | `memor eval-retention` |
-| Retrieval accuracy | **95.0%** any-hit, 86.7% all-gold | LongMemEval_S, n=120 — see the caveat below | `memor eval-longmemeval` |
+| Retrieval accuracy | **95.0%** any-hit, 86.7% all-gold | LongMemEval_S, n=120, see the caveat below | `memor eval-longmemeval` |
 | Tool-output compression, when it fires | **47.7%** saved | 70 of 291 large Bash results, 60 sessions | `memor hook-worth` |
 | ...across all Bash output | **11.1%** saved | the same 291 results (24.1% coverage) | `memor hook-worth` |
 | Proxy, blended over all traffic | **0.8%** | 5,414 real proxied requests | dashboard |
@@ -227,10 +217,10 @@ weak compressor.** A coding-agent request is mostly things memor must not touch:
 
 At 11.7% across all tool output, a whole request comes down by **3.9%**. Even
 at the 43.3% rate achieved on payloads the compressor engages, the ceiling for a
-whole request is 14.3% — and that higher figure describes a subset, not your
+whole request is 14.3%, and that higher figure describes a subset, not your
 bill.
 Any product claiming more than that on this shape of traffic is measuring a
-different denominator — typically log-heavy or document-heavy workloads where
+different denominator, typically log-heavy or document-heavy workloads where
 tool output is most of the request. `memor request-anatomy` prints this
 breakdown for your own sessions.
 
@@ -258,15 +248,15 @@ number it can defend, and names the gap where it cannot.
 > borrowed for it: its instances carry no prior session history, so a memory
 > layer has nothing to remember and scores as baseline by construction.
 
-> Beware the image trap. A base64 screenshot tokenises as a vast string — a
+> Beware the image trap. A base64 screenshot tokenises as a vast string. A
 > 161 KB PNG counts as 113,367 tokens if you feed the encoded text to a
-> tokenizer — but providers bill an image by its dimensions. Counting the base64
+> tokenizer, but providers bill an image by its dimensions. Counting the base64
 > put images at 31% of a session and made them look like the biggest prize
 > available; they are 0.4%. If an estimate implies more tokens than the provider
 > ever billed, the estimate is wrong.
 
 **Coverage is capped by safety, on purpose.** The hook fires on 21.9% of large
-Bash results. Nearly all of the rest is held back by the source guard — output
+Bash results. Nearly all of the rest is held back by the source guard: output
 that is source code, most often a heredoc or a `cat`, and an agent editing
 against a mutilated read is a worse outcome than any token saving is worth.
 Pushing coverage higher means weakening that guard.
@@ -299,7 +289,7 @@ reported usage it says *unmeasured* rather than assuming zero.
 pipx install memor-cli
 
 # Install the hook + download embedding model (~60MB)
-memor install-hook                  # interactive — pick an agent
+memor install-hook                  # interactive, pick an agent
 memor install-hook --agent kimi     # or pass directly (claude, codex, copilot, kimi, goose, jcode)
 
 # Compress noisy tool output before it reaches the model (Claude Code)
@@ -328,7 +318,7 @@ memor dashboard
 # Opens http://localhost:8420
 ```
 
-> **Alternative install:** `pip install memor-cli` works too — just make sure `~/.local/bin` is on your PATH so the `memor` command is available.
+> **Alternative install:** `pip install memor-cli` works too. Just make sure `~/.local/bin` is on your PATH so the `memor` command is available.
 
 ### Optional: Token savings proxy
 
@@ -348,8 +338,8 @@ in, no already-cached prompt prefix is rewritten, so there is no cache
 re-formation cost to weigh against the saving.
 
 Scope is deliberately narrow: Bash output only. Reads, greps and source code
-are never rewritten, and a command that exits non-zero passes through whole —
-a failing build is when every line matters most. Savings land in the same
+are never rewritten, and a command that exits non-zero passes through whole.
+A failing build is when every line matters most. Savings land in the same
 ledger the dashboard reads.
 
 **Full request compression (proxy):**
@@ -362,7 +352,7 @@ memor install-proxy --agent claude   # or: codex, goose, kimi, cursor, cline, op
 
 This points your agent at a local proxy on `127.0.0.1:8421`, compresses tool payloads before they reach the provider, and logs savings to the dashboard. For proxied agents, hooks skip inject and **recall is served by the proxy instead**; Cursor and Copilot always use hooks only.
 
-A proxy is handed an HTTP request and nothing else — no working directory — so it works out which project a request belongs to by reading the request itself: the working directory the agent states in its system prompt, and failing that the git root shared by the absolute file paths its tool calls name. If neither yields a real repository, recall falls back to global memories rather than guessing at a project.
+A proxy is handed an HTTP request and nothing else, with no working directory, so it works out which project a request belongs to by reading the request itself: the working directory the agent states in its system prompt, and failing that the git root shared by the absolute file paths its tool calls name. If neither yields a real repository, recall falls back to global memories rather than guessing at a project.
 
 `memor service restart` (e.g. after `pipx upgrade`) keeps the proxy running when it was opted in. If the proxy fails its health check on install, Memor restores your agent’s original API URLs so calls are not left pointing at a dead localhost port. `memor service stop` warns while agents still point at the proxy; `memor service uninstall` restores direct API configs for proxy-enabled agents.
 
@@ -395,13 +385,13 @@ memor service restart                  # recycle services after an upgrade
 
 Compression reaches Cursor through the **Shell compress hooks**, which crush terminal
 and tool output before Cursor ingests it. Subscription Composer traffic is not
-intercepted — see [Why no Composer interception](#why-no-composer-interception).
+intercepted. See [Why no Composer interception](#why-no-composer-interception).
 
 ---
 
 ## Dual-Path Architecture
 
-Memor runs two complementary local paths — combine them or use either alone:
+Memor runs two complementary local paths. Combine them or use either alone:
 
 ```
                          ┌──────────────────────────────────────┐
@@ -437,9 +427,9 @@ Memor runs two complementary local paths — combine them or use either alone:
 | **Hooks** | Shared memory recall across all agents | On after `memor install-hook` |
 | **Proxy** | Recall + compress tool payloads; ledger token savings | Opt-in via `memor install-proxy` |
 
-**Memory is fire-and-forget** — install hooks once, every prompt gets relevant context. **Proxy is opt-in** — for Claude Code, Codex, Goose, and Kimi when you want measurable token savings on top. Proxied agents skip hook inject and are served recall by the proxy instead; Cursor and Copilot always use hooks. The proxy forwards your existing Anthropic/OpenAI credentials; Memor does not require its own API key.
+**Memory is fire-and-forget.** Install hooks once, every prompt gets relevant context. **Proxy is opt-in**, for Claude Code, Codex, Goose, and Kimi when you want measurable token savings on top. Proxied agents skip hook inject and are served recall by the proxy instead; Cursor and Copilot always use hooks. The proxy forwards your existing Anthropic/OpenAI credentials; Memor does not require its own API key.
 
-Both paths write to the same recall ledger, including recalls that return nothing — a retrieval that found no match is the only direct evidence that retrieval was asked a question it could not answer, so it is recorded rather than discarded.
+Both paths write to the same recall ledger, including recalls that return nothing. A retrieval that found no match is the only direct evidence that retrieval was asked a question it could not answer, so it is recorded rather than discarded.
 
 ---
 
@@ -450,7 +440,7 @@ Both paths write to the same recall ledger, including recalls that return nothin
   (Claude · Cursor · Codex · Copilot · Kimi · Goose · Jcode)
       |
       v
-  Hook fires — auto-detects which agent
+  Hook fires, auto-detects which agent
       |
       v
   Embed query locally (model2vec, ~2ms)
@@ -469,27 +459,27 @@ Both paths write to the same recall ledger, including recalls that return nothin
       |
       v
   Your agent sees past decisions, bugfixes,
-  architecture choices — without you re-explaining
+  architecture choices, without you re-explaining
 ```
 
 ### Agent matrix
 
 | Agent | Memory (hooks) | Proxy / savings |
 |-------|----------------|-----------------|
-| **Claude Code** | Yes | Yes — `memor install-proxy --agent claude` |
-| **Codex CLI** | Yes | Experimental — `memor install-proxy --agent codex` (Chat Completions only) |
-| **Cursor** | Yes — own ingest, plus hooks | BYOK proxy + Shell compress hooks |
-| **Copilot CLI** | Yes | No — hooks only |
-| **Kimi CLI** | Yes | Yes — `memor install-proxy --agent kimi` |
-| **Goose** | Yes | Yes — `memor install-proxy --agent goose` (auto-detects common Desktop custom providers like `custom_deepseek`; use `--upstream-url` if yours is custom) |
-| **Jcode** | Ingest via hooks; recall via MCP — `memor install-hook --agent jcode` then `memor install-mcp --agent jcode` | Yes — via a `PATH` shim, see [Jcode compression](#jcode-compression) |
-| **Cline** | No | Yes — `memor install-proxy --agent cline` |
-| **OpenCode** | No | Yes — `memor install-proxy --agent opencode` |
+| **Claude Code** | Yes | Yes, `memor install-proxy --agent claude` |
+| **Codex CLI** | Yes | Experimental, `memor install-proxy --agent codex` (Chat Completions only) |
+| **Cursor** | Yes, own ingest, plus hooks | BYOK proxy + Shell compress hooks |
+| **Copilot CLI** | Yes | No, hooks only |
+| **Kimi CLI** | Yes | Yes, `memor install-proxy --agent kimi` |
+| **Goose** | Yes | Yes, `memor install-proxy --agent goose` (auto-detects common Desktop custom providers like `custom_deepseek`; use `--upstream-url` if yours is custom) |
+| **Jcode** | Ingest via hooks; recall via MCP, `memor install-hook --agent jcode` then `memor install-mcp --agent jcode` | Yes, via a `PATH` shim, see [Jcode compression](#jcode-compression) |
+| **Cline** | No | Yes, `memor install-proxy --agent cline` |
+| **OpenCode** | No | Yes, `memor install-proxy --agent opencode` |
 
 ### Jcode compression
 
-Jcode has no hook that can rewrite tool output — `post_tool` is a detached
-observer whose stdout is discarded — and it ignores `ANTHROPIC_BASE_URL` when
+Jcode has no hook that can rewrite tool output. `post_tool` is a detached
+observer whose stdout is discarded, and it ignores `ANTHROPIC_BASE_URL` when
 the credential is OAuth, so neither of memor's usual paths reaches it.
 
 What does reach it is the shell. Jcode's bash tool resolves `bash` through
@@ -508,7 +498,7 @@ Measured on stock `jcode v0.79.1`, reading the stored transcript: a 400-line
 build log lands as 17,136 characters without the shim and 370 with it. Set
 `MEMOR_SHIM_OFF=1` to disable it without editing `PATH`.
 
-The shim is byte-exact for everything else — `seq`, `echo`, `printf` without a
+The shim is byte-exact for everything else: `seq`, `echo`, `printf` without a
 trailing newline and a full source file all hash identically to real bash, and
 exit codes and stderr pass through. Only `bash -c` and `bash -lc` are
 intercepted, so interactive and login shells are untouched, and if memor is
@@ -525,16 +515,16 @@ running a fork means giving up upstream upgrades.
 | **Claude Code** | `UserPromptSubmit` + `additionalContext` | `~/.claude/settings.json` | `memor install-hook --agent claude` |
 | **Codex CLI** | `UserPromptSubmit` + `additionalContext` | `~/.codex/hooks/hooks.json` | `memor install-hook --agent codex` |
 | **Copilot CLI** | `userPromptSubmitted` + `additionalContext` | `~/.copilot/hooks/memor.json` | `memor install-hook --agent copilot` |
-| **Cursor** | `beforeSubmitPrompt` + `additionalContext` | `~/.claude/settings.json` (loaded as Claude user hooks) | automatic — covered by the Claude install |
+| **Cursor** | `beforeSubmitPrompt` + `additionalContext` | `~/.claude/settings.json` (loaded as Claude user hooks) | automatic, covered by the Claude install |
 | **Kimi CLI** | `UserPromptSubmit` + plain-text context | `~/.kimi/config.toml` | `memor install-hook --agent kimi` |
 | **Goose** | `UserPromptSubmit` + `additionalContext` | `~/.agents/plugins/memor/` | `memor install-hook --agent goose` |
-| **Jcode** | `turn_end` / `session_end` (ingest only — jcode hooks are observers and cannot inject) | `~/.jcode/config.toml` | `memor install-hook --agent jcode` |
+| **Jcode** | `turn_end` / `session_end` (ingest only, jcode hooks are observers and cannot inject) | `~/.jcode/config.toml` | `memor install-hook --agent jcode` |
 
-A single `memor-hook` binary auto-detects which agent is calling it — no separate entry points needed. Kimi and Goose installs stamp `MEMOR_HOOK_AGENT` so Claude-shaped payloads stay correctly labeled. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. When an agent is proxied, its hook skips inject and memory comes from the proxy path; Cursor and Copilot always inject via hooks. The dashboard tracks recalls per agent so you can see usage across all your environments.
+A single `memor-hook` binary auto-detects which agent is calling it, so no separate entry points are needed. Kimi and Goose installs stamp `MEMOR_HOOK_AGENT` so Claude-shaped payloads stay correctly labeled. Cursor loads the same Claude user hooks, so installing for Claude Code covers Cursor too. When an agent is proxied, its hook skips inject and memory comes from the proxy path; Cursor and Copilot always inject via hooks. The dashboard tracks recalls per agent so you can see usage across all your environments.
 
-> **Goose note:** Memory inject needs a Goose build with advise-tier `additionalContext` support. DeepSeek (or any other provider) is configured inside Goose — Memor talks to Goose's hooks, not to the model provider.
+> **Goose note:** Memory inject needs a Goose build with advise-tier `additionalContext` support. DeepSeek (or any other provider) is configured inside Goose. Memor talks to Goose's hooks, not to the model provider.
 
-> **Jcode note:** Jcode is the one agent whose read and write paths are split, because every jcode hook except `pre_tool` is a detached observer: it fires and forgets, and its stdout is discarded. That makes hooks an excellent *ingest* trigger — `turn_end` carries the session id and cwd, and a slow ingest can never delay your turn — but it leaves no channel to inject memories into a prompt. Recall is therefore served by MCP, as a `memor_recall` tool the model calls for itself:
+> **Jcode note:** Jcode is the one agent whose read and write paths are split, because every jcode hook except `pre_tool` is a detached observer: it fires and forgets, and its stdout is discarded. That makes hooks an excellent *ingest* trigger, since `turn_end` carries the session id and cwd and a slow ingest can never delay your turn, but it leaves no channel to inject memories into a prompt. Recall is therefore served by MCP, as a `memor_recall` tool the model calls for itself:
 >
 > ```bash
 > memor install-hook --agent jcode   # writes: jcode work becomes memory
@@ -547,11 +537,11 @@ A single `memor-hook` binary auto-detects which agent is calling it — no separ
 
 **Background processes** (supervised by `memor service install`):
 
-1. **Daemon** — polls local agent session stores (Claude Code `~/.claude/projects/`, Kimi `~/.kimi/sessions/`, Goose `~/.local/share/goose/sessions/sessions.db`), embeds chunks, runs distillation, analyzes feedback (Claude), promotes cross-project patterns to global scope, compacts duplicates, auto-compacts the vector index when bloated, tracks session-level token usage. Model providers are not ingest sources — only the agent that owns the session. All local. Use `memor backfill` for a one-shot ingest of past sessions.
-2. **Hook** — fires on every prompt, recalls relevant memories, injects them as context. Works across Claude Code, Cursor, Codex, Copilot, Kimi, and Goose. Measured on 2,285 real recalls that returned hits: median 176 ms, 90th percentile 3.1 s. The tail was concurrent prompts queueing behind one another in the sidecar, now fixed; the ledger figure still includes recalls served before that. A single recall is ~120 ms. A recall that finds nothing returns in about 214 ms, because the relevance gate rejects before the lexical channel runs. The embedding itself is well under a millisecond; the time is retrieval and ranking over a store this size.
-3. **Proxy** (optional) — intercepts Anthropic/OpenAI API calls on `127.0.0.1:8421`, serves recall, compresses tool payloads, forwards to your provider, and writes savings and recall ledgers. Started automatically by `memor install-proxy`.
+1. **Daemon.** Polls local agent session stores (Claude Code `~/.claude/projects/`, Kimi `~/.kimi/sessions/`, Goose `~/.local/share/goose/sessions/sessions.db`), embeds chunks, runs distillation, analyzes feedback (Claude), promotes cross-project patterns to global scope, compacts duplicates, auto-compacts the vector index when bloated, tracks session-level token usage. Model providers are not ingest sources; only the agent that owns the session. All local. Use `memor backfill` for a one-shot ingest of past sessions.
+2. **Hook.** Fires on every prompt, recalls relevant memories, injects them as context. Works across Claude Code, Cursor, Codex, Copilot, Kimi, and Goose. Measured on 2,285 real recalls that returned hits: median 176 ms, 90th percentile 3.1 s. The tail was concurrent prompts queueing behind one another in the sidecar, now fixed; the ledger figure still includes recalls served before that. A single recall is ~120 ms. A recall that finds nothing returns in about 214 ms, because the relevance gate rejects before the lexical channel runs. The embedding itself is well under a millisecond; the time is retrieval and ranking over a store this size.
+3. **Proxy** (optional). Intercepts Anthropic/OpenAI API calls on `127.0.0.1:8421`, serves recall, compresses tool payloads, forwards to your provider, and writes savings and recall ledgers. Started automatically by `memor install-proxy`.
 
-**No Memor API key required.** Embeddings and compressors run locally. The proxy forwards your existing Anthropic/OpenAI credentials — keys are never stored. Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
+**No Memor API key required.** Embeddings and compressors run locally. The proxy forwards your existing Anthropic/OpenAI credentials, and keys are never stored. Vectors stored in [sqlite-vec](https://github.com/asg017/sqlite-vec). Everything runs on your machine.
 
 ---
 
@@ -559,8 +549,8 @@ A single `memor-hook` binary auto-detects which agent is calling it — no separ
 
 Memor retrieves over two channels and fuses them, so it catches both semantic matches and exact terms:
 
-- **Dense** — local vector similarity (model2vec) for semantic recall.
-- **Lexical** — SQLite FTS5 / BM25 over the raw text, to recover exact identifiers, error strings, and API names that static embeddings blur together.
+- **Dense.** Local vector similarity (model2vec) for semantic recall.
+- **Lexical.** SQLite FTS5 / BM25 over the raw text, to recover exact identifiers, error strings, and API names that static embeddings blur together.
 
 The two rankings are combined with **Reciprocal Rank Fusion (RRF)**. A **relevance gate** drops anti-correlated (off-topic) candidates *before* ranking, so an unrelated prompt injects nothing rather than the least-bad guess. The lexical channel only activates when the dense channel finds the query on-topic, preventing generic words from pulling in noise.
 
@@ -573,24 +563,24 @@ Surviving candidates are ranked by four signals:
 | Signal | Weight | How it works |
 |---|---|---|
 | **Semantic similarity** | 50% | Dense + lexical relevance, fused via RRF |
-| **Recency** | 25% | Exponential decay with 14-day half-life — recent decisions rank higher |
+| **Recency** | 25% | Exponential decay with 14-day half-life, recent decisions rank higher |
 | **Kind weight** | 15% | Distilled memories (1.3x) rank above raw session chunks (1.0x) |
-| **Quality** | 10% | Bayesian score from implicit feedback, bounded to `[0, 1]` — memories the agent actually uses rank higher |
+| **Quality** | 10% | Bayesian score from implicit feedback, bounded to `[0, 1]`, memories the agent actually uses rank higher |
 
-This means a relevant decision from yesterday beats a vaguely-related chunk from a month ago — even if the raw embedding similarity is similar.
+This means a relevant decision from yesterday beats a vaguely-related chunk from a month ago, even if the raw embedding similarity is similar.
 
-Every term is normalized to `[0, 1]` and the weights sum to 1.0, so no single signal can outweigh the rest. That matters more than it sounds: quality is derived from counters, and if those counters go wrong an unbounded quality term stops being a tie-breaker and silently becomes the entire ranking. Scores are clamped on write, on read, and again at the point of use, and counts that violate their own invariant — an artifact used more often than it was recalled — fall back to the neutral prior instead of producing a number from corrupt input.
+Every term is normalized to `[0, 1]` and the weights sum to 1.0, so no single signal can outweigh the rest. That matters more than it sounds: quality is derived from counters, and if those counters go wrong an unbounded quality term stops being a tie-breaker and silently becomes the entire ranking. Scores are clamped on write, on read, and again at the point of use, and counts that violate their own invariant, such as an artifact used more often than it was recalled, fall back to the neutral prior instead of producing a number from corrupt input.
 
 ### Feedback Loop
 
-Memor tracks whether recalled memories actually get used by the agent — and whether they actively hurt. After each session, the daemon analyzes the transcript in both directions:
+Memor tracks whether recalled memories actually get used by the agent, and whether they actively hurt. After each session, the daemon analyzes the transcript in both directions:
 
-- **Positive signal** — n-gram overlap or semantic similarity between recalled content and the agent's response. Memories that consistently prove useful get quality boosts.
-- **Negative signal** — user rejection ("no that's wrong", "we switched to X") or assistant contradiction ("however, looking at the current code, we actually use Y"). Memories that get corrected receive a quality penalty, making them less likely to be recalled next time.
+- **Positive signal.** N-gram overlap or semantic similarity between recalled content and the agent's response. Memories that consistently prove useful get quality boosts.
+- **Negative signal.** User rejection ("no that's wrong", "we switched to X") or assistant contradiction ("however, looking at the current code, we actually use Y"). Memories that get corrected receive a quality penalty, making them less likely to be recalled next time.
 
 The quality formula is Bayesian: `(uses - negatives + 1) / (recalls + 2)`, clamped to `[0, 1]`. One correction weighs as much as one positive use, so harmful memories drop fast. Memories never recalled in 30+ days get automatically deactivated. Near-duplicate memories are compacted into one.
 
-> **Known limitation.** The analyzer currently over-counts in both directions: it attributes usage by time window rather than per recall, so on a long-running session an artifact can accrue more uses than it had recalls, and one rejection phrase anywhere in a session penalizes every artifact recalled in it. Quality scores derived from such counts fall back to the neutral prior, so ranking is unaffected — but the per-memory `used` / `rejected` figures are not yet trustworthy, and the dashboard hides that table until they are.
+> **Known limitation.** The analyzer currently over-counts in both directions: it attributes usage by time window rather than per recall, so on a long-running session an artifact can accrue more uses than it had recalls, and one rejection phrase anywhere in a session penalizes every artifact recalled in it. Quality scores derived from such counts fall back to the neutral prior, so ranking is unaffected, but the per-memory `used` / `rejected` figures are not yet trustworthy, and the dashboard hides that table until they are.
 
 ---
 
@@ -607,13 +597,13 @@ Memories are automatically classified as `decision`, `bugfix`, `lesson`, `snippe
 
 ## Global Memories
 
-Some patterns aren't project-specific — they're yours. "Always use type hints." "Structure FastAPI apps with a `routes/` directory." "Prefer composition over inheritance."
+Some patterns aren't project-specific; they're yours. "Always use type hints." "Structure FastAPI apps with a `routes/` directory." "Prefer composition over inheritance."
 
 Memor detects these automatically. When the same pattern appears in **3 or more projects** (measured by embedding similarity), the daemon promotes it to a `_global` scope:
 
-- **Global memories are recalled everywhere** — they show up in every project's search results alongside project-specific memories.
-- **Source duplicates are deactivated** — the per-project copies get superseded by the single global version, reducing clutter.
-- **No manual tagging** — promotion is fully automatic, based on cross-project clustering.
+- **Global memories are recalled everywhere.** They show up in every project's search results alongside project-specific memories.
+- **Source duplicates are deactivated.** The per-project copies get superseded by the single global version, reducing clutter.
+- **No manual tagging.** Promotion is fully automatic, based on cross-project clustering.
 
 This means your coding habits and preferences follow you into new projects from the first prompt, without you having to re-explain anything.
 
@@ -627,16 +617,16 @@ memor dashboard
 
 Trading-desk style UI with an **Overview** plus per-agent panes (Claude, Cursor, Codex, Copilot, Kimi, Goose):
 
-- **Overview** — status chips (proxy / hook / daemon, plus which agents are actually *reading* memory and how long any has been silent), portfolio KPIs, cumulative tokens-saved equity curve, recall activity, efficiency, projects, quality, recent recalls
-- **Agent desks** — click a tab (or a desk tile) for that environment’s hit rate, latency, proxy savings %, recall volume chart, savings curve, and filtered recalls
-- **Proxy savings by agent** — every agent routed through the proxy
+- **Overview.** Status chips (proxy / hook / daemon, plus which agents are actually *reading* memory and how long any has been silent), portfolio KPIs, cumulative tokens-saved equity curve, recall activity, efficiency, projects, quality, recent recalls
+- **Agent desks.** Click a tab (or a desk tile) for that environment’s hit rate, latency, proxy savings %, recall volume chart, savings curve, and filtered recalls
+- **Proxy savings by agent.** Every agent routed through the proxy
 
 ---
 
 ## Local distillation (optional, no API key)
 
 memor can distill sessions with a small **local** model (offline, in-process,
-ingest-only — recall never uses an LLM). Enable it:
+ingest-only, and recall never uses an LLM). Enable it:
 
 ```bash
 pip install "memor-cli[llm]"   # or: pip install "llama-cpp-python>=0.3.0"
@@ -739,7 +729,7 @@ memor/
 ├── backfill_feedback.py        Grade recalls the daemon already passed over
 ├── global_memories.py          Cross-project promotion to _global scope
 │
-├── ingest/                     Passive capture — no agent cooperation needed
+├── ingest/                     Passive capture, no agent cooperation needed
 │   ├── claude_code.py            ~/.claude/projects/ JSONL
 │   ├── codex.py                  ~/.codex/sessions/ rollout JSONL
 │   ├── cursor.py                 Cursor composer store (SQLite, read-only)
@@ -787,9 +777,9 @@ skill/recall.py                 Standalone recall script
 **Nothing leaves your machine.** In the default configuration (hooks only, no proxy):
 
 - **No telemetry, no analytics, no phone-home.** Memor makes no outbound network
-  calls. The only HTTP it speaks by default is to `127.0.0.1` — health checks
+  calls. The only HTTP it speaks by default is to `127.0.0.1`: health checks
   against its own daemon, dashboard and proxy.
-- **Embeddings run locally** via model2vec static token embeddings — no inference runtime, no GPU (one-time model download from HuggingFace — no user data sent).
+- **Embeddings run locally** via model2vec static token embeddings, with no inference runtime and no GPU (one-time model download from HuggingFace, no user data sent).
 - **Memory capture is read-only.** The daemon reads agent transcripts off disk;
   it never writes to another tool's files, and its MCP surface exposes recall
   and retrieve only, with no write tool.
@@ -800,13 +790,13 @@ skill/recall.py                 Standalone recall script
 
 - **The proxy binds localhost only** (`127.0.0.1:8421`) and accepts no remote connections.
 - **It makes the outbound call your agent would have made anyway**, to the same provider endpoint, carrying your existing provider API key. Keys are forwarded, never stored or logged.
-- **It rewrites request bodies** — compressing tool payloads and appending recalled memories to the latest user message — so what the provider receives is not byte-identical to what your agent sent. Originals stay local in the CCR store.
+- **It rewrites request bodies.** Compressing tool payloads and appending recalled memories to the latest user message, so what the provider receives is not byte-identical to what your agent sent. Originals stay local in the CCR store.
 
 ### Why no Composer interception
 
 Memor does **not** MITM Cursor's subscription traffic. An earlier attempt was measured and
 abandoned: with a local proxy in Cursor's path covering both its Node and Chromium network
-stacks, only control-plane traffic (telemetry, dashboard, model lists) appeared — no
+stacks, only control-plane traffic (telemetry, dashboard, model lists) appeared, with no
 conversation RPC. And the exchange that actually gets billed, Cursor's servers to the model,
 never touches your machine at all, so any local savings figure would be unverifiable.
 
@@ -814,7 +804,7 @@ Compression for Cursor therefore happens where it can be measured honestly: the 
 compress hooks crush tool output *before* Cursor ingests it. No CA trust, no TLS
 interception, nothing to break when Cursor updates.
 
-The only other optional network paths are the LLM-based abstractive distiller (requires explicitly setting `ANTHROPIC_API_KEY`) and the API embedding backend — both off by default.
+The only other optional network paths are the LLM-based abstractive distiller (requires explicitly setting `ANTHROPIC_API_KEY`) and the API embedding backend, both off by default.
 
 ### Secret redaction
 

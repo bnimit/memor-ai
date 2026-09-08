@@ -42,6 +42,9 @@ with sync_playwright() as p:
     b.close()
 PYEOF
 
+echo "rendering banner..."
+"$PY" scripts/render_banner.py "$OUT/banner.svg"
+
 echo "rendering CLI output..."
 { echo "$ memor doctor"; echo ""; memor doctor 2>&1 | head -14; } \
   | "$PY" scripts/render_terminal_svg.py "$OUT/doctor.svg" "memor doctor"
