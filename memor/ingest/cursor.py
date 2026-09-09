@@ -53,10 +53,18 @@ _ROLE_BY_TYPE = {_TYPE_USER: "user", _TYPE_ASSISTANT: "assistant"}
 # (sometimes doubly, when a payload is re-serialized); and a user often just
 # names a directory mid-sentence. Matching only the plain form left most
 # threads unattributed, so all three are collected and voted on.
+#
+# Any absolute path is a candidate, rather than an allow-list of home
+# directories. Hardcoding /Users and /home tied the parser to where the author
+# happens to keep code: it missed /opt, /srv, /workspace and every container
+# layout, and in the test suite it silently passed on macOS (whose temp dirs
+# sit under /Users) while failing on Linux CI. Nothing is trusted on the
+# strength of the match alone; a candidate still has to resolve to a real
+# directory before it can vote, which is what rejects false positives.
 _PATH_RE = re.compile(
     r'(?:\\{0,2}"(?:path|targetFile|effectiveUri|fsPath)\\{0,2}"\s*:\s*\\{0,2}"'
     r'|(?<![\w/]))'
-    r'(/Users/[^"\\\s,;)\]}]+|/home/[^"\\\s,;)\]}]+)'
+    r'(/[A-Za-z0-9_.][^"\\\s,;)\]}]*)'
 )
 
 # Tooling paths, not project paths. An agent reads its own config and plugin
@@ -216,8 +224,15 @@ def _nearest_existing_dir(path: Path) -> Path | None:
     """
     current = path
     for _ in range(_MAX_ANCESTOR_WALK):
-        if current.is_dir():
-            return current
+        try:
+            if current.is_dir():
+                return current
+        except OSError:
+            # A candidate can be syntactically path-shaped and still be
+            # unstattable: Cursor embeds base64 protobuf blobs that begin with
+            # a slash, and those run past NAME_MAX. Treat it as "not a
+            # directory" rather than letting one row kill an ingest scan.
+            return None
         parent = current.parent
         if parent == current or parent == Path.home() or parent == Path("/"):
             return None
@@ -275,7 +290,12 @@ def _walk_dashed(base: Path, parts: list[str]) -> Path | None:
     # "my" directory that happens to also exist beside it.
     for take in range(len(parts), 0, -1):
         candidate = base / "-".join(parts[:take])
-        if not candidate.is_dir():
+        try:
+            if not candidate.is_dir():
+                continue
+        except OSError:
+            # Same guard as _nearest_existing_dir: a long enough dash-joined
+            # segment can exceed NAME_MAX before it can be rejected.
             continue
         resolved = _walk_dashed(candidate, parts[take:])
         if resolved is not None:

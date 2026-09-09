@@ -482,3 +482,50 @@ def test_scan_all_sources_skips_cursor_when_unset(tmp_path: Path) -> None:
     units = scan_all_sources(claude_projects_dir=tmp_path / "no-claude")
 
     assert [u for u in units if u.agent == "cursor"] == []
+
+
+def test_paths_outside_home_directories_still_attribute(tmp_path) -> None:
+    """Project inference must not depend on where the user keeps code.
+
+    The regex once matched only /Users and /home. That passed on macOS, whose
+    pytest temp dirs sit under /Users, and failed on Linux CI, where they sit
+    under /tmp. It also silently ignored /opt, /srv, /workspace and every
+    container layout. Anchoring the fixture at the filesystem root keeps the
+    assumption from creeping back in.
+    """
+    repo = tmp_path / "srv" / "deploy" / "checkout"
+    (repo / ".git").mkdir(parents=True)
+    target = repo / "main.py"
+    target.write_text("x = 1\n")
+
+    db = tmp_path / "globalStorage" / "state.vscdb"
+    _make_global_db(db, [
+        ("bubbleId:comp-1:b1", _bubble(
+            bubble_id="b1", kind=_ASSISTANT, text="",
+            code_blocks=[{"uri": {"path": str(target)}, "content": "x = 1"}])),
+    ])
+
+    sessions = scan_cursor_sessions(db, workspace_dir=tmp_path / "missing")
+
+    assert sessions[0][1] == "checkout"
+
+
+def test_an_unstattable_candidate_does_not_kill_the_scan(tmp_path) -> None:
+    """Cursor embeds base64 protobuf blobs that begin with a slash.
+
+    Those are path-shaped enough to match and long enough to blow past
+    NAME_MAX, so stat() raises rather than returning False. One such row used
+    to abort the whole ingest with OSError 63.
+    """
+    blob = "/" + "A" * 4000
+
+    db = tmp_path / "globalStorage" / "state.vscdb"
+    _make_global_db(db, [
+        ("bubbleId:comp-1:b1", _bubble(
+            bubble_id="b1", kind=_USER,
+            text=f"see {blob} for the encoded payload")),
+    ])
+
+    sessions = scan_cursor_sessions(db, workspace_dir=tmp_path / "missing")
+
+    assert sessions[0][1] == "unknown"
