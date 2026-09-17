@@ -4,6 +4,12 @@ import math
 import time
 from memor.types import Scope, Hit, RetrievalTrace
 from memor.interfaces import Embedder, MemoryStore
+from memor.supersession import (
+    drop_disputed_when_disputer_present,
+    half_life_days,
+    supersession_action_enabled,
+    type_halflife_enabled,
+)
 
 EDGE_TYPES = ["fixes", "supersedes", "part_of", "derived_from"]
 
@@ -321,16 +327,26 @@ class Retriever:
         rel_min = min(rel_vals) if rel_vals else 0.0
         rel_range = ((max(rel_vals) - rel_min) if rel_vals else 1.0) or 1.0
 
-        if hasattr(self.store, 'get_quality_scores'):
+        if hasattr(self.store, 'get_quality_and_validity'):
+            qv = self.store.get_quality_and_validity(list(arts_by_id))
+            quality_scores = {i: q for i, (q, _) in qv.items()}
+            validity_scores = {i: v for i, (_, v) in qv.items()}
+        elif hasattr(self.store, 'get_quality_scores'):
             quality_scores = self.store.get_quality_scores(list(arts_by_id))
+            validity_scores = {}
         else:
             quality_scores = {}
+            validity_scores = {}
+
+        use_type_halflife = type_halflife_enabled()
+        use_supersession = supersession_action_enabled()
 
         for aid, a in arts_by_id.items():
             norm_rel = (fused.get(aid, 0.0) - rel_min) / rel_range
 
             age_days = (now - a.created_at) / 86400
-            recency = math.exp(-0.693 * age_days / RECENCY_HALF_LIFE_DAYS)
+            hl = half_life_days(a) if use_type_halflife else RECENCY_HALF_LIFE_DAYS
+            recency = math.exp(-0.693 * age_days / hl)
 
             kind_boost = KIND_WEIGHTS.get(a.kind, 1.0) - 1.0
 
@@ -338,19 +354,35 @@ class Retriever:
 
             score = (self.w_sim * norm_rel + self.w_rec * recency
                      + self.w_kind * kind_boost + self.w_qual * quality)
+            validity = 1.0
+            if use_supersession:
+                validity = validity_scores.get(aid, 1.0)
+                score = score * validity
             hits[aid] = Hit(a, score, {
                 "sim": sim_by_id.get(aid, 0.0), "rel": round(norm_rel, 3),
                 "recency": round(recency, 3), "kind": a.kind,
                 "quality": round(quality, 3), "edge": 0.0,
+                "validity": round(validity, 3),
             })
 
         if self.edge_expand and arts_by_id:
             seed_ids = list(arts_by_id.keys())
             for nb in self.store.neighbors(seed_ids, EDGE_TYPES, hops=1):
                 if nb.id not in hits:
-                    hits[nb.id] = Hit(nb, 0.5 * max(h.score for h in hits.values()),
+                    edge_score = 0.5 * max(h.score for h in hits.values())
+                    validity = 1.0
+                    if use_supersession and hasattr(self.store, "get_validity"):
+                        validity = self.store.get_validity(nb.id)
+                        edge_score *= validity
+                    hits[nb.id] = Hit(nb, edge_score,
                                       {"sim": 0.0, "rel": 0.0,
-                                       "recency": 0.0, "kind": nb.kind, "edge": 1.0})
+                                       "recency": 0.0, "kind": nb.kind, "edge": 1.0,
+                                       "validity": round(validity, 3)})
+
+        if use_supersession and hasattr(self.store, "active_disputers"):
+            drop = drop_disputed_when_disputer_present(hits.keys(), self.store)
+            for did in drop:
+                hits.pop(did, None)
 
         ranked = sorted(hits.values(), key=lambda h: h.score, reverse=True)
         # Diversify over a wider slice than k, so there is something to choose

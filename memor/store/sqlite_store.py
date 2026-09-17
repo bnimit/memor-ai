@@ -122,6 +122,7 @@ class SqliteStore:
         self._migrate_recall_conversation()
         self._migrate_repair_impossible_counts()
         self._migrate_key_vectors()
+        self._migrate_disputes_and_validity()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -147,7 +148,17 @@ class SqliteStore:
           negative_count INTEGER DEFAULT 0,
           last_recalled REAL,
           quality_score REAL DEFAULT 0.5,
-          last_decayed_at REAL);
+          last_decayed_at REAL,
+          validity REAL DEFAULT 1.0);
+        CREATE TABLE IF NOT EXISTS disputes(
+          disputed_id TEXT NOT NULL,
+          disputer_id TEXT NOT NULL,
+          created_at REAL NOT NULL,
+          affirmations INTEGER NOT NULL DEFAULT 0,
+          dormant INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY(disputed_id, disputer_id));
+        CREATE INDEX IF NOT EXISTS idx_disputes_disputed ON disputes(disputed_id);
+        CREATE INDEX IF NOT EXISTS idx_disputes_disputer ON disputes(disputer_id);
         CREATE TABLE IF NOT EXISTS recall_log(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           timestamp REAL, project TEXT, query_preview TEXT,
@@ -440,6 +451,143 @@ class SqliteStore:
           key_id UNINDEXED, key_text, tokenize='porter unicode61');
         """)
         self.db.commit()
+
+    def _migrate_disputes_and_validity(self):
+        """Soft temporal disputes + derived validity (idempotent on orphans).
+
+        Earlier shelved work left empty ``disputes`` / ``validity`` on some
+        machines. CREATE IF NOT EXISTS and ADD COLUMN only-if-missing keep those
+        opens safe.
+        """
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS disputes(
+              disputed_id TEXT NOT NULL,
+              disputer_id TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              affirmations INTEGER NOT NULL DEFAULT 0,
+              dormant INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY(disputed_id, disputer_id));
+            CREATE INDEX IF NOT EXISTS idx_disputes_disputed ON disputes(disputed_id);
+            CREATE INDEX IF NOT EXISTS idx_disputes_disputer ON disputes(disputer_id);
+        """)
+        self.db.commit()
+        cols = [r[1] for r in self.db.execute(
+            "PRAGMA table_info(memory_quality)").fetchall()]
+        if "validity" not in cols:
+            try:
+                self.db.execute(
+                    "ALTER TABLE memory_quality ADD COLUMN validity REAL DEFAULT 1.0")
+                self.db.commit()
+            except sqlite3.Error:
+                pass
+
+    def add_dispute(self, disputed_id: str, disputer_id: str,
+                    created_at: float | None = None) -> bool:
+        """Insert a dispute edge. Returns True if a new row was written."""
+        import time as _time
+        if disputed_id == disputer_id:
+            return False
+        ts = _time.time() if created_at is None else created_at
+        cur = self.db.execute(
+            "INSERT OR IGNORE INTO disputes"
+            "(disputed_id, disputer_id, created_at, affirmations, dormant) "
+            "VALUES(?,?,?,0,0)",
+            (disputed_id, disputer_id, ts),
+        )
+        self.db.commit()
+        return cur.rowcount > 0
+
+    def active_disputers(self, disputed_id: str, *, _seen: set[str] | None = None) -> list[str]:
+        """Disputer ids that still count against ``disputed_id``.
+
+        A disputer is inactive when its row is dormant or the disputer is itself
+        actively disputed (transitivity). ``_seen`` breaks cycles.
+        """
+        seen = _seen if _seen is not None else set()
+        if disputed_id in seen:
+            return []
+        seen.add(disputed_id)
+        rows = self.db.execute(
+            "SELECT disputer_id FROM disputes "
+            "WHERE disputed_id=? AND dormant=0",
+            (disputed_id,),
+        ).fetchall()
+        active: list[str] = []
+        for r in rows:
+            mid = r["disputer_id"]
+            # If M is itself disputed by someone active, M does not count.
+            if self.active_disputers(mid, _seen=seen):
+                continue
+            active.append(mid)
+        return active
+
+    def recompute_validity(self, artifact_id: str) -> float:
+        """Derive validity from active disputers; persist on memory_quality."""
+        from memor.supersession import validity_from_active_count
+        n = len(self.active_disputers(artifact_id))
+        val = validity_from_active_count(n)
+        self.db.execute(
+            "INSERT INTO memory_quality(artifact_id, recall_count, use_count, "
+            "negative_count, quality_score, validity) VALUES(?,0,0,0,?,?) "
+            "ON CONFLICT(artifact_id) DO UPDATE SET validity=excluded.validity",
+            (artifact_id, NEUTRAL_QUALITY, val),
+        )
+        self.db.commit()
+        return val
+
+    def get_validity(self, artifact_id: str) -> float:
+        row = self.db.execute(
+            "SELECT validity FROM memory_quality WHERE artifact_id=?",
+            (artifact_id,),
+        ).fetchone()
+        if row is None or row["validity"] is None:
+            return 1.0
+        return float(row["validity"])
+
+    def get_quality_and_validity(
+        self, artifact_ids: list[str]
+    ) -> dict[str, tuple[float, float]]:
+        """Batch quality + validity; missing ids → (neutral, 1.0)."""
+        ids = list(artifact_ids)
+        if not ids:
+            return {}
+        qmarks = ",".join("?" * len(ids))
+        rows = self.db.execute(
+            f"SELECT artifact_id, quality_score, validity FROM memory_quality "
+            f"WHERE artifact_id IN ({qmarks})",
+            ids,
+        ).fetchall()
+        out = {
+            r["artifact_id"]: (
+                clamp_quality(r["quality_score"]),
+                1.0 if r["validity"] is None else float(r["validity"]),
+            )
+            for r in rows
+        }
+        for aid in ids:
+            out.setdefault(aid, (NEUTRAL_QUALITY, 1.0))
+        return out
+
+    def affirm_dispute_on_use(self, artifact_id: str) -> None:
+        """Bump affirmations on the newest active dispute; dormancy at threshold."""
+        from memor.supersession import AFFIRMATION_DORMANT_AT
+        row = self.db.execute(
+            "SELECT disputer_id, affirmations FROM disputes "
+            "WHERE disputed_id=? AND dormant=0 "
+            "ORDER BY created_at DESC LIMIT 1",
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            return
+        new_aff = int(row["affirmations"] or 0) + 1
+        dormant = 1 if new_aff >= AFFIRMATION_DORMANT_AT else 0
+        self.db.execute(
+            "UPDATE disputes SET affirmations=?, dormant=? "
+            "WHERE disputed_id=? AND disputer_id=?",
+            (new_aff, dormant, artifact_id, row["disputer_id"]),
+        )
+        self.db.commit()
+        self.recompute_validity(artifact_id)
 
     def _migrate_fts(self):
         """One-time backfill of the FTS index for databases created before
@@ -1197,6 +1345,11 @@ class SqliteStore:
             """, (aid,))
         self.db.commit()
         self._recompute_quality(artifact_ids)
+        for aid in artifact_ids:
+            try:
+                self.affirm_dispute_on_use(aid)
+            except Exception:
+                pass
 
     def record_negative(self, artifact_ids: list[str]) -> None:
         for aid in artifact_ids:

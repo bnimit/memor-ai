@@ -702,6 +702,27 @@ def forget_stale(days: int = typer.Option(30, help="Deactivate memories not reca
     typer.echo(f"Deactivated {count} stale memories.")
 
 
+@app.command("backfill-disputes")
+def backfill_disputes_cmd(
+    project: str = typer.Option(None, help="Limit to one project"),
+    db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+    fake: bool = False,
+):
+    """Scan active memories and record soft temporal disputes (KNN, idempotent)."""
+    from memor.supersession import backfill_disputes
+    db_path = _db_path(db)
+    if not Path(db_path).exists():
+        typer.echo("No database found.")
+        raise typer.Exit(1)
+    e = _embedder(fake)
+    s = SqliteStore(db_path, dim=e.dim)
+    stats = backfill_disputes(s, e, project=project)
+    typer.echo(
+        f"Scanned {stats['memories_scanned']} memories; "
+        f"recorded {stats['disputes_recorded']} new dispute edges."
+    )
+
+
 @app.command("compact")
 def compact(db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
             fake: bool = False,
