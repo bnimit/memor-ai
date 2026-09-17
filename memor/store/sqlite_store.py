@@ -1414,32 +1414,83 @@ class SqliteStore:
     def decay_quality(self, stale_days: int = 14, factor: float = 0.5,
                       deactivate_floor: float = 0.03) -> int:
         """Halve quality_score for memories not recalled in stale_days.
+
         Only decays each memory once per stale_days interval (tracked via
-        last_decayed_at). Also catches memories with NULL last_recalled
-        that are old enough. If the decayed score drops below
-        deactivate_floor, deactivate the memory.
-        Returns number of memories decayed."""
+        last_decayed_at). If ``MEMOR_TYPE_HALFLIFE`` is on, ``stale_days`` is
+        replaced per memory by its type half-life so durable decisions are not
+        decayed on the same clock as raw extracts.
+        """
+        import json as _json
         import time as _time
+        from memor.supersession import half_life_days, type_halflife_enabled
+        from memor.types import Artifact
+
         now = _time.time()
-        recall_cutoff = now - (stale_days * 86400)
-        decay_cutoff = now - (stale_days * 86400)
+        use_halflife = type_halflife_enabled()
+
+        if not use_halflife:
+            recall_cutoff = now - (stale_days * 86400)
+            decay_cutoff = now - (stale_days * 86400)
+            rows = self.db.execute("""
+                SELECT q.artifact_id, q.quality_score
+                FROM memory_quality q
+                JOIN artifacts a ON a.id = q.artifact_id
+                WHERE a.kind = 'memory' AND a.active = 1
+                  AND (q.last_recalled IS NULL OR q.last_recalled < ?)
+                  AND (q.last_decayed_at IS NULL OR q.last_decayed_at < ?)
+            """, (recall_cutoff, decay_cutoff)).fetchall()
+            decayed = 0
+            for r in rows:
+                new_score = round(r["quality_score"] * factor, 4)
+                if new_score < deactivate_floor:
+                    self._deactivate_artifact(r["artifact_id"])
+                    self.db.execute("UPDATE artifacts SET active=0 WHERE id=?",
+                                    (r["artifact_id"],))
+                self.db.execute(
+                    "UPDATE memory_quality SET quality_score=?, last_decayed_at=? "
+                    "WHERE artifact_id=?",
+                    (new_score, now, r["artifact_id"]))
+                decayed += 1
+            self.db.commit()
+            return decayed
+
         rows = self.db.execute("""
-            SELECT q.artifact_id, q.quality_score
+            SELECT q.artifact_id, q.quality_score, q.last_recalled, q.last_decayed_at,
+                   a.kind, a.meta, a.created_at, a.project, a.source, a.text,
+                   a.token_count
             FROM memory_quality q
             JOIN artifacts a ON a.id = q.artifact_id
             WHERE a.kind = 'memory' AND a.active = 1
-              AND (q.last_recalled IS NULL OR q.last_recalled < ?)
-              AND (q.last_decayed_at IS NULL OR q.last_decayed_at < ?)
-        """, (recall_cutoff, decay_cutoff)).fetchall()
+        """).fetchall()
         decayed = 0
         for r in rows:
+            try:
+                meta = _json.loads(r["meta"] or "{}")
+            except Exception:
+                meta = {}
+            art = Artifact(
+                id=r["artifact_id"], kind=r["kind"], project=r["project"],
+                source=r["source"] or "", text=r["text"] or "",
+                token_count=r["token_count"] or 1,
+                created_at=r["created_at"] or 0.0, meta=meta,
+            )
+            hl = half_life_days(art)
+            recall_cutoff = now - (hl * 86400)
+            decay_cutoff = now - (hl * 86400)
+            last_recalled = r["last_recalled"]
+            last_decayed = r["last_decayed_at"]
+            if last_recalled is not None and last_recalled >= recall_cutoff:
+                continue
+            if last_decayed is not None and last_decayed >= decay_cutoff:
+                continue
             new_score = round(r["quality_score"] * factor, 4)
             if new_score < deactivate_floor:
                 self._deactivate_artifact(r["artifact_id"])
                 self.db.execute("UPDATE artifacts SET active=0 WHERE id=?",
                                 (r["artifact_id"],))
             self.db.execute(
-                "UPDATE memory_quality SET quality_score=?, last_decayed_at=? WHERE artifact_id=?",
+                "UPDATE memory_quality SET quality_score=?, last_decayed_at=? "
+                "WHERE artifact_id=?",
                 (new_score, now, r["artifact_id"]))
             decayed += 1
         self.db.commit()
