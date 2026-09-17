@@ -118,6 +118,8 @@ class SqliteStore:
         self._migrate_attribute_unknown_savings()
         self._migrate_cache_creation_tokens()
         self._migrate_experiment_arm()
+        self._migrate_ledger_key()
+        self._migrate_dedupe_hook_savings()
         self._migrate_recall_agent()
         self._migrate_recall_conversation()
         self._migrate_repair_impossible_counts()
@@ -209,8 +211,11 @@ class SqliteStore:
           upstream_input_tokens INTEGER,
           upstream_cache_read_tokens INTEGER,
           upstream_output_tokens INTEGER,
-          upstream_cache_creation_tokens INTEGER
+          upstream_cache_creation_tokens INTEGER,
+          ledger_key TEXT
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_proxy_savings_ledger_key
+          ON proxy_savings(ledger_key) WHERE ledger_key IS NOT NULL;
         CREATE TABLE IF NOT EXISTS ccr_blobs(
           id TEXT PRIMARY KEY,
           text TEXT NOT NULL,
@@ -416,6 +421,61 @@ class SqliteStore:
                 self.db.commit()
             except sqlite3.Error:
                 pass
+
+    def _migrate_ledger_key(self):
+        """Add idempotency key so hook retries do not inflate savings.
+
+        PostToolUse can fire more than once for the same tool result. Without a
+        unique key those retries land as separate ledger rows and the hero
+        counts the same saving three to seven times.
+        """
+        cols = [r[1] for r in self.db.execute(
+            "PRAGMA table_info(proxy_savings)").fetchall()]
+        if "ledger_key" not in cols:
+            try:
+                self.db.execute(
+                    "ALTER TABLE proxy_savings ADD COLUMN ledger_key TEXT")
+                self.db.commit()
+            except sqlite3.Error:
+                pass
+        try:
+            self.db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_proxy_savings_ledger_key "
+                "ON proxy_savings(ledger_key) WHERE ledger_key IS NOT NULL")
+            self.db.commit()
+        except sqlite3.Error:
+            pass
+
+    def _migrate_dedupe_hook_savings(self):
+        """One-shot collapse of duplicate hook rows written before ledger_key.
+
+        Fingerprint is (agent, session, before, after, second). That matches the
+        observed failure mode — identical rows stamped in the same second —
+        without collapsing two real compressions of the same size minutes apart.
+        """
+        row = self.db.execute(
+            "SELECT value FROM meta WHERE key='hook_ledger_deduped'").fetchone()
+        if row is not None:
+            return
+        try:
+            self.db.execute("""
+                DELETE FROM proxy_savings
+                WHERE provider = 'hook'
+                  AND id NOT IN (
+                    SELECT MIN(id) FROM proxy_savings
+                    WHERE provider = 'hook'
+                    GROUP BY agent,
+                             IFNULL(session_id, ''),
+                             tokens_before,
+                             tokens_after,
+                             CAST(timestamp AS INTEGER)
+                  )
+            """)
+            self.db.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES('hook_ledger_deduped', '1')")
+            self.db.commit()
+        except sqlite3.Error:
+            pass
 
     def _migrate_recall_agent(self):
         """Add agent column to recall_log if missing."""
@@ -1560,25 +1620,46 @@ class SqliteStore:
         shim's fail-open, so a metrics write failing discarded the compression
         that had already succeeded. Losing a ledger row costs a statistic;
         losing the rewrite costs the user tokens.
+
+        When ``ledger_key`` is set, a second write with the same key is a no-op
+        and returns the existing row id (hook retries).
         """
         content_types_json = json.dumps(row.get("content_types", {}))
+        ledger_key = row.get("ledger_key") or None
         try:
+            if ledger_key:
+                existing = self.db.execute(
+                    "SELECT id FROM proxy_savings WHERE ledger_key=?",
+                    (ledger_key,),
+                ).fetchone()
+                if existing is not None:
+                    return int(existing["id"])
             cur = self.db.execute(
                 "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
                 "tokens_before, tokens_after, content_types, passthrough, "
                 "upstream_input_tokens, upstream_cache_read_tokens, "
                 "upstream_output_tokens, upstream_cache_creation_tokens, "
-                "experiment_arm) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "experiment_arm, ledger_key) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (row.get("timestamp"), row.get("agent"), row.get("provider"),
                  row.get("session_id"), row.get("tokens_before"), row.get("tokens_after"),
                  content_types_json, row.get("passthrough", 0),
                  row.get("upstream_input_tokens"), row.get("upstream_cache_read_tokens"),
                  row.get("upstream_output_tokens"),
                  row.get("upstream_cache_creation_tokens"),
-                 row.get("experiment_arm")))
+                 row.get("experiment_arm"), ledger_key))
             self.db.commit()
             return cur.lastrowid
+        except sqlite3.IntegrityError:
+            # Racing writers with the same ledger_key: treat as already recorded.
+            if ledger_key:
+                existing = self.db.execute(
+                    "SELECT id FROM proxy_savings WHERE ledger_key=?",
+                    (ledger_key,),
+                ).fetchone()
+                if existing is not None:
+                    return int(existing["id"])
+            return None
         except sqlite3.Error as exc:
             print(f"[memor] savings ledger write skipped: {exc}", file=sys.stderr)
             return None

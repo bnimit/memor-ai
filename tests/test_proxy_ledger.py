@@ -95,3 +95,49 @@ def test_hook_and_proxy_savings_are_split(tmp_path):
     assert summary["hook_saved"] == 900
     assert summary["proxy_saved"] == 200
     assert summary["hook_saved"] + summary["proxy_saved"] == summary["tokens_saved"]
+
+
+def test_ledger_key_makes_hook_retries_a_noop(tmp_path):
+    """PostToolUse can fire several times for one tool result."""
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    row = _row(1000, 100)
+    row["provider"] = "hook"
+    row["ledger_key"] = "hook:same-event"
+    first = s.record_proxy_savings(row)
+    second = s.record_proxy_savings(row)
+    assert first == second
+    assert s.db.execute("SELECT COUNT(*) AS c FROM proxy_savings").fetchone()["c"] == 1
+    assert s.get_proxy_savings_summary(days=None)["tokens_saved"] == 900
+
+
+def test_existing_hook_duplicates_are_collapsed_on_open(tmp_path):
+    """Rows written before ledger_key inflated hook savings ~2x on a real store."""
+    path = str(tmp_path / "m.db")
+    # Build a pre-migration ledger by writing raw SQL, then open SqliteStore so
+    # the one-shot dedupe migration runs.
+    s0 = SqliteStore(path, dim=16)
+    ts = time.time()
+    for _ in range(4):
+        s0.db.execute(
+            "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
+            "tokens_before, tokens_after, content_types, passthrough) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (ts, "claude", "hook", "s1", 1000, 100, "{}", 0),
+        )
+    # A second later is a different event and must survive.
+    s0.db.execute(
+        "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
+        "tokens_before, tokens_after, content_types, passthrough) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (ts + 2, "claude", "hook", "s1", 1000, 100, "{}", 0),
+    )
+    s0.db.execute("DELETE FROM meta WHERE key='hook_ledger_deduped'")
+    s0.db.commit()
+    s0.db.close()
+
+    s = SqliteStore(path, dim=16)
+    n = s.db.execute(
+        "SELECT COUNT(*) AS c FROM proxy_savings WHERE provider='hook'"
+    ).fetchone()["c"]
+    assert n == 2
+    assert s.get_proxy_savings_summary(days=None)["hook_saved"] == 1800

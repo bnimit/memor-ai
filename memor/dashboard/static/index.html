@@ -442,7 +442,7 @@
         <div class="kpi" style="--kpi-accent:var(--ok)">
           <div class="kpi-label">Token Savings</div>
           <div class="kpi-value pnl" id="savings-pct">–</div>
-          <div class="kpi-sub"><span id="savings-before">–</span> → <span id="savings-after">–</span></div>
+          <div class="kpi-sub"><span id="savings-before">–</span> → <span id="savings-after">–</span> · all time</div>
         </div>
         <div class="kpi">
           <div class="kpi-label">Memories</div>
@@ -1523,7 +1523,12 @@
   }
 
   function renderSavingsHero(data) {
-    if (!data || !data.summary || data.summary.tokens_before === 0) {
+    // KPI rate and before→after must use the same lifetime population as the
+    // big "tokens saved" figure. The 30d summary was leaving a 91% hook-only
+    // window next to a 2.5M lifetime total that was mostly historical proxy,
+    // so the two numbers on one panel could not reconcile.
+    var life = (data && data.lifetime) || {};
+    if (!data || !life.tokens_before) {
       document.getElementById('savings-pct').textContent = '–';
       document.getElementById('savings-before').textContent = '–';
       document.getElementById('savings-after').textContent = '–';
@@ -1531,10 +1536,9 @@
       renderEquityChart('savings-equity', [], 'cumulative_saved');
       return;
     }
-    var summary = data.summary;
-    document.getElementById('savings-pct').textContent = summary.pct_saved + '%';
-    document.getElementById('savings-before').textContent = fmt(summary.tokens_before);
-    document.getElementById('savings-after').textContent = fmt(summary.tokens_after);
+    document.getElementById('savings-pct').textContent = life.pct_saved + '%';
+    document.getElementById('savings-before').textContent = fmt(life.tokens_before);
+    document.getElementById('savings-after').textContent = fmt(life.tokens_after);
 
     var series = data.per_day || [];
     var cum = series.length ? series[series.length - 1].cumulative_saved : 0;
@@ -1551,7 +1555,6 @@
     // reads as the headline figure, and still falls as old traffic ages out.
     // The number that answers "how much has memor saved me" is the one that
     // never goes down, so it gets the large type and the window becomes context.
-    var life = data.lifetime || {};
     var lifetimeSaved = life.tokens_saved || 0;
     // The title carries "lifetime", so the value does not repeat it: bare
     // number, qualifier in the heading. No falling back to the 30d total when
