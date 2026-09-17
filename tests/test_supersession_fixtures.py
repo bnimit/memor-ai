@@ -21,6 +21,11 @@ FIXTURES = [
     ("Heroku hosts staging", "staging moved away from Heroku to Fly.io", "staging host"),
     ("CircleCI runs CI", "replaced CircleCI with GitHub Actions for CI", "ci system"),
     ("the default branch is master", "default branch changed to main", "default git branch"),
+    ("we pin Node 18 in CI", "CI now uses Node 20 as the runtime", "node version in ci"),
+    ("SQLite is the only app database", "we migrated the app database from SQLite to Postgres", "application database"),
+    ("flake8 is the linter", "replaced flake8 with ruff for linting", "python linter"),
+    ("npm is the package manager", "we switched from npm to pnpm for packages", "js package manager"),
+    ("Docker Compose v1 for local stacks", "local stacks moved to Compose v2", "docker compose version"),
 ]
 
 

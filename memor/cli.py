@@ -230,6 +230,19 @@ def eval_counterfactual_cmd(project: str = typer.Option(...), db: str = typer.Op
     typer.echo(f"  Tie:  {summary['tie_count']}/{summary['n_cases']} ({summary['tie_pct']}%)")
     typer.echo(f"  Loss: {summary['loss_count']}/{summary['n_cases']} ({summary['loss_pct']}%)")
     typer.echo(f"  Do-no-harm: {summary['do_no_harm_pct']}%")
+    by = summary.get("by_stratum") or {}
+    if by:
+        dp = by.get("dispute_present") or {}
+        nd = by.get("no_dispute") or {}
+        typer.echo("")
+        typer.echo(
+            f"  Dispute-present: {dp.get('n_cases', 0)} cases · "
+            f"do-no-harm {dp.get('do_no_harm_pct', 0)}%"
+        )
+        typer.echo(
+            f"  No-dispute:      {nd.get('n_cases', 0)} cases · "
+            f"do-no-harm {nd.get('do_no_harm_pct', 0)}%"
+        )
     s.save_eval_run({"type": "counterfactual", "k": k, "project": project, "holdout": holdout}, summary)
 
 

@@ -106,3 +106,30 @@ def test_find_skips_when_newer_than_candidate(tmp_path, monkeypatch):
 
     monkeypatch.setattr(s, "search", lambda *a, **k: [(newer, band_sim)])
     assert find_and_record_disputes(s, e, "m", project="p") == []
+
+
+def test_backfill_disputes_is_idempotent(tmp_path, monkeypatch):
+    from memor.supersession import backfill_disputes
+
+    s, e = _store(tmp_path)
+    old = _mem(s, e, "old redis cache decision", mid="o", created=1.0)
+    _mem(s, e, "new postgres cache decision", mid="m", created=2.0)
+    _mem(s, e, "unrelated auth note", mid="u", created=3.0)
+    band = cosine_to_stored_sim(0.85)
+
+    def fake_search(vec, scope, k=8):
+        # When scanning M, return O in-band; otherwise empty.
+        return [(old, band)]
+
+    monkeypatch.setattr(s, "search", fake_search)
+    first = backfill_disputes(s, e, project="p")
+    n1 = s.db.execute("SELECT COUNT(*) AS c FROM disputes").fetchone()["c"]
+    second = backfill_disputes(s, e, project="p")
+    n2 = s.db.execute("SELECT COUNT(*) AS c FROM disputes").fetchone()["c"]
+    assert n1 >= 1
+    assert n1 == n2
+    assert first["memories_scanned"] == second["memories_scanned"] == 3
+    flag = s.db.execute(
+        "SELECT value FROM meta WHERE key='disputes_backfilled'"
+    ).fetchone()
+    assert flag is not None

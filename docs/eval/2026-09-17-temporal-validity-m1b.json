@@ -1,0 +1,22 @@
+{
+  "date": "2026-09-17",
+  "commit": "66d18972c60a1b3ea8f51d98cb0e9728a839cc98",
+  "flags_default": {
+    "MEMOR_SUPERSESSION": false,
+    "MEMOR_TYPE_HALFLIFE": false
+  },
+  "micro_fixtures": {
+    "n": 15,
+    "passed": true,
+    "command": "pytest tests/test_supersession_fixtures.py tests/test_similarity_cosine.py tests/test_supersession_disputes.py tests/test_retriever_supersession.py tests/test_type_halflife.py tests/test_counterfactual_stratum.py -q"
+  },
+  "stratified_counterfactual": {
+    "status": "not_run",
+    "project": null,
+    "baseline": null,
+    "treatment": null,
+    "notes": "Requires populated project DB + LLM API key. Harness now tags dispute_present and prints by_stratum; run per docs/eval/README.md before any default flip."
+  },
+  "decision": "keep_flags_off",
+  "rationale": "CI micro-fixtures (15/15) pass with MEMOR_SUPERSESSION=1. Stratified counterfactual on a real corpus was not run in this PR, so ship bar for flipping defaults is not cleared. Detection + backfill remain always-on; recall action stays opt-in."
+}
