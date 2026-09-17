@@ -67,6 +67,7 @@ MAINTENANCE
   memor reingest --project <name>  Re-ingest only one project
   memor distill --project <name>   Run distillation manually
   memor forget-stale               Deactivate memories not recalled in 30 days
+  memor backfill-disputes          Scan memories; record soft temporal disputes
   memor compact                    Rebuild vector index, reclaim space
   memor scan                       Audit DB for leaked secrets
   memor scan --purge               Redact secrets in place
