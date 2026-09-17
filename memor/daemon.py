@@ -489,6 +489,21 @@ def run_poll_cycle(
         except Exception:
             pass
 
+    # One-shot soft-dispute backfill (KNN). Detection stays on; recall action is flagged.
+    try:
+        done = store.db.execute(
+            "SELECT value FROM meta WHERE key='disputes_backfilled'"
+        ).fetchone()
+        if done is None:
+            from memor.supersession import backfill_disputes
+            stats = backfill_disputes(store, embedder)
+            print(
+                f"  dispute backfill: scanned {stats['memories_scanned']}, "
+                f"recorded {stats['disputes_recorded']}"
+            )
+    except Exception:
+        pass
+
     # Promote cross-project patterns to global scope
     if maintenance:
         try:
