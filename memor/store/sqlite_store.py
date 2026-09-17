@@ -214,8 +214,6 @@ class SqliteStore:
           upstream_cache_creation_tokens INTEGER,
           ledger_key TEXT
         );
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_proxy_savings_ledger_key
-          ON proxy_savings(ledger_key) WHERE ledger_key IS NOT NULL;
         CREATE TABLE IF NOT EXISTS ccr_blobs(
           id TEXT PRIMARY KEY,
           text TEXT NOT NULL,
@@ -428,6 +426,10 @@ class SqliteStore:
         PostToolUse can fire more than once for the same tool result. Without a
         unique key those retries land as separate ledger rows and the hero
         counts the same saving three to seven times.
+
+        The unique index lives here, not in ``_init_schema``. On an existing DB
+        ``CREATE TABLE IF NOT EXISTS`` is a no-op, so putting the index in the
+        schema script tried to index a column that only this migration adds.
         """
         cols = [r[1] for r in self.db.execute(
             "PRAGMA table_info(proxy_savings)").fetchall()]

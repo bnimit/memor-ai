@@ -141,3 +141,42 @@ def test_existing_hook_duplicates_are_collapsed_on_open(tmp_path):
     ).fetchone()["c"]
     assert n == 2
     assert s.get_proxy_savings_summary(days=None)["hook_saved"] == 1800
+
+
+def test_opening_a_pre_ledger_key_database_does_not_crash(tmp_path):
+    """Regression for CI: schema script must not index ledger_key before migrate.
+
+    An existing DB's ``CREATE TABLE IF NOT EXISTS`` is a no-op. Putting the
+    unique index in ``_init_schema`` then failed with ``no such column:
+    ledger_key`` on every open until the migration ran — which never ran.
+    """
+    path = str(tmp_path / "legacy.db")
+    s0 = SqliteStore(path, dim=16)
+    s0.db.executescript("""
+        DROP INDEX IF EXISTS idx_proxy_savings_ledger_key;
+        DROP TABLE proxy_savings;
+        CREATE TABLE proxy_savings(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp REAL, agent TEXT, provider TEXT, session_id TEXT,
+          tokens_before INTEGER, tokens_after INTEGER, content_types TEXT,
+          passthrough INTEGER DEFAULT 0,
+          upstream_input_tokens INTEGER,
+          upstream_cache_read_tokens INTEGER,
+          upstream_output_tokens INTEGER,
+          upstream_cache_creation_tokens INTEGER,
+          experiment_arm TEXT
+        );
+        DELETE FROM meta WHERE key='hook_ledger_deduped';
+    """)
+    s0.db.commit()
+    s0.db.close()
+
+    s = SqliteStore(path, dim=16)
+    cols = [r[1] for r in s.db.execute("PRAGMA table_info(proxy_savings)")]
+    assert "ledger_key" in cols
+    row = _row(500, 100)
+    row["provider"] = "hook"
+    row["ledger_key"] = "hook:legacy-open"
+    assert s.record_proxy_savings(row) is not None
+    assert s.record_proxy_savings(row) is not None
+    assert s.db.execute("SELECT COUNT(*) AS c FROM proxy_savings").fetchone()["c"] == 1
