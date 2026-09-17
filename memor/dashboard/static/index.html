@@ -2355,23 +2355,32 @@
       (o.usable || 0).toLocaleString('en-US') + ' episodes · tool calls per task';
 
     if (o.verdict === 'saves' || o.verdict === 'costs') {
-      var d = o.tool_call_delta_pct;
+      var d = (o.matched_att_pct != null) ? o.matched_att_pct : o.tool_call_delta_pct;
+      var matchRate = (o.match_rate != null) ? o.match_rate
+        : ((o.matched && o.matched.match_rate) || null);
       headline.textContent = (d > 0 ? '−' : '+') + Math.abs(d).toFixed(1) + '% work';
       headline.className = 'chart-big ' + (o.verdict === 'saves' ? 'rw-verdict-good' : 'rw-verdict-bad');
       detail.textContent = (o.verdict === 'saves'
-        ? 'Episodes with recall used measurably fewer tool calls, and the direction held across prompt sizes.'
-        : 'Episodes with recall used measurably MORE tool calls, consistently across prompt sizes.');
+        ? 'Matched episodes with recall used fewer tool calls (project × prompt band).'
+        : 'Matched episodes with recall used MORE tool calls (project × prompt band).')
+        + (matchRate != null ? ' Match rate ' + Math.round(matchRate * 100) + '%.' : '');
     } else if (o.verdict === 'no_effect') {
+      var att = o.matched_att_pct;
       headline.textContent = 'no measurable effect';
       headline.className = 'chart-big rw-verdict-null';
-      detail.textContent = 'Recall neither reduced nor increased work by an amount this data can '
-        + 'distinguish from noise. The aggregate difference reverses sign across prompt sizes, '
-        + 'which means it reflects which prompts receive recall rather than what recall does.';
+      detail.textContent = 'Matched ATT'
+        + (att != null ? ' (' + (att > 0 ? '+' : '') + att.toFixed(1) + '%)' : '')
+        + ' did not clear the noise floor after pairing within project × prompt band. '
+        + 'Observational — not randomised.';
     } else {
+      var pairs = (o.matched && o.matched.n_pairs) || 0;
+      var mr = (o.match_rate != null) ? o.match_rate
+        : ((o.matched && o.matched.match_rate) || 0);
       headline.textContent = 'not enough data';
       headline.className = 'chart-big rw-verdict-null';
-      detail.textContent = 'Needs at least ' + (o.min_per_arm || 20)
-        + ' episodes in each group. Have ' + withN + ' with recall, ' + withoutN + ' without.';
+      detail.textContent = 'Needs ≥50 matched pairs and ≥60% match rate. Have '
+        + pairs + ' pairs, ' + Math.round(mr * 100) + '% match rate'
+        + ' (' + withN + ' with recall, ' + withoutN + ' without).';
     }
 
     strataEl.innerHTML = '';
@@ -2384,13 +2393,15 @@
       }
       var el = document.createElement('div');
       el.className = cls;
-      el.innerHTML = '<span class="k">' + c.prompt_chars + ' chars</span>'
+      el.innerHTML = '<span class="k">' + c.prompt_chars + ' chars'
+        + (c.exploratory ? ' · explor.' : '') + '</span>'
         + '<span class="v">' + val + '</span>';
       el.title = c.n_with + ' with recall / ' + c.n_without + ' without';
       strataEl.appendChild(el);
     });
 
-    noteEl.textContent = data.confound || '';
+    noteEl.textContent = (data.claim_scope ? '[' + data.claim_scope + '] ' : '')
+      + (data.confound || '');
   }
 
   // Leads with whether compression is actually running. A flag can be true while
