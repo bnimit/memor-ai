@@ -1,6 +1,6 @@
 {
   "date": "2026-09-17",
-  "commit": "66d18972c60a1b3ea8f51d98cb0e9728a839cc98",
+  "commit": "b9c8439d3579629cc9ac036f387558208e6cffbc",
   "flags_default": {
     "MEMOR_SUPERSESSION": false,
     "MEMOR_TYPE_HALFLIFE": false
@@ -8,7 +8,8 @@
   "micro_fixtures": {
     "n": 15,
     "passed": true,
-    "command": "pytest tests/test_supersession_fixtures.py tests/test_similarity_cosine.py tests/test_supersession_disputes.py tests/test_retriever_supersession.py tests/test_type_halflife.py tests/test_counterfactual_stratum.py -q"
+    "command": "pytest tests/test_supersession_fixtures.py tests/test_similarity_cosine.py tests/test_supersession_disputes.py tests/test_retriever_supersession.py tests/test_type_halflife.py tests/test_counterfactual_stratum.py -q",
+    "verified_at": "b9c8439d3579629cc9ac036f387558208e6cffbc"
   },
   "stratified_counterfactual": {
     "status": "not_run",
