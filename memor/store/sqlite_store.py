@@ -118,10 +118,13 @@ class SqliteStore:
         self._migrate_attribute_unknown_savings()
         self._migrate_cache_creation_tokens()
         self._migrate_experiment_arm()
+        self._migrate_ledger_key()
+        self._migrate_dedupe_hook_savings()
         self._migrate_recall_agent()
         self._migrate_recall_conversation()
         self._migrate_repair_impossible_counts()
         self._migrate_key_vectors()
+        self._migrate_disputes_and_validity()
 
     def _init_schema(self):
         self.db.executescript(f"""
@@ -147,7 +150,17 @@ class SqliteStore:
           negative_count INTEGER DEFAULT 0,
           last_recalled REAL,
           quality_score REAL DEFAULT 0.5,
-          last_decayed_at REAL);
+          last_decayed_at REAL,
+          validity REAL DEFAULT 1.0);
+        CREATE TABLE IF NOT EXISTS disputes(
+          disputed_id TEXT NOT NULL,
+          disputer_id TEXT NOT NULL,
+          created_at REAL NOT NULL,
+          affirmations INTEGER NOT NULL DEFAULT 0,
+          dormant INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY(disputed_id, disputer_id));
+        CREATE INDEX IF NOT EXISTS idx_disputes_disputed ON disputes(disputed_id);
+        CREATE INDEX IF NOT EXISTS idx_disputes_disputer ON disputes(disputer_id);
         CREATE TABLE IF NOT EXISTS recall_log(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           timestamp REAL, project TEXT, query_preview TEXT,
@@ -209,7 +222,8 @@ class SqliteStore:
           upstream_input_tokens INTEGER,
           upstream_cache_read_tokens INTEGER,
           upstream_output_tokens INTEGER,
-          upstream_cache_creation_tokens INTEGER
+          upstream_cache_creation_tokens INTEGER,
+          ledger_key TEXT
         );
         CREATE TABLE IF NOT EXISTS ccr_blobs(
           id TEXT PRIMARY KEY,
@@ -417,6 +431,65 @@ class SqliteStore:
             except sqlite3.Error:
                 pass
 
+    def _migrate_ledger_key(self):
+        """Add idempotency key so hook retries do not inflate savings.
+
+        PostToolUse can fire more than once for the same tool result. Without a
+        unique key those retries land as separate ledger rows and the hero
+        counts the same saving three to seven times.
+
+        The unique index lives here, not in ``_init_schema``. On an existing DB
+        ``CREATE TABLE IF NOT EXISTS`` is a no-op, so putting the index in the
+        schema script tried to index a column that only this migration adds.
+        """
+        cols = [r[1] for r in self.db.execute(
+            "PRAGMA table_info(proxy_savings)").fetchall()]
+        if "ledger_key" not in cols:
+            try:
+                self.db.execute(
+                    "ALTER TABLE proxy_savings ADD COLUMN ledger_key TEXT")
+                self.db.commit()
+            except sqlite3.Error:
+                pass
+        try:
+            self.db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_proxy_savings_ledger_key "
+                "ON proxy_savings(ledger_key) WHERE ledger_key IS NOT NULL")
+            self.db.commit()
+        except sqlite3.Error:
+            pass
+
+    def _migrate_dedupe_hook_savings(self):
+        """One-shot collapse of duplicate hook rows written before ledger_key.
+
+        Fingerprint is (agent, session, before, after, second). That matches the
+        observed failure mode — identical rows stamped in the same second —
+        without collapsing two real compressions of the same size minutes apart.
+        """
+        row = self.db.execute(
+            "SELECT value FROM meta WHERE key='hook_ledger_deduped'").fetchone()
+        if row is not None:
+            return
+        try:
+            self.db.execute("""
+                DELETE FROM proxy_savings
+                WHERE provider = 'hook'
+                  AND id NOT IN (
+                    SELECT MIN(id) FROM proxy_savings
+                    WHERE provider = 'hook'
+                    GROUP BY agent,
+                             IFNULL(session_id, ''),
+                             tokens_before,
+                             tokens_after,
+                             CAST(timestamp AS INTEGER)
+                  )
+            """)
+            self.db.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES('hook_ledger_deduped', '1')")
+            self.db.commit()
+        except sqlite3.Error:
+            pass
+
     def _migrate_recall_agent(self):
         """Add agent column to recall_log if missing."""
         cols = [r[1] for r in self.db.execute("PRAGMA table_info(recall_log)").fetchall()]
@@ -440,6 +513,143 @@ class SqliteStore:
           key_id UNINDEXED, key_text, tokenize='porter unicode61');
         """)
         self.db.commit()
+
+    def _migrate_disputes_and_validity(self):
+        """Soft temporal disputes + derived validity (idempotent on orphans).
+
+        Earlier shelved work left empty ``disputes`` / ``validity`` on some
+        machines. CREATE IF NOT EXISTS and ADD COLUMN only-if-missing keep those
+        opens safe.
+        """
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS disputes(
+              disputed_id TEXT NOT NULL,
+              disputer_id TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              affirmations INTEGER NOT NULL DEFAULT 0,
+              dormant INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY(disputed_id, disputer_id));
+            CREATE INDEX IF NOT EXISTS idx_disputes_disputed ON disputes(disputed_id);
+            CREATE INDEX IF NOT EXISTS idx_disputes_disputer ON disputes(disputer_id);
+        """)
+        self.db.commit()
+        cols = [r[1] for r in self.db.execute(
+            "PRAGMA table_info(memory_quality)").fetchall()]
+        if "validity" not in cols:
+            try:
+                self.db.execute(
+                    "ALTER TABLE memory_quality ADD COLUMN validity REAL DEFAULT 1.0")
+                self.db.commit()
+            except sqlite3.Error:
+                pass
+
+    def add_dispute(self, disputed_id: str, disputer_id: str,
+                    created_at: float | None = None) -> bool:
+        """Insert a dispute edge. Returns True if a new row was written."""
+        import time as _time
+        if disputed_id == disputer_id:
+            return False
+        ts = _time.time() if created_at is None else created_at
+        cur = self.db.execute(
+            "INSERT OR IGNORE INTO disputes"
+            "(disputed_id, disputer_id, created_at, affirmations, dormant) "
+            "VALUES(?,?,?,0,0)",
+            (disputed_id, disputer_id, ts),
+        )
+        self.db.commit()
+        return cur.rowcount > 0
+
+    def active_disputers(self, disputed_id: str, *, _seen: set[str] | None = None) -> list[str]:
+        """Disputer ids that still count against ``disputed_id``.
+
+        A disputer is inactive when its row is dormant or the disputer is itself
+        actively disputed (transitivity). ``_seen`` breaks cycles.
+        """
+        seen = _seen if _seen is not None else set()
+        if disputed_id in seen:
+            return []
+        seen.add(disputed_id)
+        rows = self.db.execute(
+            "SELECT disputer_id FROM disputes "
+            "WHERE disputed_id=? AND dormant=0",
+            (disputed_id,),
+        ).fetchall()
+        active: list[str] = []
+        for r in rows:
+            mid = r["disputer_id"]
+            # If M is itself disputed by someone active, M does not count.
+            if self.active_disputers(mid, _seen=seen):
+                continue
+            active.append(mid)
+        return active
+
+    def recompute_validity(self, artifact_id: str) -> float:
+        """Derive validity from active disputers; persist on memory_quality."""
+        from memor.supersession import validity_from_active_count
+        n = len(self.active_disputers(artifact_id))
+        val = validity_from_active_count(n)
+        self.db.execute(
+            "INSERT INTO memory_quality(artifact_id, recall_count, use_count, "
+            "negative_count, quality_score, validity) VALUES(?,0,0,0,?,?) "
+            "ON CONFLICT(artifact_id) DO UPDATE SET validity=excluded.validity",
+            (artifact_id, NEUTRAL_QUALITY, val),
+        )
+        self.db.commit()
+        return val
+
+    def get_validity(self, artifact_id: str) -> float:
+        row = self.db.execute(
+            "SELECT validity FROM memory_quality WHERE artifact_id=?",
+            (artifact_id,),
+        ).fetchone()
+        if row is None or row["validity"] is None:
+            return 1.0
+        return float(row["validity"])
+
+    def get_quality_and_validity(
+        self, artifact_ids: list[str]
+    ) -> dict[str, tuple[float, float]]:
+        """Batch quality + validity; missing ids → (neutral, 1.0)."""
+        ids = list(artifact_ids)
+        if not ids:
+            return {}
+        qmarks = ",".join("?" * len(ids))
+        rows = self.db.execute(
+            f"SELECT artifact_id, quality_score, validity FROM memory_quality "
+            f"WHERE artifact_id IN ({qmarks})",
+            ids,
+        ).fetchall()
+        out = {
+            r["artifact_id"]: (
+                clamp_quality(r["quality_score"]),
+                1.0 if r["validity"] is None else float(r["validity"]),
+            )
+            for r in rows
+        }
+        for aid in ids:
+            out.setdefault(aid, (NEUTRAL_QUALITY, 1.0))
+        return out
+
+    def affirm_dispute_on_use(self, artifact_id: str) -> None:
+        """Bump affirmations on the newest active dispute; dormancy at threshold."""
+        from memor.supersession import AFFIRMATION_DORMANT_AT
+        row = self.db.execute(
+            "SELECT disputer_id, affirmations FROM disputes "
+            "WHERE disputed_id=? AND dormant=0 "
+            "ORDER BY created_at DESC LIMIT 1",
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            return
+        new_aff = int(row["affirmations"] or 0) + 1
+        dormant = 1 if new_aff >= AFFIRMATION_DORMANT_AT else 0
+        self.db.execute(
+            "UPDATE disputes SET affirmations=?, dormant=? "
+            "WHERE disputed_id=? AND disputer_id=?",
+            (new_aff, dormant, artifact_id, row["disputer_id"]),
+        )
+        self.db.commit()
+        self.recompute_validity(artifact_id)
 
     def _migrate_fts(self):
         """One-time backfill of the FTS index for databases created before
@@ -1197,6 +1407,11 @@ class SqliteStore:
             """, (aid,))
         self.db.commit()
         self._recompute_quality(artifact_ids)
+        for aid in artifact_ids:
+            try:
+                self.affirm_dispute_on_use(aid)
+            except Exception:
+                pass
 
     def record_negative(self, artifact_ids: list[str]) -> None:
         for aid in artifact_ids:
@@ -1261,32 +1476,83 @@ class SqliteStore:
     def decay_quality(self, stale_days: int = 14, factor: float = 0.5,
                       deactivate_floor: float = 0.03) -> int:
         """Halve quality_score for memories not recalled in stale_days.
+
         Only decays each memory once per stale_days interval (tracked via
-        last_decayed_at). Also catches memories with NULL last_recalled
-        that are old enough. If the decayed score drops below
-        deactivate_floor, deactivate the memory.
-        Returns number of memories decayed."""
+        last_decayed_at). If ``MEMOR_TYPE_HALFLIFE`` is on, ``stale_days`` is
+        replaced per memory by its type half-life so durable decisions are not
+        decayed on the same clock as raw extracts.
+        """
+        import json as _json
         import time as _time
+        from memor.supersession import half_life_days, type_halflife_enabled
+        from memor.types import Artifact
+
         now = _time.time()
-        recall_cutoff = now - (stale_days * 86400)
-        decay_cutoff = now - (stale_days * 86400)
+        use_halflife = type_halflife_enabled()
+
+        if not use_halflife:
+            recall_cutoff = now - (stale_days * 86400)
+            decay_cutoff = now - (stale_days * 86400)
+            rows = self.db.execute("""
+                SELECT q.artifact_id, q.quality_score
+                FROM memory_quality q
+                JOIN artifacts a ON a.id = q.artifact_id
+                WHERE a.kind = 'memory' AND a.active = 1
+                  AND (q.last_recalled IS NULL OR q.last_recalled < ?)
+                  AND (q.last_decayed_at IS NULL OR q.last_decayed_at < ?)
+            """, (recall_cutoff, decay_cutoff)).fetchall()
+            decayed = 0
+            for r in rows:
+                new_score = round(r["quality_score"] * factor, 4)
+                if new_score < deactivate_floor:
+                    self._deactivate_artifact(r["artifact_id"])
+                    self.db.execute("UPDATE artifacts SET active=0 WHERE id=?",
+                                    (r["artifact_id"],))
+                self.db.execute(
+                    "UPDATE memory_quality SET quality_score=?, last_decayed_at=? "
+                    "WHERE artifact_id=?",
+                    (new_score, now, r["artifact_id"]))
+                decayed += 1
+            self.db.commit()
+            return decayed
+
         rows = self.db.execute("""
-            SELECT q.artifact_id, q.quality_score
+            SELECT q.artifact_id, q.quality_score, q.last_recalled, q.last_decayed_at,
+                   a.kind, a.meta, a.created_at, a.project, a.source, a.text,
+                   a.token_count
             FROM memory_quality q
             JOIN artifacts a ON a.id = q.artifact_id
             WHERE a.kind = 'memory' AND a.active = 1
-              AND (q.last_recalled IS NULL OR q.last_recalled < ?)
-              AND (q.last_decayed_at IS NULL OR q.last_decayed_at < ?)
-        """, (recall_cutoff, decay_cutoff)).fetchall()
+        """).fetchall()
         decayed = 0
         for r in rows:
+            try:
+                meta = _json.loads(r["meta"] or "{}")
+            except Exception:
+                meta = {}
+            art = Artifact(
+                id=r["artifact_id"], kind=r["kind"], project=r["project"],
+                source=r["source"] or "", text=r["text"] or "",
+                token_count=r["token_count"] or 1,
+                created_at=r["created_at"] or 0.0, meta=meta,
+            )
+            hl = half_life_days(art)
+            recall_cutoff = now - (hl * 86400)
+            decay_cutoff = now - (hl * 86400)
+            last_recalled = r["last_recalled"]
+            last_decayed = r["last_decayed_at"]
+            if last_recalled is not None and last_recalled >= recall_cutoff:
+                continue
+            if last_decayed is not None and last_decayed >= decay_cutoff:
+                continue
             new_score = round(r["quality_score"] * factor, 4)
             if new_score < deactivate_floor:
                 self._deactivate_artifact(r["artifact_id"])
                 self.db.execute("UPDATE artifacts SET active=0 WHERE id=?",
                                 (r["artifact_id"],))
             self.db.execute(
-                "UPDATE memory_quality SET quality_score=?, last_decayed_at=? WHERE artifact_id=?",
+                "UPDATE memory_quality SET quality_score=?, last_decayed_at=? "
+                "WHERE artifact_id=?",
                 (new_score, now, r["artifact_id"]))
             decayed += 1
         self.db.commit()
@@ -1560,25 +1826,46 @@ class SqliteStore:
         shim's fail-open, so a metrics write failing discarded the compression
         that had already succeeded. Losing a ledger row costs a statistic;
         losing the rewrite costs the user tokens.
+
+        When ``ledger_key`` is set, a second write with the same key is a no-op
+        and returns the existing row id (hook retries).
         """
         content_types_json = json.dumps(row.get("content_types", {}))
+        ledger_key = row.get("ledger_key") or None
         try:
+            if ledger_key:
+                existing = self.db.execute(
+                    "SELECT id FROM proxy_savings WHERE ledger_key=?",
+                    (ledger_key,),
+                ).fetchone()
+                if existing is not None:
+                    return int(existing["id"])
             cur = self.db.execute(
                 "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
                 "tokens_before, tokens_after, content_types, passthrough, "
                 "upstream_input_tokens, upstream_cache_read_tokens, "
                 "upstream_output_tokens, upstream_cache_creation_tokens, "
-                "experiment_arm) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "experiment_arm, ledger_key) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (row.get("timestamp"), row.get("agent"), row.get("provider"),
                  row.get("session_id"), row.get("tokens_before"), row.get("tokens_after"),
                  content_types_json, row.get("passthrough", 0),
                  row.get("upstream_input_tokens"), row.get("upstream_cache_read_tokens"),
                  row.get("upstream_output_tokens"),
                  row.get("upstream_cache_creation_tokens"),
-                 row.get("experiment_arm")))
+                 row.get("experiment_arm"), ledger_key))
             self.db.commit()
             return cur.lastrowid
+        except sqlite3.IntegrityError:
+            # Racing writers with the same ledger_key: treat as already recorded.
+            if ledger_key:
+                existing = self.db.execute(
+                    "SELECT id FROM proxy_savings WHERE ledger_key=?",
+                    (ledger_key,),
+                ).fetchone()
+                if existing is not None:
+                    return int(existing["id"])
+            return None
         except sqlite3.Error as exc:
             print(f"[memor] savings ledger write skipped: {exc}", file=sys.stderr)
             return None

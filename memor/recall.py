@@ -158,8 +158,10 @@ def recall(query: str, project: str, db_path: str, *,
         hits = [h for h in hits if h.artifact.meta.get("session_id") != session_id]
     if exclude_ids:
         hits = [h for h in hits if h.artifact.id not in exclude_ids]
-    if threshold > 0.0:
-        hits = [h for h in hits if h.score >= threshold]
+    # Strict profile may raise the score floor, drop chunks when memories
+    # exist, and cap hit count. Default profile is a no-op pass-through.
+    from memor.recall_policy import apply_recall_policy
+    hits, _policy_meta = apply_recall_policy(hits, threshold=threshold)
     if max_tokens > 0:
         budget_hits = []
         running = 0

@@ -58,15 +58,29 @@ def _payload(day: str, saved: int, lifetime: int | None = None) -> dict:
     """A savings-ledger response. ``lifetime`` defaults to the window total.
 
     The endpoint gained a ``lifetime`` block when the hero stopped leading with
-    the rolling window, and the headline reads from it. A fixture without one
-    renders 0, so it is part of the shape now rather than optional.
+    the rolling window, and both the KPI rate and the headline read from it.
+    A fixture without one renders empty, so it is part of the shape now rather
+    than optional.
     """
     total = saved if lifetime is None else lifetime
+    # before/after are invented so pct_saved matches `saved` when lifetime is
+    # the window total; callers that pass an explicit lifetime override the
+    # absolute saved figure without needing a coherent rate.
+    before = 100 if lifetime is None else max(total, 100)
+    after = before - (saved if lifetime is None else total)
+    pct = round((1 - after / before) * 100, 1) if before else 0.0
     return {
         "summary": {"tokens_before": 100, "tokens_after": 100 - saved,
                     "pct_saved": saved},
-        "lifetime": {"tokens_saved": total, "hook_saved": total,
-                     "proxy_saved": 0, "coverage_pct": 100.0},
+        "lifetime": {
+            "tokens_before": before,
+            "tokens_after": after,
+            "tokens_saved": total,
+            "pct_saved": pct,
+            "hook_saved": total,
+            "proxy_saved": 0,
+            "coverage_pct": 100.0,
+        },
         "per_day": [{"day": day, "tokens_before": 100,
                      "tokens_after": 100 - saved, "tokens_saved": saved,
                      "cumulative_saved": saved}],
@@ -119,3 +133,26 @@ def test_headline_is_lifetime_even_when_the_window_is_quiet(tmp_path):
     assert out["cum-saved-big"] == "2,500,000"
     # The window is not discarded, it is demoted to context.
     assert "50 in the last 30d" in out["cum-saved-lifetime"]
+
+
+def test_kpi_rate_uses_lifetime_not_the_30d_window(tmp_path):
+    """The KPI sat at 91% hook-only while the lifetime total was 2.5M proxy.
+
+    Both figures on the portfolio card have to come from lifetime, or the
+    before→after line cannot add up to the tokens-saved headline beneath it.
+    """
+    payload = _payload(date.today().isoformat(), 50, lifetime=2_500_000)
+    # Force a loud 30d summary that must NOT drive the KPI.
+    payload["summary"] = {
+        "tokens_before": 246_800, "tokens_after": 21_100, "pct_saved": 91.4,
+    }
+    payload["lifetime"] = {
+        "tokens_before": 30_000_000, "tokens_after": 27_500_000,
+        "tokens_saved": 2_500_000, "pct_saved": 8.3,
+        "hook_saved": 250_000, "proxy_saved": 2_250_000, "coverage_pct": 14.0,
+    }
+    out = render(payload, tmp_path)
+    assert out["savings-pct"] == "8.3%"
+    assert out["savings-before"] == "30,000,000"
+    assert out["savings-after"] == "27,500,000"
+    assert out["cum-saved-big"] == "2,500,000"

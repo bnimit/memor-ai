@@ -161,7 +161,7 @@ def build_response(request: dict, *, ledger: bool = False) -> dict:
     if ledger:
         record_savings(
             request, result.tokens_before, result.tokens_after,
-            result.content_type or "log",
+            result.content_type or "log", text=text,
         )
     return {
         "hookSpecificOutput": {
@@ -178,14 +178,20 @@ def build_response(request: dict, *, ledger: bool = False) -> dict:
     }
 
 
-def record_savings(request: dict, before: int, after: int, content_type: str) -> None:
+def record_savings(request: dict, before: int, after: int, content_type: str,
+                   text: str = "") -> None:
     """Log the saving to the same ledger the proxy writes. Best effort.
 
     Written to ``proxy_savings`` rather than a second table so the dashboard's
     existing figures cover both paths: a user who saves tokens through hooks
     and never installs the proxy should still see the savings they got.
+
+    ``ledger_key`` makes retries of the same PostToolUse a no-op. Without it
+    the real ledger recorded the same bash compression three to seven times
+    in one second and roughly doubled reported hook savings.
     """
     try:
+        import hashlib
         import time
         from pathlib import Path
 
@@ -194,6 +200,21 @@ def record_savings(request: dict, before: int, after: int, content_type: str) ->
         db_path = str(Path.home() / ".memor" / "memor.db")
         if not Path(db_path).exists():
             return
+        session = str(request.get("session_id") or "")
+        tool = str(request.get("tool_name") or "").lower()
+        tool_id = str(
+            request.get("tool_use_id")
+            or request.get("toolUseId")
+            or request.get("tool_call_id")
+            or ""
+        )
+        if tool_id:
+            raw = f"{session}\0{tool}\0{tool_id}\0{before}\0{after}"
+        else:
+            text_fp = hashlib.sha1(
+                text.encode("utf-8", errors="replace")).hexdigest()[:16]
+            raw = f"{session}\0{tool}\0{text_fp}\0{before}\0{after}\0{content_type}"
+        ledger_key = "hook:" + hashlib.sha1(raw.encode()).hexdigest()
         store = SqliteStore(db_path, dim=read_dim(db_path, 256))
         store.record_proxy_savings({
             "timestamp": time.time(),
@@ -204,6 +225,7 @@ def record_savings(request: dict, before: int, after: int, content_type: str) ->
             "tokens_after": after,
             "content_types": {content_type: 1},
             "passthrough": 0,
+            "ledger_key": ledger_key,
         })
     except Exception:
         pass

@@ -67,6 +67,7 @@ MAINTENANCE
   memor reingest --project <name>  Re-ingest only one project
   memor distill --project <name>   Run distillation manually
   memor forget-stale               Deactivate memories not recalled in 30 days
+  memor backfill-disputes          Scan memories; record soft temporal disputes
   memor compact                    Rebuild vector index, reclaim space
   memor scan                       Audit DB for leaked secrets
   memor scan --purge               Redact secrets in place
@@ -229,6 +230,19 @@ def eval_counterfactual_cmd(project: str = typer.Option(...), db: str = typer.Op
     typer.echo(f"  Tie:  {summary['tie_count']}/{summary['n_cases']} ({summary['tie_pct']}%)")
     typer.echo(f"  Loss: {summary['loss_count']}/{summary['n_cases']} ({summary['loss_pct']}%)")
     typer.echo(f"  Do-no-harm: {summary['do_no_harm_pct']}%")
+    by = summary.get("by_stratum") or {}
+    if by:
+        dp = by.get("dispute_present") or {}
+        nd = by.get("no_dispute") or {}
+        typer.echo("")
+        typer.echo(
+            f"  Dispute-present: {dp.get('n_cases', 0)} cases · "
+            f"do-no-harm {dp.get('do_no_harm_pct', 0)}%"
+        )
+        typer.echo(
+            f"  No-dispute:      {nd.get('n_cases', 0)} cases · "
+            f"do-no-harm {nd.get('do_no_harm_pct', 0)}%"
+        )
     s.save_eval_run({"type": "counterfactual", "k": k, "project": project, "holdout": holdout}, summary)
 
 
@@ -700,6 +714,27 @@ def forget_stale(days: int = typer.Option(30, help="Deactivate memories not reca
         typer.confirm(f"Deactivate {len(stale)} memories not recalled in {days} days?", abort=True)
     count = s.deactivate_stale(days)
     typer.echo(f"Deactivated {count} stale memories.")
+
+
+@app.command("backfill-disputes")
+def backfill_disputes_cmd(
+    project: str = typer.Option(None, help="Limit to one project"),
+    db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+    fake: bool = False,
+):
+    """Scan active memories and record soft temporal disputes (KNN, idempotent)."""
+    from memor.supersession import backfill_disputes
+    db_path = _db_path(db)
+    if not Path(db_path).exists():
+        typer.echo("No database found.")
+        raise typer.Exit(1)
+    e = _embedder(fake)
+    s = SqliteStore(db_path, dim=e.dim)
+    stats = backfill_disputes(s, e, project=project)
+    typer.echo(
+        f"Scanned {stats['memories_scanned']} memories; "
+        f"recorded {stats['disputes_recorded']} new dispute edges."
+    )
 
 
 @app.command("compact")
@@ -1397,6 +1432,52 @@ def recall_worth_cmd(
         return
     for line in format_report(summary):
         typer.echo(line)
+
+
+@app.command("prove-recall")
+def prove_recall_cmd(
+    db: str = typer.Option(str(Path.home() / ".memor" / "memor.db"), "--db"),
+    project: str = typer.Option(None, "--project", help="Limit offline A/B to one project."),
+    offline_n: int = typer.Option(40, "--offline-n", help="Recent recall_log queries to re-score."),
+    stamp: bool = typer.Option(False, "--stamp", help="Stamp recall baseline for forward G2 window."),
+    skip_offline: bool = typer.Option(False, "--skip-offline"),
+    out: str = typer.Option(None, "--out", help="Evidence JSON path."),
+    fake: bool = typer.Option(False, "--fake", help="Use FakeEmbedder for offline A/B."),
+):
+    """Prove-recall campaign: matched ATT (G0) + strict vs default offline A/B (G1).
+
+    Strict inject is opt-in via MEMOR_RECALL_PROFILE=strict. This command measures
+    whether that profile is thriftier offline and whether the ATT meter is healthy.
+    Forward ROI (G2) needs a stamped window of live traffic under strict.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from memor.prove_recall import run_prove_recall
+
+    embedder = _embedder(fake)
+    evidence = run_prove_recall(
+        db_path=_db_path(db),
+        embedder=embedder,
+        offline_n=offline_n,
+        project=project,
+        stamp=stamp,
+        skip_offline=skip_offline,
+        out_path=_Path(out) if out else None,
+    )
+    typer.echo(_json.dumps({
+        "decision": evidence.get("decision"),
+        "rationale": evidence.get("rationale"),
+        "g0": evidence.get("g0_meter"),
+        "g1": {k: v for k, v in (evidence.get("g1_offline_ab") or {}).items()
+               if k in ("n_compared", "default_mean_tokens", "strict_mean_tokens",
+                        "thrift_ratio", "default_memory_share", "strict_memory_share",
+                        "g1_pass", "g1_reason")},
+        "evidence_path": evidence.get("evidence_path"),
+        "g2": evidence.get("g2_forward"),
+    }, indent=2))
+    if evidence.get("decision") in ("fail_meter", "fail_policy", "revert_strict"):
+        raise typer.Exit(2)
 
 
 @app.command("compression-worth")
