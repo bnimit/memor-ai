@@ -6,12 +6,30 @@ Evidence for M1b flag flips lives in this directory as dated JSON files
 file that clears the ship bar in
 `docs/plans/2026-09-17-temporal-validity-and-recall-design.md`.
 
+## Prove-recall campaign
+
+```bash
+memor prove-recall                  # G0 matched ATT + G1 offline strict vs default
+memor prove-recall --stamp          # also stamp forward window for G2
+export MEMOR_RECALL_PROFILE=strict  # opt-in treatment in production
+memor service restart
+```
+
+Evidence: `YYYY-MM-DD-prove-recall.json`. Ship bars in
+`docs/plans/2026-09-18-prove-recall-design.md`.
+
+- **G0** meter healthy (pairs/match_rate)
+- **G1** strict ≤85% tokens vs default and ≥ memory share offline
+- **G2** forward matched ATT after ≥7d under strict (required to market ROI)
+- Do **not** default `MEMOR_RECALL_PROFILE=strict` until G1 passes and G2 is not `costs`
+
 ## Hard gates (CI)
 
 ```bash
 pytest tests/test_supersession_fixtures.py tests/test_similarity_cosine.py \
   tests/test_supersession_disputes.py tests/test_retriever_supersession.py \
-  tests/test_type_halflife.py tests/test_counterfactual_stratum.py -q
+  tests/test_type_halflife.py tests/test_counterfactual_stratum.py \
+  tests/test_recall_policy.py tests/test_prove_recall.py -q
 ```
 
 Micro-fixtures must pass with `MEMOR_SUPERSESSION=1` (the test file sets it).

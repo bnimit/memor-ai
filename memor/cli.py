@@ -1434,6 +1434,52 @@ def recall_worth_cmd(
         typer.echo(line)
 
 
+@app.command("prove-recall")
+def prove_recall_cmd(
+    db: str = typer.Option(str(Path.home() / ".memor" / "memor.db"), "--db"),
+    project: str = typer.Option(None, "--project", help="Limit offline A/B to one project."),
+    offline_n: int = typer.Option(40, "--offline-n", help="Recent recall_log queries to re-score."),
+    stamp: bool = typer.Option(False, "--stamp", help="Stamp recall baseline for forward G2 window."),
+    skip_offline: bool = typer.Option(False, "--skip-offline"),
+    out: str = typer.Option(None, "--out", help="Evidence JSON path."),
+    fake: bool = typer.Option(False, "--fake", help="Use FakeEmbedder for offline A/B."),
+):
+    """Prove-recall campaign: matched ATT (G0) + strict vs default offline A/B (G1).
+
+    Strict inject is opt-in via MEMOR_RECALL_PROFILE=strict. This command measures
+    whether that profile is thriftier offline and whether the ATT meter is healthy.
+    Forward ROI (G2) needs a stamped window of live traffic under strict.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from memor.prove_recall import run_prove_recall
+
+    embedder = _embedder(fake)
+    evidence = run_prove_recall(
+        db_path=_db_path(db),
+        embedder=embedder,
+        offline_n=offline_n,
+        project=project,
+        stamp=stamp,
+        skip_offline=skip_offline,
+        out_path=_Path(out) if out else None,
+    )
+    typer.echo(_json.dumps({
+        "decision": evidence.get("decision"),
+        "rationale": evidence.get("rationale"),
+        "g0": evidence.get("g0_meter"),
+        "g1": {k: v for k, v in (evidence.get("g1_offline_ab") or {}).items()
+               if k in ("n_compared", "default_mean_tokens", "strict_mean_tokens",
+                        "thrift_ratio", "default_memory_share", "strict_memory_share",
+                        "g1_pass", "g1_reason")},
+        "evidence_path": evidence.get("evidence_path"),
+        "g2": evidence.get("g2_forward"),
+    }, indent=2))
+    if evidence.get("decision") in ("fail_meter", "fail_policy", "revert_strict"):
+        raise typer.Exit(2)
+
+
 @app.command("compression-worth")
 def compression_worth_cmd(
     days: int = typer.Option(30, "--days", help="Window to report over."),
