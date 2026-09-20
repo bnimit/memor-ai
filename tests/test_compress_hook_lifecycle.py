@@ -81,12 +81,21 @@ def test_install_use_measure_lifecycle(sandbox_home, monkeypatch):
     # two disagree silently and the wider allowlist is dead code.
     from memor.posttool_compress import COMPRESSIBLE_TOOLS
     import re as _re
+    # No IGNORECASE here, deliberately. Claude Code applies no flags, so a
+    # matcher that needs one to pass is a matcher that fails in production.
+    # Supplying the flag from the test is how `(?i)(bash|...)` -- a JavaScript
+    # syntax error that matches nothing -- passed this assertion for 13 days
+    # while the hook silently compressed nothing at all.
     for tool in COMPRESSIBLE_TOOLS:
-        assert _re.fullmatch(group["matcher"], tool, _re.IGNORECASE), (
-            f"matcher {group['matcher']!r} excludes {tool!r}")
+        for spelling in (tool, tool.capitalize()):
+            assert _re.fullmatch(group["matcher"], spelling), (
+                f"matcher {group['matcher']!r} excludes {spelling!r}")
     # ...and must not spawn a process for the ones it always refuses.
     for tool in ("Read", "Edit", "Grep", "Glob", "Write"):
-        assert not _re.fullmatch(group["matcher"], tool, _re.IGNORECASE), tool
+        assert not _re.fullmatch(group["matcher"], tool), tool
+    # Anchored: an unanchored `ls` also matches `Tools`.
+    for tool in ("Tools", "ToolSearch", "rebash"):
+        assert not _re.search(group["matcher"], tool), tool
 
     # 2. Use. Claude Code runs a build and fires the hook with the result.
     original = _noisy_build_log()
@@ -234,7 +243,48 @@ def test_cli_install_command_runs(sandbox_home, monkeypatch):
     from memor.posttool_compress import COMPRESSIBLE_TOOLS
     matcher = config["hooks"]["PostToolUse"][0]["matcher"]
     for tool in COMPRESSIBLE_TOOLS:
-        assert _re.fullmatch(matcher, tool, _re.IGNORECASE), tool
+        assert _re.fullmatch(matcher, tool), tool
+        assert _re.fullmatch(matcher, tool.capitalize()), tool
+
+
+def test_matcher_compiles_in_javascript(sandbox_home, monkeypatch):
+    """The matcher is compiled by Claude Code's JS engine, not by Python's.
+
+    Python's `re` accepts `(?i)` and JavaScript's `RegExp` rejects it, so a
+    Python-only test cannot see the failure at all: the assertion passes, the
+    settings file is written, and the hook never runs. This is the check that
+    would have caught it, and it is why it shells out to node rather than
+    reasoning about regex dialects in the abstract.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available to check JavaScript regex semantics")
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: sandbox_home))
+    from memor.cli import _install_posttool_compress
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+
+    settings = sandbox_home / ".claude" / "settings.json"
+    _install_posttool_compress(settings, "/bin/memor-posttool-compress")
+    matcher = json.loads(settings.read_text())["hooks"]["PostToolUse"][0]["matcher"]
+
+    should_match = sorted(COMPRESSIBLE_TOOLS) + [
+        t.capitalize() for t in sorted(COMPRESSIBLE_TOOLS)]
+    should_not = ["Read", "Edit", "Grep", "Glob", "Write", "Tools", "ToolSearch"]
+    script = (
+        "const re = new RegExp(%s);\n"
+        "const yes = %s, no = %s;\n"
+        "for (const t of yes) if (!re.test(t)) { console.log('MISSING ' + t);"
+        " process.exit(1); }\n"
+        "for (const t of no) if (re.test(t)) { console.log('EXTRA ' + t);"
+        " process.exit(1); }\n"
+        "console.log('OK');\n"
+    ) % (json.dumps(matcher), json.dumps(should_match), json.dumps(should_not))
+
+    proc = subprocess.run([node, "-e", script], capture_output=True, text=True)
+    assert proc.returncode == 0, (
+        f"matcher {matcher!r} is not usable by Claude Code: "
+        f"{proc.stdout.strip()}{proc.stderr.strip()}")
 
 
 def test_cli_uninstall_command_runs(sandbox_home, monkeypatch):
@@ -262,3 +312,76 @@ def test_cli_rejects_unsupported_agent(sandbox_home, monkeypatch):
     result = CliRunner().invoke(app, ["install-compress-hook", "--agent", "kimi"])
     assert result.exit_code == 1
     assert not (sandbox_home / ".claude" / "settings.json").exists()
+
+
+# --- doctor's wiring check -------------------------------------------------
+#
+# The hook failed for 13 days with every service reporting healthy, because
+# nothing verified that the registered hook could actually be selected. These
+# cover that gap: a check that only passes on a correct config is worth little
+# if it does not also fail on the exact config that broke.
+
+def _settings(tmp_path, matcher, command="/bin/memor-posttool-compress"):
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({"hooks": {"PostToolUse": [
+        {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
+    ]}}))
+    return p
+
+
+def test_doctor_flags_the_matcher_that_actually_broke(tmp_path):
+    """The regression, verbatim: a Python-only inline flag in a JS regex."""
+    from memor.cli import check_posttool_wiring
+
+    problems = check_posttool_wiring(
+        _settings(tmp_path, "(?i)(agentgrep|bash|bg|ls|todo)"))
+    assert problems, "the matcher that silently disabled the hook was accepted"
+    assert "never runs" in problems[0]
+    assert "install-compress-hook" in problems[0]
+
+
+def test_doctor_flags_a_matcher_that_misses_tools(tmp_path):
+    from memor.cli import check_posttool_wiring
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+
+    problems = check_posttool_wiring(_settings(tmp_path, "^([Bb][Aa][Ss][Hh])$"))
+    assert problems
+    missed = [t for t in COMPRESSIBLE_TOOLS if t != "bash"]
+    assert all(t in problems[0] for t in missed)
+
+
+def test_doctor_flags_a_hook_binary_that_vanished(tmp_path):
+    from memor.cli import _ci_pattern, check_posttool_wiring
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+
+    problems = check_posttool_wiring(_settings(
+        tmp_path, _ci_pattern(COMPRESSIBLE_TOOLS),
+        command="/nonexistent/memor-posttool-compress"))
+    assert any("no longer" in p for p in problems)
+
+
+def test_doctor_is_silent_on_a_correct_install(tmp_path, sandbox_home, monkeypatch):
+    """No news is the point: a check that cries wolf gets ignored."""
+    import shutil
+
+    from memor.cli import _install_posttool_compress, check_posttool_wiring
+
+    real = shutil.which("sh")  # any file that exists, standing in for the hook
+    hook = tmp_path / "memor-posttool-compress"
+    shutil.copy(real, hook)
+    settings = tmp_path / ".claude" / "settings.json"
+    _install_posttool_compress(settings, str(hook))
+    assert check_posttool_wiring(settings) == []
+
+
+def test_doctor_stays_quiet_when_the_hook_is_not_installed(tmp_path):
+    """Not installing is a choice, and nagging about it trains people to skim."""
+    from memor.cli import check_posttool_wiring
+
+    assert check_posttool_wiring(tmp_path / "absent.json") == []
+    other = tmp_path / "settings.json"
+    other.write_text(json.dumps({"hooks": {"PostToolUse": [
+        {"matcher": "(?i)somebody-elses-hook",
+         "hooks": [{"command": "/bin/not-ours"}]}
+    ]}}))
+    assert check_posttool_wiring(other) == []

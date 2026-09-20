@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import re
 import sys
 from pathlib import Path
 import typer
@@ -928,6 +929,30 @@ def _install_hook_logic_codex(hooks_path: Path, hook_command: str) -> None:
 POSTTOOL_HOOK_MARKER = "memor-posttool-compress"
 
 
+def _ci_pattern(names) -> str:
+    """Case-insensitive alternation that a JavaScript regex engine accepts.
+
+    Claude Code compiles ``matcher`` with JavaScript's ``RegExp``, which has no
+    inline-flag syntax: ``(?i)`` is not "ignore case" there, it is a syntax
+    error, and the whole group fails to compile. A matcher that does not
+    compile matches nothing, silently -- the hook is registered, the settings
+    file looks right, and no tool output is ever compressed. That is exactly
+    how this path went 13 days without recording a single saving while every
+    service reported healthy.
+
+    Per-character classes (``[Bb][Aa][Ss][Hh]``) say the same thing in the
+    subset both engines share, so the pattern keeps working whichever agent
+    reads it.
+    """
+    def one(name: str) -> str:
+        return "".join(
+            f"[{c.upper()}{c.lower()}]" if c.isalpha() else re.escape(c)
+            for c in name
+        )
+
+    return "^(" + "|".join(one(n) for n in sorted(names)) + ")$"
+
+
 def _install_posttool_compress(settings_path: Path, hook_command: str) -> None:
     """Register the PostToolUse output compressor for Claude Code.
 
@@ -940,6 +965,11 @@ def _install_posttool_compress(settings_path: Path, hook_command: str) -> None:
     hook re-checks the tool name anyway, and a narrow matcher means no process
     is spawned for the Read and Edit calls it would refuse, which is most of
     them.
+
+    Anchored, because an unanchored alternation matches by substring: a bare
+    ``ls`` also matches ``Tools``, and ``bash`` matches anything containing it.
+    The hook would decline those on its own allowlist, but only after paying
+    for a process spawn on tool calls it was never meant to see.
     """
     from memor.posttool_compress import COMPRESSIBLE_TOOLS
 
@@ -950,9 +980,11 @@ def _install_posttool_compress(settings_path: Path, hook_command: str) -> None:
     hooks = data.setdefault("hooks", {})
     post_hooks = hooks.setdefault("PostToolUse", [])
     # Case-insensitive so one matcher serves agents that disagree on
-    # capitalisation for the same tool (`Bash` in Claude Code, `bash` in jcode).
+    # capitalisation for the same tool (`Bash` in Claude Code, `bash` in
+    # jcode) -- spelled out per character, because the matcher is consumed by
+    # a JavaScript regex engine. See `_ci_pattern`.
     entry = {
-        "matcher": f"(?i)({'|'.join(sorted(COMPRESSIBLE_TOOLS))})",
+        "matcher": _ci_pattern(COMPRESSIBLE_TOOLS),
         "hooks": [{"type": "command", "command": hook_command, "timeout": 10}],
     }
     for i, group in enumerate(post_hooks):
@@ -1971,6 +2003,85 @@ def uninstall_proxy(
         typer.echo(f"Failed to uninstall proxy: {e}", err=True)
         raise typer.Exit(1)
 
+#: Regex constructs Python's `re` accepts and JavaScript's `RegExp` does not.
+#: An installed matcher containing one of these is not a narrow matcher, it is
+#: a dead one: the engine that compiles it is JavaScript's, the compile throws,
+#: and the hook never fires on any tool at all.
+_JS_INCOMPATIBLE = (
+    ("(?i)", "inline flags"),
+    ("(?m)", "inline flags"),
+    ("(?s)", "inline flags"),
+    ("(?x)", "inline flags"),
+    ("(?P<", "named groups in Python syntax"),
+    (r"\A", r"\A anchor"),
+    (r"\Z", r"\Z anchor"),
+)
+
+
+def check_posttool_wiring(settings_path: Path) -> list[str]:
+    """Problems with the installed compression hook, as user-facing lines.
+
+    This exists because the failure it looks for is invisible from every other
+    angle. The daemon was running, the proxy was running, the settings file
+    named the hook, and the hook binary worked perfectly when invoked by hand.
+    The only symptom was an absence: no hook savings for thirteen days, which
+    the dashboard could only report as "a stopped service looks the same as a
+    quiet week".
+
+    So the check is on the wiring rather than on the parts: is the hook
+    registered, does its command still exist, and would its matcher actually
+    select the tools it claims to. Empty list means nothing to report.
+    """
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+
+    if not settings_path.exists():
+        return []
+    try:
+        data = json.loads(settings_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return [f"{settings_path} is not readable as JSON; the hook cannot load."]
+
+    groups = data.get("hooks", {}).get("PostToolUse") or []
+    ours = [
+        g for g in groups
+        if any(POSTTOOL_HOOK_MARKER in h.get("command", "")
+               for h in g.get("hooks", []))
+    ]
+    if not ours:
+        # Not installed is a choice, not a fault. The dashboard's onboarding
+        # banner covers it and repeating it here would be nagging.
+        return []
+
+    problems: list[str] = []
+    group = ours[0]
+    matcher = group.get("matcher", "")
+
+    for token, what in _JS_INCOMPATIBLE:
+        if token in matcher:
+            problems.append(
+                f"the compression hook's matcher uses {what} ({token!r}), which "
+                "Claude Code's regex engine rejects, so the hook never runs on "
+                "any tool. Fix: memor install-compress-hook")
+            break
+    else:
+        missed = sorted(
+            t for t in COMPRESSIBLE_TOOLS
+            if not (re.fullmatch(matcher, t) or re.fullmatch(matcher, t.capitalize()))
+        )
+        if missed:
+            problems.append(
+                "the compression hook's matcher excludes "
+                f"{', '.join(missed)}, which it is configured to compress. "
+                "Fix: memor install-compress-hook")
+
+    for h in group.get("hooks", []):
+        cmd = h.get("command", "")
+        if POSTTOOL_HOOK_MARKER in cmd and not Path(cmd).exists():
+            problems.append(
+                f"the compression hook points at {cmd}, which no longer "
+                "exists. Fix: memor install-compress-hook")
+    return problems
+
 
 @app.command("doctor")
 def doctor(
@@ -1989,6 +2100,14 @@ def doctor(
     if not Path(db_path).exists():
         typer.echo("memor: no memory store yet.")
         return
+
+    # Reported before the read table, and regardless of what it says: a broken
+    # write path is invisible in read statistics, which is how it survived.
+    wiring = check_posttool_wiring(Path.home() / ".claude" / "settings.json")
+    for problem in wiring:
+        typer.echo(f"!! {problem}")
+    if wiring:
+        typer.echo("")
 
     store = SqliteStore(db_path, dim=read_dim(db_path, 384))
     agents = agent_liveness(store)
