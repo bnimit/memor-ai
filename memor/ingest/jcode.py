@@ -36,6 +36,9 @@ JCODE_SESSIONS_DIR = Path.home() / ".jcode" / "sessions"
 #: by the agent. Only prose is worth remembering.
 _TEXT_BLOCK = "text"
 
+#: path -> (stamp, working_dir). Stamp is max(session mtime, journal mtime).
+_WORKING_DIR_CACHE: dict[str, tuple[float, str]] = {}
+
 
 def _text_of(content) -> str:
     """Flatten message content to prose, dropping tool and reasoning blocks."""
@@ -67,28 +70,52 @@ def working_dir_for(session_path: Path) -> str:
     The session JSON's ``working_dir`` is often null; the journal's
     ``meta.working_dir`` is not. Preferring the journal is what keeps a session
     from being filed under "unknown" and recalled into unrelated projects.
+
+    The journal is streamed line-by-line, and results are cached per mtime:
+    scanning a few hundred sessions every poll used to cost ~0.7s just reading
+    journals that had not changed.
     """
     jp = session_path.parent / (session_path.stem + ".journal.jsonl")
+    try:
+        stamp = session_path.stat().st_mtime
+    except OSError:
+        stamp = 0.0
     if jp.exists():
         try:
-            for line in jp.read_text(errors="replace").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                wd = (rec.get("meta") or {}).get("working_dir")
-                if wd:
-                    return str(wd)
+            stamp = max(stamp, jp.stat().st_mtime)
         except OSError:
             pass
-    try:
-        data = json.loads(session_path.read_text(errors="replace"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-    return str(data.get("working_dir") or "")
+    cache_key = str(session_path)
+    hit = _WORKING_DIR_CACHE.get(cache_key)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+
+    wd = ""
+    if jp.exists():
+        try:
+            with jp.open(errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    found = (rec.get("meta") or {}).get("working_dir")
+                    if found:
+                        wd = str(found)
+                        break
+        except OSError:
+            pass
+    if not wd:
+        try:
+            data = json.loads(session_path.read_text(errors="replace"))
+            wd = str(data.get("working_dir") or "")
+        except (OSError, json.JSONDecodeError):
+            wd = ""
+    _WORKING_DIR_CACHE[cache_key] = (stamp, wd)
+    return wd
 
 
 def _messages(session_path: Path) -> list[dict]:

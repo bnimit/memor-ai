@@ -25,6 +25,7 @@ import json
 import re
 import sqlite3
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -515,86 +516,192 @@ def parse_session(
     return arts
 
 
+def cursor_state_key(composer_id: str) -> str:
+    return f"cursor:{composer_id}"
+
+
+@dataclass
+class _CursorScanCache:
+    """Incremental scan state for the multi-GB Cursor global store.
+
+    A full ``SELECT key, value`` over ~150k bubbles costs multiple seconds and
+    was the daemon's dominant CPU every 30s poll. New messages insert new
+    ``bubbleId:`` keys, so a keys-only pass plus fetching just the new values
+    is enough after the first scan.
+
+    Resolved project names are cached too: re-running path votes walks the
+    filesystem for every unmapped composer and was ~0.7s even on a warm scan.
+    """
+    db_path: str
+    keys: set[str]
+    latest: dict[str, float]
+    unresolved: dict[str, list[str]]
+    encoded_refs: dict[str, list[str]]
+    projects: dict[str, str]
+
+
+_cursor_scan_cache: _CursorScanCache | None = None
+
+
+def reset_cursor_scan_cache() -> None:
+    """Drop the incremental cache (tests / db path changes)."""
+    global _cursor_scan_cache
+    _cursor_scan_cache = None
+
+
+def _composer_id_from_bubble_key(key: str) -> str | None:
+    parts = key.split(":")
+    if len(parts) < 3 or parts[0] != "bubbleId":
+        return None
+    return parts[1]
+
+
+def _ingest_bubble_raw(
+    cache: _CursorScanCache,
+    *,
+    composer_id: str,
+    raw: str,
+    mapping: dict[str, str],
+) -> None:
+    """Update mtime + path-vote samples from one bubble value."""
+    if composer_id not in mapping:
+        samples = cache.unresolved.setdefault(composer_id, [])
+        grew = False
+        if len(samples) < _PROJECT_VOTE_SAMPLES and _PATH_RE.search(raw):
+            samples.append(raw)
+            grew = True
+        if _CURSOR_PROJECT_DIR_RE.search(raw):
+            fallbacks = cache.encoded_refs.setdefault(composer_id, [])
+            if len(fallbacks) < _ENCODED_REF_SAMPLES:
+                fallbacks.append(raw)
+                grew = True
+        if grew:
+            # New path evidence may change the vote; drop the cached name.
+            cache.projects.pop(composer_id, None)
+
+    stamp = 0.0
+    try:
+        stamp = _created_at(json.loads(raw).get("createdAt"))
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        pass
+    if stamp > cache.latest.get(composer_id, 0.0):
+        cache.latest[composer_id] = stamp
+
+
+def _fetch_bubble_values(
+    con: sqlite3.Connection, keys: list[str], *, batch: int = 400
+) -> list[tuple[str, str]]:
+    """Load values for an explicit key list (incremental path)."""
+    out: list[tuple[str, str]] = []
+    for i in range(0, len(keys), batch):
+        chunk = keys[i:i + batch]
+        placeholders = ",".join("?" * len(chunk))
+        try:
+            out.extend(con.execute(
+                f"SELECT key, value FROM cursorDiskKV WHERE key IN ({placeholders})",
+                chunk,
+            ).fetchall())
+        except sqlite3.Error:
+            continue
+    return out
+
+
 def scan_cursor_sessions(
     db_path: Path = CURSOR_GLOBAL_DB,
     *,
     workspace_dir: Path = CURSOR_WORKSPACE_DIR,
 ) -> list[tuple[str, str, float]]:
     """Return (composer_id, project_name, updated_at_epoch) per Cursor thread."""
+    global _cursor_scan_cache
     results: list[tuple[str, str, float]] = []
     if not db_path.is_file():
         return results
 
     mapping = workspace_project_map(workspace_dir)
+    db_key = str(db_path.resolve()) if db_path.exists() else str(db_path)
 
     try:
         con = _connect_ro(db_path)
     except sqlite3.Error:
         return results
+
     try:
-        # One pass over the whole keyspace. Per-composer queries would mean a
-        # LIKE scan each over ~143k rows, and the daemon calls this every poll.
-        latest: dict[str, float] = {}
-        unresolved: dict[str, list[str]] = {}
-        encoded_refs: dict[str, list[str]] = {}
         try:
-            cursor = con.execute(
-                "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'"
-            )
+            key_rows = con.execute(
+                "SELECT key FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'"
+            ).fetchall()
         except sqlite3.Error:
             return results
+        key_set = {r[0] for r in key_rows if r and r[0]}
 
-        for key, raw in cursor:
-            parts = key.split(":")
-            if len(parts) < 3:
-                continue
-            composer_id = parts[1]
+        cache = _cursor_scan_cache
+        if cache is None or cache.db_path != db_key:
+            cache = _CursorScanCache(
+                db_path=db_key,
+                keys=set(),
+                latest={},
+                unresolved={},
+                encoded_refs={},
+                projects={},
+            )
 
-            # Test for a path as we stream rather than banking the first few
-            # bubbles: a thread often opens with several path-free turns, so a
-            # fixed head sample finds nothing and the thread falls to
-            # "unknown". Store only the raw values that actually match, and
-            # keep enough of them for the majority vote to mean something.
-            if composer_id not in mapping:
-                samples = unresolved.setdefault(composer_id, [])
-                if len(samples) < _PROJECT_VOTE_SAMPLES and _PATH_RE.search(raw):
-                    samples.append(raw)
-                # Kept separately: these references sit in bubbles whose only
-                # other paths are plugin caches, so they never survive the
-                # path-vote sample and would be lost by the time it fails.
-                if _CURSOR_PROJECT_DIR_RE.search(raw):
-                    fallbacks = encoded_refs.setdefault(composer_id, [])
-                    if len(fallbacks) < _ENCODED_REF_SAMPLES:
-                        fallbacks.append(raw)
-
-            stamp = 0.0
+        new_keys = key_set - cache.keys
+        if not cache.keys:
+            # Cold start: one streaming pass over values (same as before).
             try:
-                stamp = _created_at(json.loads(raw).get("createdAt"))
-            except (json.JSONDecodeError, TypeError, AttributeError):
-                pass
-            if stamp > latest.get(composer_id, 0.0):
-                latest[composer_id] = stamp
+                cursor = con.execute(
+                    "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'"
+                )
+            except sqlite3.Error:
+                return results
+            for key, raw in cursor:
+                composer_id = _composer_id_from_bubble_key(key)
+                if not composer_id:
+                    continue
+                _ingest_bubble_raw(
+                    cache, composer_id=composer_id, raw=raw, mapping=mapping
+                )
+        elif new_keys:
+            for key, raw in _fetch_bubble_values(con, sorted(new_keys)):
+                composer_id = _composer_id_from_bubble_key(key)
+                if not composer_id:
+                    continue
+                _ingest_bubble_raw(
+                    cache, composer_id=composer_id, raw=raw, mapping=mapping
+                )
+
+        cache.keys = key_set
+        live_composers = {
+            cid for key in key_set
+            if (cid := _composer_id_from_bubble_key(key)) is not None
+        }
+        for cid in list(cache.latest):
+            if cid not in live_composers:
+                cache.latest.pop(cid, None)
+                cache.unresolved.pop(cid, None)
+                cache.encoded_refs.pop(cid, None)
+                cache.projects.pop(cid, None)
+
+        _cursor_scan_cache = cache
     finally:
         con.close()
 
-    for composer_id, mtime in latest.items():
+    for composer_id, mtime in cache.latest.items():
         # Three tiers, most authoritative first: the workspace store, then a
         # vote over paths the thread actually touched, then Cursor's dash
         # encoded scratch directory for threads that touched no repo file.
-        project = mapping.get(composer_id) or ""
+        # Cached vote results skip the filesystem walk on warm polls.
+        project = mapping.get(composer_id) or cache.projects.get(composer_id) or ""
         if not project:
-            project = _project_from_paths(unresolved.get(composer_id, []))
-        if not project:
-            project = _project_from_cursor_project_dir(
-                encoded_refs.get(composer_id, [])
-            )
-        if not project:
-            project = "unknown"
+            project = _project_from_paths(cache.unresolved.get(composer_id, []))
+            if not project:
+                project = _project_from_cursor_project_dir(
+                    cache.encoded_refs.get(composer_id, [])
+                )
+            if not project:
+                project = "unknown"
+            cache.projects[composer_id] = project
         results.append((composer_id, project, mtime))
 
     results.sort(key=lambda r: r[0])
     return results
-
-
-def cursor_state_key(composer_id: str) -> str:
-    return f"cursor:{composer_id}"

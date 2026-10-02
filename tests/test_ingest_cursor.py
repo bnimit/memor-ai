@@ -9,13 +9,22 @@ from memor.ingest.cursor import (
     _decode_tool_result,
     cursor_state_key,
     parse_session,
+    reset_cursor_scan_cache,
     scan_cursor_sessions,
     workspace_project_map,
 )
 from memor.ingest.sources import scan_all_sources
+import pytest
 
 _USER = 1
 _ASSISTANT = 2
+
+
+@pytest.fixture(autouse=True)
+def _clear_cursor_scan_cache():
+    reset_cursor_scan_cache()
+    yield
+    reset_cursor_scan_cache()
 
 
 def _bubble(
@@ -447,6 +456,47 @@ def test_scan_uses_newest_bubble_as_session_mtime(tmp_path: Path) -> None:
 
     assert composer == "comp-1"
     assert mtime == 1783857600.0  # 2026-07-12T12:00:00Z
+
+
+def test_scan_second_pass_picks_up_only_new_bubbles(tmp_path: Path) -> None:
+    """After the cold scan, a new bubble must advance mtime without a full reload.
+
+    The production Cursor store is multi-gigabyte; re-reading every value each
+    poll was the daemon's dominant CPU. The second pass must see the new key.
+    """
+    db = tmp_path / "globalStorage" / "state.vscdb"
+    _make_global_db(db, [
+        ("bubbleId:comp-1:b1", _bubble(
+            bubble_id="b1", kind=_USER, text="first",
+            created_at="2026-07-12T10:00:00.000Z")),
+    ])
+
+    first = scan_cursor_sessions(db, workspace_dir=tmp_path / "missing")
+    assert first[0][2] == 1783850400.0  # 10:00Z
+
+    con = sqlite3.connect(db)
+    con.execute(
+        "INSERT INTO cursorDiskKV(key, value) VALUES (?,?)",
+        ("bubbleId:comp-1:b2", _bubble(
+            bubble_id="b2", kind=_ASSISTANT, text="later",
+            created_at="2026-07-12T15:00:00.000Z")),
+    )
+    con.commit()
+    con.close()
+
+    second = scan_cursor_sessions(db, workspace_dir=tmp_path / "missing")
+    assert second[0][2] == 1783868400.0  # 15:00Z
+
+
+def test_scan_unchanged_db_reuses_cache(tmp_path: Path) -> None:
+    db = tmp_path / "globalStorage" / "state.vscdb"
+    _make_global_db(db, [
+        ("bubbleId:comp-1:b1", _bubble(
+            bubble_id="b1", kind=_USER, text="only")),
+    ])
+    a = scan_cursor_sessions(db, workspace_dir=tmp_path / "missing")
+    b = scan_cursor_sessions(db, workspace_dir=tmp_path / "missing")
+    assert a == b
 
 
 def test_missing_database_scans_clean(tmp_path: Path) -> None:
