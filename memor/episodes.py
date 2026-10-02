@@ -39,6 +39,18 @@ CONFOUND_NOTE = (
     "Read a positive result as an upper bound on the true effect."
 )
 
+#: Weak injects dilute ATT and must not enter the control arm either.
+MIN_RECALL_CHARS = 80
+
+#: Matched ATT ship floors (design Approach 1′).
+MIN_MATCH_RATE = 0.60
+MIN_MATCHED_PAIRS = 50
+
+#: Prompt-length ratio caliper: reject controls outside [1/r, r].
+PROMPT_RATIO_CALIPER = 3.0
+
+CLAIM_SCOPE = "claude_code_episodes"
+
 
 @dataclass
 class Episode:
@@ -312,14 +324,17 @@ def _stats(episodes: list[Episode]) -> dict:
 
 
 def summarize(episodes: list[Episode], *, min_per_arm: int = 20) -> dict:
-    """Compare episodes with recall against episodes without, per project.
+    """Compare episodes with recall against episodes without, via matched ATT.
 
-    ``min_per_arm`` guards against reporting a difference computed from a
-    handful of episodes. Projects below it are counted but not scored.
+    ``min_per_arm`` still gates per-project diagnostic blocks. The headline
+    verdict comes from matched ATT (Approach 1′), not stratum sign-flip.
     """
+    treated, controls, excluded_weak = eligible_episodes(episodes)
     usable = [e for e in episodes if e.assistant_steps > 0]
-    with_r = [e for e in usable if e.had_recall]
-    without = [e for e in usable if not e.had_recall]
+
+    # Keep legacy arm stats for the report table (eligible treated vs controls).
+    with_r = treated
+    without = controls
 
     by_project: dict[str, dict] = {}
     for project in sorted({e.project for e in usable}):
@@ -339,32 +354,197 @@ def summarize(episodes: list[Episode], *, min_per_arm: int = 20) -> dict:
             )
         by_project[project] = entry
 
+    pairs, match_stats = match_treated_controls(with_r, without)
+    matched = matched_att(pairs)
+    matched.update(match_stats)
+    matched["excluded_weak_injects"] = excluded_weak
+
     overall = {
         "episodes": len(episodes),
         "usable": len(usable),
         "with_recall": _stats(with_r),
         "without_recall": _stats(without),
-        "scored": len(with_r) >= min_per_arm and len(without) >= min_per_arm,
+        "scored": matched.get("n_pairs", 0) >= MIN_MATCHED_PAIRS,
         "median_injected_chars": (
             median(e.recall_chars for e in with_r) if with_r else 0
         ),
         "min_per_arm": min_per_arm,
+        "matched": matched,
+        "matched_att_pct": matched.get("tool_call_delta_pct"),
+        "match_rate": matched.get("match_rate"),
     }
-    if overall["scored"]:
+    if len(with_r) >= min_per_arm and len(without) >= min_per_arm:
         overall["tool_call_delta_pct"] = _delta_pct_mean(
             without, with_r, lambda e: e.tool_calls
         )
         overall["token_delta_pct"] = _delta_pct(without, with_r, lambda e: e.total_tokens)
 
     strata = stratified_deltas(with_r, without)
+    # Mark exploratory band for report copy; it does not set the headline.
+    for cell in strata:
+        if cell["prompt_chars"].endswith("+") or cell["prompt_chars"].startswith("400"):
+            cell["exploratory"] = True
+        else:
+            cell["exploratory"] = False
+
     overall["project_adjusted"] = project_adjusted_delta(with_r, without)
-    overall["verdict"] = verdict(overall, strata)
+    overall["verdict"] = verdict_from_matched(
+        matched, match_rate=matched.get("match_rate") or 0.0
+    )
     return {
         "overall": overall,
         "by_project": by_project,
         "strata": strata,
         "confound": CONFOUND_NOTE,
+        "claim_scope": CLAIM_SCOPE,
     }
+
+
+def eligible_episodes(
+    episodes: list[Episode],
+) -> tuple[list[Episode], list[Episode], int]:
+    """Split usable episodes into treated / control; drop weak injects."""
+    treated: list[Episode] = []
+    controls: list[Episode] = []
+    excluded = 0
+    for e in episodes:
+        if e.assistant_steps <= 0:
+            continue
+        if e.had_recall:
+            if e.recall_chars >= MIN_RECALL_CHARS:
+                treated.append(e)
+            else:
+                excluded += 1
+        else:
+            controls.append(e)
+    return treated, controls, excluded
+
+
+def _prompt_band(chars: int) -> tuple[int, int]:
+    for lo, hi in _PROMPT_STRATA:
+        if lo <= chars < hi:
+            return lo, hi
+    return _PROMPT_STRATA[-1]
+
+
+def match_treated_controls(
+    treated: list[Episode], controls: list[Episode]
+) -> tuple[list[tuple[Episode, Episode]], dict]:
+    """Match each treated episode to a control in the same project × prompt band."""
+    from collections import defaultdict
+
+    pools: dict[tuple, list[int]] = defaultdict(list)
+    for i, c in enumerate(controls):
+        pools[(_prompt_band(c.prompt_chars), c.project)].append(i)
+
+    def _best(t: Episode, *, allow_used: bool, used: set[int]) -> int | None:
+        key = (_prompt_band(t.prompt_chars), t.project)
+        best_i = None
+        best_score = None
+        for idx in pools.get(key, []):
+            if not allow_used and idx in used:
+                continue
+            c = controls[idx]
+            if t.prompt_chars <= 0 or c.prompt_chars <= 0:
+                continue
+            ratio = max(t.prompt_chars / c.prompt_chars, c.prompt_chars / t.prompt_chars)
+            if ratio > PROMPT_RATIO_CALIPER:
+                continue
+            score = abs(math.log1p(c.prompt_chars) - math.log1p(t.prompt_chars))
+            if best_score is None or score < best_score:
+                best_score = score
+                best_i = idx
+        return best_i
+
+    used: set[int] = set()
+    pairs: list[tuple[Episode, Episode]] = []
+    unmatched: list[Episode] = []
+    for t in treated:
+        idx = _best(t, allow_used=False, used=used)
+        if idx is None:
+            unmatched.append(t)
+            continue
+        used.add(idx)
+        pairs.append((t, controls[idx]))
+
+    reuse_count = 0
+    still: list[Episode] = []
+    for t in unmatched:
+        idx = _best(t, allow_used=True, used=used)
+        if idx is None:
+            still.append(t)
+            continue
+        reuse_count += 1
+        pairs.append((t, controls[idx]))
+
+    n_treated = len(treated)
+    n_pairs = len(pairs)
+    stats = {
+        "match_rate": round(n_pairs / n_treated, 3) if n_treated else 0.0,
+        "unmatched_treated": len(still),
+        "reuse_rate": round(reuse_count / n_pairs, 3) if n_pairs else 0.0,
+        "n_treated_eligible": n_treated,
+        "n_controls": len(controls),
+    }
+    return pairs, stats
+
+
+def matched_att(pairs: list[tuple[Episode, Episode]]) -> dict:
+    """Tool-call ATT on matched pairs. Positive = recall used fewer tools."""
+    if not pairs:
+        return {
+            "n_pairs": 0,
+            "tool_call_delta_pct": None,
+            "token_delta_pct": None,
+            "mde_pct": None,
+        }
+    ctrl_tools = [c.tool_calls for _, c in pairs]
+    treat_tools = [t.tool_calls for t, _ in pairs]
+    mean_c = sum(ctrl_tools) / len(ctrl_tools)
+    mean_t = sum(treat_tools) / len(treat_tools)
+    delta = None
+    if mean_c:
+        delta = round((mean_c - mean_t) / mean_c * 100, 1)
+
+    diffs = [c.tool_calls - t.tool_calls for t, c in pairs]
+    mde = None
+    if mean_c and len(diffs) >= 2:
+        mean_d = sum(diffs) / len(diffs)
+        var = sum((d - mean_d) ** 2 for d in diffs) / (len(diffs) - 1)
+        se = math.sqrt(var / len(diffs))
+        mde = round(100.0 * 2.8 * se / mean_c, 1)
+
+    ctrl_tok = [c.total_tokens for _, c in pairs]
+    treat_tok = [t.total_tokens for t, _ in pairs]
+    mean_ct = sum(ctrl_tok) / len(ctrl_tok) if ctrl_tok else 0
+    mean_tt = sum(treat_tok) / len(treat_tok) if treat_tok else 0
+    token_delta = (
+        round((mean_ct - mean_tt) / mean_ct * 100, 1) if mean_ct else None
+    )
+
+    return {
+        "n_pairs": len(pairs),
+        "tool_call_delta_pct": delta,
+        "token_delta_pct": token_delta,
+        "mde_pct": mde,
+    }
+
+
+def verdict_from_matched(att: dict, *, match_rate: float) -> str:
+    """Headline verdict from matched ATT (design Approach 1′)."""
+    n_pairs = att.get("n_pairs") or 0
+    if n_pairs < MIN_MATCHED_PAIRS or match_rate < MIN_MATCH_RATE:
+        return "insufficient_data"
+    delta = att.get("tool_call_delta_pct")
+    if delta is None:
+        return "insufficient_data"
+    mde = att.get("mde_pct")
+    floor = EFFECT_THRESHOLD_PCT
+    if mde is not None:
+        floor = max(floor, mde)
+    if abs(delta) <= floor:
+        return "no_effect"
+    return "saves" if delta > 0 else "costs"
 
 
 def project_adjusted_delta(with_r: list[Episode], without: list[Episode],
@@ -544,16 +724,33 @@ VERDICT_TEXT = {
 
 def format_report(summary: dict) -> list[str]:
     o = summary["overall"]
+    matched = o.get("matched") or {}
     lines = ["memor recall — episode-level accounting", "=" * 58]
     lines.append(
         f"episodes={o['episodes']:,}  usable={o['usable']:,}  "
         f"with_recall={o['with_recall'].get('n', 0):,}  "
         f"without={o['without_recall'].get('n', 0):,}"
     )
-    if not o["scored"]:
+    scope = summary.get("claim_scope") or CLAIM_SCOPE
+    lines.append(f"claim_scope={scope}")
+    if matched:
+        lines.append(
+            f"matched_pairs={matched.get('n_pairs', 0):,}  "
+            f"match_rate={matched.get('match_rate', 0):.0%}  "
+            f"reuse_rate={matched.get('reuse_rate', 0):.0%}  "
+            f"unmatched={matched.get('unmatched_treated', 0):,}"
+        )
+        if matched.get("excluded_weak_injects"):
+            lines.append(
+                f"excluded_weak_injects={matched['excluded_weak_injects']:,} "
+                f"(recall_chars < {MIN_RECALL_CHARS})"
+            )
+
+    if o.get("verdict") == "insufficient_data" and not matched.get("n_pairs"):
         lines.append("")
         lines.append(f"VERDICT: {VERDICT_TEXT['insufficient_data']} "
-                     f"(need {o['min_per_arm']} per arm)")
+                     f"(need {MIN_MATCHED_PAIRS} matched pairs, "
+                     f"match_rate ≥ {MIN_MATCH_RATE:.0%})")
         return lines
 
     a, b = o["with_recall"], o["without_recall"]
@@ -561,35 +758,48 @@ def format_report(summary: dict) -> list[str]:
     lines.append(f"{'':<16}{'n':>7}{'tools(med)':>12}{'tools(mean)':>13}{'total tok':>12}")
     for label, d in (("with recall", a), ("without recall", b)):
         lines.append(
-            f"{label:<16}{d['n']:>7}{d['median_tool_calls']:>12}"
-            f"{d['mean_tool_calls']:>13}{d['median_total_tokens']:>12,}"
+            f"{label:<16}{d.get('n', 0):>7}{d.get('median_tool_calls', 0):>12}"
+            f"{d.get('mean_tool_calls', 0):>13}{d.get('median_total_tokens', 0):>12,}"
         )
     lines.append("")
-    lines.append(f"median context injected per recall: ~{o['median_injected_chars']:,} chars")
+    lines.append(f"median context injected per recall: ~{o.get('median_injected_chars', 0):,} chars")
+    att = matched.get("tool_call_delta_pct")
+    if att is not None:
+        lines.append(
+            f"matched ATT (tool calls): {att:+.1f}%  "
+            f"(MDE {matched.get('mde_pct')}%)"
+        )
     lines.append("")
-    lines.append("Tool-call delta by prompt length (positive = recall did less work):")
+    lines.append("Tool-call delta by prompt length (diagnostic; 400-+ exploratory):")
     for cell in summary["strata"]:
+        tag = " exploratory" if cell.get("exploratory") else ""
         if not cell["scored"]:
             lines.append(
                 f"  {cell['prompt_chars']:<10} n={cell['n_with']}/{cell['n_without']}"
-                "   (too few to score)"
+                f"   (too few to score){tag}"
             )
             continue
         lines.append(
             f"  {cell['prompt_chars']:<10} n={cell['n_with']}/{cell['n_without']}"
-            f"   {cell['tool_call_delta_pct']:+.1f}%"
+            f"   {cell['tool_call_delta_pct']:+.1f}%{tag}"
         )
     lines.append("")
     lines.append("=" * 58)
     lines.append(f"VERDICT: {VERDICT_TEXT[o['verdict']]}")
     if o["verdict"] == "no_effect":
         lines.append(
-            "  The aggregate difference does not survive stratification — the sign"
+            "  Matched ATT did not clear the noise floor (or MDE) after pairing"
         )
         lines.append(
-            "  flips across prompt-length bands, so it reflects which prompts get"
+            "  within project × prompt-length band. Strata above are diagnostic only."
         )
-        lines.append("  recall rather than what recall does.")
+    elif o["verdict"] == "insufficient_data":
+        lines.append(
+            f"  Need ≥{MIN_MATCHED_PAIRS} matched pairs and match_rate "
+            f"≥{MIN_MATCH_RATE:.0%} "
+            f"(have {matched.get('n_pairs', 0)} pairs, "
+            f"{matched.get('match_rate', 0):.0%})."
+        )
     lines.append(f"  {summary['confound']}")
     return lines
 

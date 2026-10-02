@@ -23,6 +23,15 @@ DISTILLED_FILE = STATE_DIR / "distilled.json"
 POLL_INTERVAL = 30  # seconds
 MAX_DISTILL_TOKENS = 4000  # cap text sent to LLM per session
 
+#: Hard cap on how many source units one poll may ingest.
+#:
+#: Without this, a cold start or a storm of mtime bumps (Claude rewriting many
+#: short agent-*.jsonl files) queued 50–90 units per 30s cycle. Each unit
+#: re-parsed and historically re-embedded its whole transcript, which is what
+#: pinned the daemon near a full core. Leftover units stay pending via mtime
+#: and are picked up on the next cycle.
+MAX_UNITS_PER_POLL = 20
+
 #: How often the whole-store maintenance sweeps may run.
 #:
 #: Quality decay, cross-project promotion and near-duplicate compaction each
@@ -188,12 +197,20 @@ def _configured_document_dirs() -> list[Path]:
 
 
 def ingest_unit(unit: IngestUnit, store: SqliteStore, embedder) -> int:
-    """Ingest one source unit. Returns number of chunks ingested."""
+    """Ingest one source unit. Returns number of *new* chunks stored.
+
+    Chunk ids are content-hashed, so an unchanged paragraph keeps its id. When a
+    long session gains one new turn, re-embedding every prior chunk is pure CPU
+    waste (and was the dominant daemon load). Only missing ids are embedded.
+    """
     arts = unit.parse()
     if not arts:
         return 0
-    vecs = embedder.embed([a.text for a in arts])
-    store.add_artifacts(arts, vecs)
+    existing = store.artifact_ids_present([a.id for a in arts])
+    new_arts = [a for a in arts if a.id not in existing]
+    if new_arts:
+        vecs = embedder.embed([a.text for a in new_arts])
+        store.add_artifacts(new_arts, vecs)
 
     # A rewritten document must not leave its old paragraphs alive in recall.
     # Chunk ids are content-hashed, so an edited section produces a new id and
@@ -203,9 +220,10 @@ def ingest_unit(unit: IngestUnit, store: SqliteStore, embedder) -> int:
     if unit.agent == "document" and unit.path is not None:
         from memor.ingest.document_watch import stale_chunk_ids
 
-        for dead in stale_chunk_ids(store, unit.path, {a.id for a in arts}):
+        live_ids = {a.id for a in arts}
+        for dead in stale_chunk_ids(store, unit.path, live_ids):
             try:
-                store.deactivate(dead, superseded_by=arts[0].id)
+                store.deactivate(dead, superseded_by=(new_arts[0].id if new_arts else arts[0].id))
             except Exception:
                 pass
 
@@ -218,7 +236,7 @@ def ingest_unit(unit: IngestUnit, store: SqliteStore, embedder) -> int:
         except Exception:
             pass
 
-    return len(arts)
+    return len(new_arts)
 
 
 def distill_new_sessions(
@@ -367,7 +385,6 @@ def run_poll_cycle(
     if distilled is None:
         distilled = set()
 
-    new_ingested = False
     units = scan_all_sources(
         claude_projects_dir=projects_dir,
         kimi_sessions_dir=kimi_sessions_dir,
@@ -384,9 +401,19 @@ def run_poll_cycle(
         if not (state.get(u.state_key) is not None and u.mtime <= state[u.state_key])
     ]
 
+    if len(pending) > MAX_UNITS_PER_POLL:
+        pending.sort(key=lambda u: u.mtime, reverse=True)
+        deferred = len(pending) - MAX_UNITS_PER_POLL
+        pending = pending[:MAX_UNITS_PER_POLL]
+        print(
+            f"  deferring {deferred} units to next poll "
+            f"(cap {MAX_UNITS_PER_POLL}/cycle)"
+        )
+
     bulk = len(pending) > 10
     total_pending = len(pending)
     counts_by_agent: dict[str, int] = {}
+    touched: list = []
 
     for idx, unit in enumerate(pending):
         progress_prefix = f"[{idx + 1}/{total_pending}] " if bulk else ""
@@ -397,12 +424,12 @@ def run_poll_cycle(
             counts_by_agent[unit.agent] = counts_by_agent.get(unit.agent, 0) + count
             if count > 0:
                 print(
-                    f"  {progress_prefix}ingested {count} chunks from {label} "
+                    f"  {progress_prefix}ingested {count} new chunks from {label} "
                     f"({unit.agent}, project: {unit.project})"
                 )
-                new_ingested = True
+                touched.append(unit)
             else:
-                print(f"  {progress_prefix}skipped {label} (0 chunks after filtering)")
+                print(f"  {progress_prefix}skipped {label} (no new chunks)")
         except Exception as e:
             # Record the file as seen even though it failed. The state key is
             # what stops a unit being retried, so leaving it unset made a file
@@ -412,24 +439,24 @@ def run_poll_cycle(
             state[unit.state_key] = unit.mtime
             print(f"  {progress_prefix}ERROR ingesting {label}: {e}")
 
+    new_ingested = bool(touched)
+
     # Auto-distill new sessions (LLM if available, extractive fallback otherwise)
     if new_ingested:
-        mode = "abstractive" if llm else "extractive (LLM-free)"
-        print(f"  running {mode} distillation on new sessions...")
-        distilled = distill_new_sessions(store, embedder, llm, distilled)
+        new_sids = {_session_id_for(u) for u in touched}
+        needs_distill = any(s and s not in distilled for s in new_sids)
+        if needs_distill:
+            mode = "abstractive" if llm else "extractive (LLM-free)"
+            print(f"  running {mode} distillation on new sessions...")
+            distilled = distill_new_sessions(store, embedder, llm, distilled)
 
-    # Feedback + turn metrics, for every agent that records a conversation.
-    #
-    # This was Claude-only, and the cost was the product's headline capability:
-    # a memory written in one tool and served to another was never graded, so
-    # every cross-tool recall sat "pending" forever. The blocker was not this
-    # loop but the analyzer's signature -- it asked for a transcript path, and
-    # Goose has no transcript file, only rows in SQLite. Feeding it normalised
-    # turns instead lets one code path grade them all.
-    if new_ingested:
+    # Feedback + turn metrics only for units that actually stored new chunks.
+    # Re-running this on every mtime bump of a fully-ingested file was another
+    # way the daemon stayed busy during idle coding.
+    if touched:
         from memor.feedback import analyze_session_feedback, turns_for_unit
         from memor.turn_metrics import parse_turn_metrics, correlate_with_recalls
-        for unit in pending:
+        for unit in touched:
             session_id = _session_id_for(unit)
             if not session_id:
                 continue
@@ -488,6 +515,21 @@ def run_poll_cycle(
                 print(f"  decayed quality for {decayed} stale memories")
         except Exception:
             pass
+
+    # One-shot soft-dispute backfill (KNN). Detection stays on; recall action is flagged.
+    try:
+        done = store.db.execute(
+            "SELECT value FROM meta WHERE key='disputes_backfilled'"
+        ).fetchone()
+        if done is None:
+            from memor.supersession import backfill_disputes
+            stats = backfill_disputes(store, embedder)
+            print(
+                f"  dispute backfill: scanned {stats['memories_scanned']}, "
+                f"recorded {stats['disputes_recorded']}"
+            )
+    except Exception:
+        pass
 
     # Promote cross-project patterns to global scope
     if maintenance:

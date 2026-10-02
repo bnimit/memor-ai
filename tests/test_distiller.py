@@ -36,7 +36,13 @@ def test_supersede_on_contradiction(tmp_path):
     d2 = Distiller(s, e, FakeLLM({"memories":[
         {"type":"decision","text":"Use argon2 for hashing","supersedes_text":"Use bcrypt for hashing"}]}))
     new_ids = d2.distill_session("s2", c2, project="p")
-    # old memory deactivated, new active
+    # Soft dispute: both stay active; validity demotes the old one.
     from memor.types import Scope
     active = [a.id for a,_ in s.search(e.embed(["hashing"])[0], Scope(project="p"), k=10)]
-    assert new_ids[0] in active and old_ids[0] not in active
+    assert new_ids[0] in active and old_ids[0] in active
+    row = s.db.execute(
+        "SELECT * FROM disputes WHERE disputed_id=? AND disputer_id=?",
+        (old_ids[0], new_ids[0]),
+    ).fetchone()
+    assert row is not None
+    assert s.get_validity(old_ids[0]) == 0.5

@@ -690,6 +690,7 @@ memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything
 memor reingest --project <name>      Re-ingest only one project
 memor forget-stale                   Deactivate memories unused for 30+ days
+memor backfill-disputes              Scan memories and record soft temporal disputes
 memor prune                          Retire harness noise and duplicates from the
                                      retrieval pool (deactivates, never deletes)
 memor compact                        Rebuild vector index, reclaim wasted space

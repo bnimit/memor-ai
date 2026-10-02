@@ -13,7 +13,6 @@ from memor.episodes import (
     parse_episodes,
     stratified_deltas,
     summarize,
-    verdict,
 )
 
 
@@ -152,8 +151,11 @@ def test_malformed_lines_are_skipped(tmp_path):
 def _eps(n, *, recall, tools, prompt_chars=100):
     return [
         Episode(project="p", had_recall=recall, tool_calls=tools,
-                assistant_steps=1, prompt_chars=prompt_chars)
-        for _ in range(n)
+                assistant_steps=1, prompt_chars=prompt_chars,
+                recall_chars=200 if recall else 0,
+                conversation_key=f"{'r' if recall else 'n'}-{prompt_chars}-{i}",
+                started_at=float(i))
+        for i in range(n)
     ]
 
 
@@ -162,12 +164,13 @@ def test_small_samples_report_insufficient_data():
     assert s["overall"]["verdict"] == "insufficient_data"
 
 
-def test_sign_flip_across_strata_is_reported_as_no_effect():
-    """An aggregate that reverses by prompt length is composition, not causation."""
+def test_sign_flip_across_strata_still_null_when_matched_att_cancels():
+    """Opposing bands of equal weight → matched ATT ~0 → no_effect (not strata veto)."""
     with_r = _eps(30, recall=True, tools=2, prompt_chars=30) + _eps(30, recall=True, tools=9, prompt_chars=200)
     without = _eps(30, recall=False, tools=9, prompt_chars=30) + _eps(30, recall=False, tools=2, prompt_chars=200)
     s = summarize(with_r + without)
     assert s["overall"]["verdict"] == "no_effect"
+    assert s["overall"]["matched"]["n_pairs"] >= 50
 
 
 def test_consistent_reduction_is_reported_as_saves():
@@ -175,7 +178,7 @@ def test_consistent_reduction_is_reported_as_saves():
     without = _eps(30, recall=False, tools=9, prompt_chars=30) + _eps(30, recall=False, tools=9, prompt_chars=200)
     s = summarize(with_r + without)
     assert s["overall"]["verdict"] == "saves"
-    assert s["overall"]["tool_call_delta_pct"] > 0
+    assert s["overall"]["matched_att_pct"] > 0
 
 
 def test_consistent_increase_is_reported_as_costs():
@@ -197,8 +200,12 @@ def test_stratified_cells_below_minimum_are_not_scored():
     assert all(c["scored"] is False for c in cells)
 
 
-def test_verdict_requires_two_scored_strata():
-    assert verdict({"scored": True, "tool_call_delta_pct": 50.0}, []) == "insufficient_data"
+def test_verdict_from_matched_requires_pairs():
+    from memor.episodes import verdict_from_matched
+    assert verdict_from_matched(
+        {"n_pairs": 10, "tool_call_delta_pct": 50.0, "mde_pct": 5.0},
+        match_rate=1.0,
+    ) == "insufficient_data"
 
 
 def test_summary_always_carries_the_confound_note():
