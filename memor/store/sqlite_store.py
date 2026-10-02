@@ -663,6 +663,28 @@ class SqliteStore:
             return
         self.rebuild_fts()
 
+    def artifact_ids_present(self, ids: list[str]) -> set[str]:
+        """Return the subset of ``ids`` that already exist in the artifacts table.
+
+        Used by ingest to skip re-embedding content-hashed chunks that have not
+        changed. Batching matters: a long Claude transcript can produce hundreds
+        of ids, and a per-id EXISTS round-trip was part of what kept the daemon
+        pegged at high CPU.
+        """
+        if not ids:
+            return set()
+        found: set[str] = set()
+        # SQLite caps variables; chunk large id lists.
+        chunk = 500
+        for i in range(0, len(ids), chunk):
+            part = ids[i:i + chunk]
+            qmarks = ",".join("?" * len(part))
+            rows = self.db.execute(
+                f"SELECT id FROM artifacts WHERE id IN ({qmarks})", part
+            ).fetchall()
+            found.update(r["id"] if hasattr(r, "keys") else r[0] for r in rows)
+        return found
+
     def add_artifacts(self, artifacts: list[Artifact], vectors: list[list[float]]) -> None:
         cur = self.db.cursor()
         for a, v in zip(artifacts, vectors):
