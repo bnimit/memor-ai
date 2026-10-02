@@ -18,7 +18,7 @@ The dashboard shows too much (memories, recalls, projects, cross-tool, desks, ch
 | Compression % (30d) | Yes | `/api/compression` realized | Separate from lifetime absolute; do not apply one % to the other count |
 | Net-of-cache | Sometimes | `/api/compression.cache` | `null` = unmeasured (not zero) |
 | Dollar savings | Estimate only | Client: tokens × rate | API-equivalent; not invoice |
-| Recall reduces work | **No** (as of 2026-10-02) | `/api/recall-worth` | Pill status only until matched ATT clears MDE (ideally after G2) |
+| Recall reduces work | **No** (as of 2026-10-02) | `/api/recall-worth` | Pill status only; Measure keeps observational caveat until prove-recall G2 |
 
 ## Goals
 
@@ -48,17 +48,17 @@ The dashboard shows too much (memories, recalls, projects, cross-tool, desks, ch
 
 ### Overview — first viewport only
 
-1. **Primary:** lifetime `tokens_saved` (absolute) from savings ledger / existing lifetime payload.
-2. **Subtitle:** last 30 days realized % and before→after from `/api/compression` (`realized`), not a % derived from lifetime.
+1. **Primary:** lifetime `tokens_saved` from `/api/savings-ledger` → `lifetime.tokens_saved` (endpoint also returns a windowed `summary` / `per_day`; do not display window summary as the hero absolute).
+2. **Subtitle:** last 30 days realized % and before→after from `/api/compression` → `realized` (parallel fetch). Not a % derived from lifetime.
 3. **Secondary:** `≈ $X at $Y / 1M · API-equivalent estimate` with editable rate (`localStorage`).
 4. **Honesty footnote (dynamic):**
-   - If traffic is hook-dominated: hook-path tokenizer estimate clause.
-   - If proxy rows present in lifetime: note blended paths.
-   - If `cache` is null: “net-of-cache unmeasured.”
+   - **Hook-dominated** when lifetime (or 30d period totals) proxy `tokens_before` is &lt; 5% of hook+proxy `tokens_before`: show hook-path tokenizer clause only.
+   - Else: “Blended hook + proxy ledger” clause.
+   - If `/api/compression.cache` is null: “net-of-cache unmeasured.”
    - Always when $ shown: “On a flat subscription this is headroom, not a lower bill.”
 5. **Status strip:** proxy / hook / daemon LEDs (existing).
-6. **Recall pill:** status only; links to Measure. Never hit counts as savings.
-7. **Sparkline:** lifetime cumulative saved (existing equity series). One chart only above the fold.
+6. **Recall pill:** status only; click/focus switches to Measure. Never hit counts as savings.
+7. **Sparkline:** `/api/savings-ledger?days=30` → `per_day[].cumulative_saved` (window equity under the lifetime hero — **not** a full-history series; ledger API caps `days` at 90). One chart only above the fold.
 
 **Removed from Overview:** Memories / Recalls / Projects KPI quartet, cross-tool collage, desk health walls, competing charts.
 
@@ -68,7 +68,7 @@ The dashboard shows too much (memories, recalls, projects, cross-tool, desks, ch
 |---|---|
 | `insufficient_data` / error | `Recall · measuring` |
 | `no_effect` or `costs` | `Recall · no measurable savings yet` |
-| `helps` from `/api/recall-worth` (matched ATT cleared MDE) | `Recall · effect detected` → Measure |
+| `saves` from `/api/recall-worth` (matched ATT cleared MDE; API token is `saves`, not `helps`) | `Recall · effect detected` → Measure |
 | Default / loading | `Recall · measuring` |
 
 Pill gating uses the live recall-worth verdict only. Prove-recall G2 remaining open does **not** block the pill, but Measure copy must still say observational upper-bound / not marketing-ready until G2 passes.
@@ -79,7 +79,7 @@ Do not upgrade the pill from activity volume (recalls, hit rate).
 
 1. **Compression receipt** — `/api/compression`: 30d realized, hook block, cache row, by-type, liveness.
 2. **Lifetime ledger** — periods / cumulative; hook vs proxy **separate** (`/api/savings-periods` note).
-3. **Recall evidence** — `/api/recall-worth` + baseline if stamped; optional prove-recall one-liner. No “tokens saved by recall.”
+3. **Recall evidence** — `/api/recall-worth` + `/api/recall-baseline` if stamped. Prove-recall G2 status: show only if a **runtime-readable stamp** exists (e.g. baseline / config); do **not** require shipping `docs/eval/*.json` to end-user installs. No “tokens saved by recall.”
 4. **Secondary (below fold):** recall activity trend, efficiency, proxy-by-agent, cross-tool, memory counts.
 
 Do **not** use `/api/roi` / old recall-injection “reduction_pct” as compression savings.
@@ -87,7 +87,9 @@ Do **not** use `/api/roi` / old recall-injection “reduction_pct” as compress
 ## Dollar estimate rules
 
 - Formula: `lifetime_tokens_saved × (rate_per_M / 1e6)`.
-- Default rate: **$3 / 1M** tokens; persist in `localStorage` key e.g. `memor.dashboard.tokenRatePerM`.
+- Default rate: **$3 / 1M** tokens; persist in `localStorage` key `memor.dashboard.tokenRatePerM` (number).
+- Edit UX: click the rate → inline `<input type="number">` (min 0, step 0.1); blur/Enter commits; Escape cancels. No `prompt()`.
+- Invalid / empty input → revert to last good rate (or default $3).
 - Label always includes **API-equivalent estimate**.
 - If lifetime saved = 0 → **hide** the $ line (do not show `$0.00`).
 - Single rate only this PR (no separate cache-write tier).
@@ -107,12 +109,15 @@ Zero-traffic (e.g. agents without hook compression) must not look like a product
 
 | UI element | API / field | Must not |
 |---|---|---|
-| Hero absolute | Lifetime ledger `tokens_saved` | Apply 30d % to this count |
-| Hero subtitle % | `/api/compression.realized` (30d window) | Use lifetime blended % as “recent” |
-| Hook detail | `compression.hook` or null | Render zeroes when null |
+| Hero absolute | `/api/savings-ledger` → `lifetime.tokens_saved` | Use window `summary.tokens_saved` as hero |
+| Hero subtitle % | `/api/compression` → `realized.saved_pct` + before/after | Use lifetime blended % as “recent” |
+| Hook/proxy footnote | Period totals from `/api/savings-periods` or ledger path split if available | Guess from a single request |
+| Hook detail (Measure) | `compression.hook` or null | Render zeroes when null |
 | Cache | `compression.cache` or null | Treat null as $0 saved |
-| Recall pill | `/api/recall-worth.overall.verdict` | Use recall_log counts |
-| Sparkline | Existing cumulative savings series | Second above-fold chart |
+| Recall pill | `/api/recall-worth.overall.verdict` (`saves` \| `costs` \| `no_effect` \| `insufficient_data`) | Use recall_log counts; invent `helps` |
+| Sparkline | `/api/savings-ledger?days=30` → `per_day` | Claim full-lifetime equity; second above-fold chart |
+
+Overview polls: savings-ledger + compression + recall-worth (+ existing health). No new aggregate endpoint required for v1.
 
 ## Visual language (§3)
 
@@ -129,16 +134,30 @@ Zero-traffic (e.g. agents without hook compression) must not look like a product
 
 **Scoped to:** Overview + Measure chrome. Not Provenance graph; no light-mode toggle this pass.
 
+**Responsive:** Hero stacks cleanly on narrow viewports (number wraps/scales; status chips wrap; sparkline full width). No separate mobile redesign.
+
 ## Implementation sketch (non-binding; plan follows approval)
 
-Primary touch: `memor/dashboard/static/index.html` (Overview markup/CSS/JS). Prefer existing `/api/compression`, `/api/savings-periods`, ledger lifetime, `/api/recall-worth` — avoid new endpoints unless a thin aggregate is clearly cheaper than multiple polls.
+Primary touch: `memor/dashboard/static/index.html` (Overview markup/CSS/JS). Prefer existing `/api/savings-ledger`, `/api/compression`, `/api/savings-periods`, `/api/recall-worth` — avoid new endpoints unless a thin aggregate is clearly cheaper than multiple polls.
 
 ## Testing
 
 - Manual: Overview with real ledger data; with empty ledger; with 30d zero / lifetime > 0.
-- Manual: edit rate → $ line updates; reload persists rate; saved=0 hides $.
-- Manual: recall pill maps `no_effect` / `insufficient_data`.
+- Manual: edit rate → $ line updates; reload persists rate; saved=0 hides $; Escape cancels edit.
+- Manual: recall pill maps `no_effect`, `insufficient_data`, and `saves` / `costs` if fixtureable.
+- Manual: footnote switches hook-only vs blended when proxy share crosses 5%.
 - If UI unit tests exist for dashboard helpers, cover rate math and pill mapping; do not add a browser suite in this PR.
+
+## Spec self-review (2026-10-02)
+
+Fixed before plan:
+
+1. **Verdict token** — API returns `saves`, not `helps`.
+2. **Named endpoints** — hero/sparkline from `/api/savings-ledger`; subtitle from `/api/compression`; sparkline is window equity (≤90d API cap), not full lifetime series.
+3. **Hook-dominated rule** — &lt;5% proxy share of tokens_before.
+4. **Rate edit UX** — inline number input; no `prompt()`.
+5. **Prove-recall on Measure** — no dependency on shipping `docs/eval` to installs.
+6. **Evidence vs pill** — aligned: G2 gates marketing copy on Measure, not the pill.
 
 ## Success criteria
 
