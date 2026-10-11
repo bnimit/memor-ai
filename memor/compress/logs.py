@@ -48,6 +48,41 @@ _NUMBER = re.compile(r"(?<![A-Za-z_])\d+(?:\.\d+)?")
 #: A record seen this many times or more keeps its first and last occurrence.
 _REPEAT_MIN = 3
 
+# Words from the user's prompt and the command that produced the log. A line
+# that names what the user asked about is worth keeping even when it carries no
+# error vocabulary: "did the config change break this?" is answered by an INFO
+# line, `reloaded config ... max_size 50 -> 20`, that every keyword rule drops.
+#
+# Only safe at write time. The proxy rewrites history on every request, and a
+# compression that depended on the latest prompt would change already-cached
+# text each turn (see compress/code.py). The PostToolUse hook compresses a
+# payload once, before it enters the transcript, so there is nothing to
+# invalidate.
+_QUERY_TERM = re.compile(r"[A-Za-z][A-Za-z0-9_.\-]{3,}")
+_QUERY_STOP = frozenset("""
+    about above after again against also always another anything around because
+    been before being below between both break broke broken cause caused causes
+    check could does doing done down during each error errors every failed
+    failing fails file files find first from going happen happened happening
+    have having here into just know last like line lines look looking make many
+    more most much must need never next only other over please problem really
+    right root same should show since some something still such sure than that
+    their them then there these they thing think this those through today tool
+    under until very want what when where which while whole will with without
+    work working would wrong your info debug warn warning trace fatal critical
+    true false null none json text output stdout stderr command logs grep tail
+    head less more sort uniq echo
+""".split())
+
+#: A query term that matches more than this share of lines is not picking out
+#: anything (in a server log "pool" or "orders" is on every other line), so it
+#: is ignored rather than allowed to keep half the log.
+_QUERY_MAX_TERM_SHARE = 0.01
+_QUERY_MIN_TERM_CAP = 5
+
+#: Ceiling on lines kept for matching the query, however many terms match.
+_QUERY_MAX_LINES = 40
+
 
 def _template(line: str) -> str:
     """The line with request ids, hashes, numbers and timestamps blanked out."""
@@ -101,8 +136,35 @@ def _traceback_blocks(lines: list[str], skip: set[int]) -> list[tuple[int, int]]
     return blocks
 
 
-def compress_log(text: str) -> str:
-    """Compress log content by keeping important lines and context."""
+def _query_lines(lines: list[str], query: str | None, skip: set[int]) -> list[int]:
+    """Indices of lines naming a discriminating term from ``query``, capped."""
+    if not query:
+        return []
+    terms = {t.lower().strip("._-") for t in _QUERY_TERM.findall(query)}
+    terms = {t for t in terms if len(t) >= 4 and t not in _QUERY_STOP}
+    if not terms:
+        return []
+    lowered = [ln.lower() for ln in lines]
+    limit = max(_QUERY_MIN_TERM_CAP, int(len(lines) * _QUERY_MAX_TERM_SHARE))
+    keep: set[int] = set()
+    for term in terms:
+        hits = [i for i, ln in enumerate(lowered) if term in ln and i not in skip]
+        if 0 < len(hits) <= limit:
+            keep.update(hits)
+    ordered = sorted(keep)
+    if len(ordered) > _QUERY_MAX_LINES:
+        half = _QUERY_MAX_LINES // 2
+        ordered = ordered[:half] + ordered[-half:]
+    return ordered
+
+
+def compress_log(text: str, query: str | None = None) -> str:
+    """Compress log content by keeping important lines and context.
+
+    ``query`` is the user's latest prompt and the command that produced the
+    log, when the caller knows them. Lines naming a term from it are kept on
+    their own; see ``_QUERY_TERM`` for why only the write-time hook passes one.
+    """
     lines = text.split('\n')
     
     if len(lines) <= 15:
@@ -184,6 +246,9 @@ def compress_log(text: str) -> str:
             anchors.append((i, 2))
         elif _WARN.search(line) or _HTTP_5XX.search(line):
             anchors.append((i, 0))
+    anchored = {i for i, _ in anchors}
+    anchors.extend((i, 0) for i in _query_lines(lines, query, fenced | in_trace | anchored))
+    anchors.sort()
 
     # A record repeated many times is kept twice, first and last, so the reader
     # still sees when it started and when it stopped. Fifty identical pool

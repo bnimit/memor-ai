@@ -286,9 +286,11 @@ that is source code, most often a heredoc or a `cat`, and an agent editing
 against a mutilated read is a worse outcome than any token saving is worth.
 Pushing coverage higher means weakening that guard.
 
-Read, Grep and Glob results are never touched at all and are excluded from
-these figures rather than counted as missed coverage: they feed edits directly,
-so the hook declines them by design rather than by failure.
+Read and Glob results are never touched at all and are excluded from these
+figures rather than counted as missed coverage: a read feeds edits directly, so
+the hook declines it by design rather than by failure. Grep (content mode) and
+MCP results are rewritten only losslessly and are reported in their own section
+of `memor hook-worth`, never folded into the Bash figures above.
 
 None of these are numbers you have to take on trust. `memor hook-worth` replays
 the hook over your own sessions and prints the same breakdown, including the
@@ -362,10 +364,27 @@ and every failure diagnostic intact. Because the payload is shrunk on the way
 in, no already-cached prompt prefix is rewritten, so there is no cache
 re-formation cost to weigh against the saving.
 
-Scope is deliberately narrow: Bash output only. Reads, greps and source code
-are never rewritten, and a command that exits non-zero passes through whole.
-A failing build is when every line matters most. Savings land in the same
-ledger the dashboard reads.
+Scope is deliberately narrow. Bash output is compressed; file reads and source
+code are never rewritten, and a command that exits non-zero passes through
+whole, because a failing build is when every line matters most. Two other kinds
+of output are rewritten, but only losslessly:
+
+- **Grep in content mode:** the repeated path is folded off each line; every
+  match and line number is kept. (Claude Code refuses an edit to a file the
+  agent has not read, so edits are made against the read, not the grep.)
+- **MCP tool results:** JSON formatting whitespace is removed and nothing else,
+  so a server that already returns compact JSON is left alone.
+
+Log compression also reads your latest prompt from the transcript, with the
+command that produced the output, and keeps lines naming a word from them that
+picks out only a few lines: "did a config change break this?" keeps the
+`config ... changed` line that keyword rules drop. It cannot recover a cause
+your question does not name. This happens only here, at write time: a proxy
+rewrite that depended on the latest prompt would change already-cached history.
+
+Savings land in the same ledger the dashboard reads. If you installed the hook
+before this change, re-run `memor install-compress-hook` so it also matches
+Grep and MCP tools.
 
 **Full request compression (proxy):**
 
@@ -684,12 +703,14 @@ memor uninstall-proxy                Restore original agent config
 memor proxy                          Run proxy server in foreground (localhost:8421)
 memor install-cursor-compress-hooks  Cursor Shell output compression (subscription)
 memor uninstall-cursor-compress-hooks
-memor install-compress-hook          Compress Bash output before it enters the
+memor install-compress-hook          Compress Bash output (and fold Grep and MCP
+                                     output losslessly) before it enters the
                                      transcript (Claude Code); no proxy needed
 memor uninstall-compress-hook        Remove it
 memor compression-worth              Realized savings, coverage, and net of cache
 memor hook-worth                     What tool-output compression saved on your
-                                     own Bash output, with its denominator
+                                     own Bash output, with its denominator, and
+                                     on Grep and MCP output, reported apart
   --sessions N                       How many recent sessions to scan (default 60)
 memor recall-worth                   Whether recall is earning its context budget,
                                      the randomized holdout result, and the

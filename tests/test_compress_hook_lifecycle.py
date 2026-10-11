@@ -84,8 +84,11 @@ def test_install_use_measure_lifecycle(sandbox_home, monkeypatch):
     for tool in COMPRESSIBLE_TOOLS:
         assert _re.fullmatch(group["matcher"], tool, _re.IGNORECASE), (
             f"matcher {group['matcher']!r} excludes {tool!r}")
-    # ...and must not spawn a process for the ones it always refuses.
-    for tool in ("Read", "Edit", "Grep", "Glob", "Write"):
+    # Grep and MCP tools are admitted for lossless rewrites only.
+    for tool in ("Grep", "mcp__github__list_issues"):
+        assert _re.fullmatch(group["matcher"], tool, _re.IGNORECASE), tool
+    # ...and it must not spawn a process for the ones it always refuses.
+    for tool in ("Read", "Edit", "Glob", "Write", "MultiEdit"):
         assert not _re.fullmatch(group["matcher"], tool, _re.IGNORECASE), tool
 
     # 2. Use. Claude Code runs a build and fires the hook with the result.

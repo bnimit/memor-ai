@@ -266,13 +266,32 @@ def build_log(*, lines: int = 5000, seed: int = 20261011, variant: str = "incide
     return b
 
 
-def _hook_path(text: str) -> tuple[str, bool]:
-    """Run the text through the exact PostToolUse hook an agent's Bash call hits."""
+#: Deliberately names nothing that appears inside the log. An earlier
+#: `cat /var/log/orders-api/server.log` matched the config lines' own
+#: `configmap/orders-api-cfg` and "recovered" the root cause for every prompt,
+#: which measured the fixture's naming, not prompt-awareness.
+HOOK_COMMAND = "tail -n 5000 /var/log/app/current.log"
+
+
+def _hook_path(text: str, prompt: str | None = None) -> tuple[str, bool]:
+    """Run the text through the exact PostToolUse hook an agent's Bash call hits.
+
+    With ``prompt``, a one-line transcript holding it is written first, so the
+    hook reads the user's question the way it does in a real session.
+    """
+    import tempfile
+
     from memor.posttool_compress import build_response
 
-    req = {"tool_name": "Bash", "tool_input": {"command": "cat /var/log/orders-api/server.log"},
+    req = {"tool_name": "Bash", "tool_input": {"command": HOOK_COMMAND},
            "tool_response": {"stdout": text, "stderr": "", "interrupted": False, "isImage": False}}
-    out = build_response(req)
+    with tempfile.TemporaryDirectory() as tmp:
+        if prompt:
+            transcript = f"{tmp}/session.jsonl"
+            with open(transcript, "w") as fh:
+                fh.write(json.dumps({"type": "user", "message": {"role": "user", "content": prompt}}))
+            req["transcript_path"] = transcript
+        out = build_response(req)
     if not out:
         return text, False
     return out["hookSpecificOutput"]["updatedToolOutput"]["stdout"], True
@@ -314,6 +333,9 @@ def main() -> None:
     ap.add_argument("--variant", choices=["incident", "quiet", "errfield"], default="incident")
     ap.add_argument("--write", metavar="PATH", help="save the generated log here")
     ap.add_argument("--write-compressed", metavar="PATH", help="save memor's output here")
+    ap.add_argument("--prompt", help="the user's question, as the hook would read it "
+                                      "from the transcript; retention is then scored "
+                                      "on the hook's output")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
@@ -328,7 +350,7 @@ def main() -> None:
 
     r = compress_text(text)
     r_file = compress_text(text, file_path="server.log")
-    hook_text, hook_fired = _hook_path(text)
+    hook_text, hook_fired = _hook_path(text, args.prompt)
     if args.write_compressed:
         with open(args.write_compressed, "w") as fh:
             fh.write(r.text + "\n")
@@ -336,8 +358,9 @@ def main() -> None:
     from memor.tokencount import count_tokens
 
     hook_after = count_tokens(hook_text)
-    ret = retention(b, r.text)
+    ret = retention(b, hook_text if args.prompt else r.text)
     summary = {
+        "prompt": args.prompt,
         "variant": args.variant, "lines": len(b.lines), "chars": len(text),
         "detected_as": detect_content_type(text),
         "tokens_before": r.tokens_before, "tokens_after": r.tokens_after,
@@ -359,7 +382,8 @@ def main() -> None:
           f"saved {summary['saved_pct']}%  ({summary['lines_after']} lines kept)")
     print(f"  as a .log file read:    saved {summary['as_file_read_saved_pct']}%")
     print(f"  via PostToolUse hook:   saved {summary['hook_saved_pct']}%  (fired={hook_fired})")
-    print("retention of answer-critical lines   (distinct = ids and numbers aside)")
+    scored_on = f"hook output, prompt: {args.prompt!r}" if args.prompt else "no prompt"
+    print(f"retention of answer-critical lines   (distinct = ids and numbers aside; {scored_on})")
     for k, (a, t, da, dt) in ret.items():
         mark = "ok " if da == dt else "LOST"
         print(f"  {mark} {k:<20} distinct {da}/{dt}   lines {a}/{t}")

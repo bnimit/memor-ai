@@ -43,6 +43,32 @@ All notable changes to this project will be documented in this file.
 
 ### Server logs: whole tracebacks, warnings kept, repeats collapsed
 
+**Added**
+
+- **Log compression keeps lines naming what you asked about.** The PostToolUse
+  hook now reads your latest prompt from the transcript tail, plus the command
+  and its description, and the log compressor keeps lines containing a word
+  from them that picks out few lines (at most 1% of the log; at most 40 lines
+  kept this way). On the seeded incident log, "Did a config change cause the
+  outage?" keeps the root cause and the rollback, both lost before; "what
+  caused it?" and "why is the db pool timing out?" do not, because no word in
+  them singles those lines out ("pool" is on 117 lines). Savings are unchanged
+  at 97.4%. Only the hook passes a query: it compresses once, before the
+  payload enters the transcript, while the proxy rewrites history and would
+  change cached text if its output depended on the latest prompt.
+- **Grep and MCP results are rewritten, losslessly.** Grep in content mode goes
+  through the search compressor alone, which folds the repeated path off each
+  line and keeps every match and line number; the file-list mode is left alone.
+  MCP results lose JSON formatting whitespace and nothing else, removed by a
+  scanner rather than a parse-and-dump, which would round long decimals and
+  merge duplicate keys, and returned in the shape the server sent. The JSON
+  crusher is deliberately not used on them: it samples long arrays, which is
+  wrong when the list is the answer. WebFetch stays excluded, as measured
+  before. `memor hook-worth` reports both in their own section, apart from the
+  Bash headline; on this sandbox's session 9 large GitHub MCP results were
+  already compact, so none were rewritten. Re-run `memor install-compress-hook`
+  to widen an existing hook's matcher.
+
 **Fixed**
 
 - **A traceback is kept whole, so its exception line survives.** The log

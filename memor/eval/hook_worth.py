@@ -10,9 +10,11 @@ results" whose denominator was 70% Read output the hook never receives.
 So the measurement lives here, runs on demand, and reports the denominator it
 used rather than only the ratio.
 
-Only Bash results count. The hook matches on Bash alone, so including Read,
-Grep or Glob would measure a population it cannot act on and understate it for
-declining work it was designed to decline.
+The headline counts Bash results only, so its figures stay comparable with the
+ones already published. Grep (content mode) and MCP results, which the hook
+now rewrites losslessly, are measured separately and never folded into it.
+Read and Glob are not measured at all: the hook declines them by design, and
+counting them would understate it for declining work it was built to decline.
 """
 from __future__ import annotations
 
@@ -44,6 +46,9 @@ class HookMeasurement:
     passed_through: int = 0
     sessions: int = 0
     by_type: dict[str, int] = field(default_factory=dict)
+    #: Lossless rewrites, by kind ("grep", "mcp"): payloads, tokens, rewritten,
+    #: before, after. Kept apart from the Bash totals above.
+    lossless: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @property
     def saved(self) -> int:
@@ -85,17 +90,15 @@ def _recent_sessions(session_dir: Path, limit: int) -> list[Path]:
     return files[-limit:]
 
 
-def _bash_results(session_dir: Path, limit: int) -> list[str]:
-    """Large Bash tool results from the most recent sessions.
+def _tool_results(session_dir: Path, limit: int):
+    """Yield (tool name, tool input, raw result content) from recent sessions.
 
     A tool_result carries only a tool_use_id, so the tool name has to be
     recovered from the assistant's earlier tool_use block. Skipping that join
     is exactly how Read output ended up in a figure about Bash.
     """
-    files = _recent_sessions(session_dir, limit)
-    found: list[str] = []
-    for path in files:
-        names: dict[str, str] = {}
+    for path in _recent_sessions(session_dir, limit):
+        calls: dict[str, tuple[str, dict]] = {}
         try:
             lines = path.read_text(errors="replace").split("\n")
         except OSError:
@@ -114,20 +117,48 @@ def _bash_results(session_dir: Path, limit: int) -> list[str]:
                 if not isinstance(block, dict):
                     continue
                 if block.get("type") == "tool_use":
-                    names[block.get("id")] = block.get("name")
+                    calls[block.get("id")] = (block.get("name") or "",
+                                              block.get("input") or {})
                 elif block.get("type") == "tool_result":
-                    if names.get(block.get("tool_use_id")) != "Bash":
-                        continue
-                    raw = block.get("content")
-                    if isinstance(raw, str):
-                        text = raw
-                    elif isinstance(raw, list):
-                        text = " ".join(b.get("text", "") for b in raw
-                                        if isinstance(b, dict))
-                    else:
-                        continue
-                    if text and len(text) >= MIN_CHARS:
-                        found.append(text)
+                    name, tool_input = calls.get(block.get("tool_use_id"), ("", {}))
+                    yield name, tool_input, block.get("content")
+
+
+def _flatten(raw) -> str:
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        return " ".join(b.get("text", "") for b in raw if isinstance(b, dict))
+    return ""
+
+
+def _bash_results(session_dir: Path, limit: int) -> list[str]:
+    """Large Bash tool results from the most recent sessions."""
+    found: list[str] = []
+    for name, _, raw in _tool_results(session_dir, limit):
+        if name != "Bash":
+            continue
+        text = _flatten(raw)
+        if text and len(text) >= MIN_CHARS:
+            found.append(text)
+    return found
+
+
+def _lossless_requests(session_dir: Path, limit: int) -> list[tuple[str, dict]]:
+    """Grep (content mode) and MCP results, shaped as the hook receives them.
+
+    Rebuilt from the transcript, which stores what the model saw rather than
+    the tool's structured output, so this is a replay, not a recording.
+    """
+    found: list[tuple[str, dict]] = []
+    for name, tool_input, raw in _tool_results(session_dir, limit):
+        if name == "Grep" and tool_input.get("output_mode") == "content":
+            text = _flatten(raw)
+            if len(text) >= MIN_CHARS:
+                found.append(("grep", {"tool_name": "Grep", "tool_response": {
+                    "mode": "content", "content": text}}))
+        elif name.startswith("mcp__") and len(_flatten(raw)) >= MIN_CHARS:
+            found.append(("mcp", {"tool_name": name, "tool_response": raw}))
     return found
 
 
@@ -172,6 +203,21 @@ def measure(session_dir: Path | None = None,
         else:
             result.passed_through += 1
 
+    for kind, request in _lossless_requests(session_dir, limit):
+        bucket = result.lossless.setdefault(
+            kind, {"payloads": 0, "tokens": 0, "rewritten": 0, "before": 0, "after": 0})
+        tokens = count_tokens(_flatten(request["tool_response"].get("content")
+                                       if kind == "grep" else request["tool_response"]))
+        bucket["payloads"] += 1
+        bucket["tokens"] += tokens
+        response = build_response(request)
+        if response:
+            shown = response["hookSpecificOutput"]["updatedToolOutput"]
+            shown = shown.get("content") if kind == "grep" else shown
+            bucket["rewritten"] += 1
+            bucket["before"] += tokens
+            bucket["after"] += count_tokens(_flatten(shown))
+
     return result
 
 
@@ -204,10 +250,29 @@ def format_report(m: HookMeasurement) -> list[str]:
     lines.append(f"WHEN IT FIRES:  {m.rate_when_firing:.1f}% saved")
     lines.append(f"ACROSS ALL BASH OUTPUT: {m.rate_overall:.1f}% "
                  f"(coverage {m.coverage:.1f}%)")
+    lines.extend(_lossless_lines(m))
     lines.append("")
-    lines.append("Read, Grep and Glob results are excluded, not counted as missed")
+    lines.append("Read and Glob results are excluded, not counted as missed")
     lines.append("coverage: the hook declines them by design, because a mutilated")
     lines.append("file read is something an agent will edit against.")
+    return lines
+
+
+def _lossless_lines(m: HookMeasurement) -> list[str]:
+    """Grep and MCP, reported apart from Bash: nothing in them is ever dropped."""
+    if not m.lossless:
+        return []
+    lines = ["", "LOSSLESS REWRITES (content kept byte-for-byte; reported apart from Bash)"]
+    labels = {"grep": "Grep, content mode", "mcp": "MCP tool results"}
+    for kind in ("grep", "mcp"):
+        b = m.lossless.get(kind)
+        if not b:
+            continue
+        saved = b["before"] - b["after"]
+        rate = saved / b["tokens"] * 100 if b["tokens"] else 0.0
+        lines.append(f"  {labels[kind]:<20} {b['payloads']:>4} large, {b['rewritten']:>4} "
+                     f"rewritten   saved {saved:,} of {b['tokens']:,} tokens ({rate:.1f}%)")
+    lines.append("  Replayed from transcripts, which store what the model saw.")
     return lines
 
 

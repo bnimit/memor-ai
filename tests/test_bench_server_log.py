@@ -4,7 +4,7 @@ Its figures are only comparable across commits if the same seed yields the same
 log, and only meaningful if the log reaches the log crusher rather than being
 declined as prose or source.
 """
-from scripts.bench_server_log import _hook_path, build_log, retention
+from scripts.bench_server_log import HOOK_COMMAND, _hook_path, build_log, retention
 from memor.compress import compress_text
 
 
@@ -22,7 +22,9 @@ def test_log_reaches_the_crusher_through_the_hook():
     assert r.content_type == "log"
     assert r.tokens_after < r.tokens_before
     hooked, fired = _hook_path(text)
-    assert fired and hooked == r.text
+    # The hook passes the agent's command as context, so its output is the
+    # query-aware compression of the same text.
+    assert fired and hooked == compress_text(text, query=HOOK_COMMAND).text
 
 
 def test_every_distinct_signal_survives():

@@ -904,9 +904,10 @@ def _install_posttool_compress(settings_path: Path, hook_command: str) -> None:
     It stays an allowlist rather than ``.*`` for the reason it always was: the
     hook re-checks the tool name anyway, and a narrow matcher means no process
     is spawned for the Read and Edit calls it would refuse, which is most of
-    them.
+    them. ``LOSSLESS_TOOL_PATTERNS`` (Grep, MCP tools) are admitted too; the
+    hook only ever rewrites those without losing content.
     """
-    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS, LOSSLESS_TOOL_PATTERNS
 
     if settings_path.exists():
         data = json.loads(settings_path.read_text())
@@ -917,7 +918,7 @@ def _install_posttool_compress(settings_path: Path, hook_command: str) -> None:
     # Case-insensitive so one matcher serves agents that disagree on
     # capitalisation for the same tool (`Bash` in Claude Code, `bash` in jcode).
     entry = {
-        "matcher": f"(?i)({'|'.join(sorted(COMPRESSIBLE_TOOLS))})",
+        "matcher": f"(?i)({'|'.join(sorted(COMPRESSIBLE_TOOLS) + list(LOSSLESS_TOOL_PATTERNS))})",
         "hooks": [{"type": "command", "command": hook_command, "timeout": 10}],
     }
     for i, group in enumerate(post_hooks):

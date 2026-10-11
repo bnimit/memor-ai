@@ -105,7 +105,27 @@ def test_report_states_the_denominator_not_just_the_ratio(tmp_path):
     assert "WHEN IT FIRES" in text
     assert "ACROSS ALL BASH OUTPUT" in text
     # The exclusion must be stated, or a reader will assume it is coverage lost.
-    assert "Read, Grep and Glob results are excluded" in text
+    assert "Read and Glob results are excluded" in text
+
+
+def test_lossless_rewrites_are_reported_apart_from_bash(tmp_path):
+    """Grep and MCP are measured, but never folded into the Bash headline."""
+    grep = "\n".join(f"memor/proxy/long/path/mod_{i % 3}.py:{i}:    retry = Retry({i})"
+                     for i in range(120))
+    pretty = json.dumps({"items": [{"n": i, "name": f"item {i}"} for i in range(80)]}, indent=2)
+    path = tmp_path / "s.jsonl"
+    _session(path, [("Bash", _noisy_log()), ("mcp__x__list", pretty), ("Grep", grep)])
+    # _session writes empty inputs; a content-mode Grep says so in its input.
+    path.write_text(path.read_text().replace(
+        '"name": "Grep", "input": {}', '"name": "Grep", "input": {"output_mode": "content"}'))
+
+    m = measure(tmp_path)
+    assert m.payloads == 1  # the Bash headline still counts Bash alone
+    assert m.lossless["mcp"]["rewritten"] == 1
+    assert m.lossless["grep"]["rewritten"] == 1
+    assert m.lossless["mcp"]["after"] < m.lossless["mcp"]["before"]
+    text = "\n".join(format_report(m))
+    assert "LOSSLESS REWRITES" in text and "MCP tool results" in text
 
 
 def test_empty_corpus_reports_nothing_rather_than_zero_percent(tmp_path):
