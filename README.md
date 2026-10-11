@@ -175,8 +175,13 @@ effect. A recall holdout withholds memories from a random share of the prompts
 recall *did* match:
 
 ```bash
-export MEMOR_RECALL_HOLDOUT_FRACTION=0.1   # off by default
+memor recall-holdout 0.1   # off by default; `memor recall-holdout 0` stops it
 ```
+
+The setting lives in `~/.memor/config.json`, which the hook sidecar and the
+proxy service both read on every recall, so it takes effect on the next prompt
+with no restart, however the agent or service was launched.
+`MEMOR_RECALL_HOLDOUT_FRACTION` overrides it for a single shell.
 
 Both arms are matched prompts, so the difference in billed cost per episode is
 recall's effect, net of what it injected. `recall-worth` reports it in a
@@ -686,9 +691,11 @@ memor compression-worth              Realized savings, coverage, and net of cach
 memor hook-worth                     What tool-output compression saved on your
                                      own Bash output, with its denominator
   --sessions N                       How many recent sessions to scan (default 60)
-memor recall-worth                   Whether recall is earning its context budget;
-                                     with MEMOR_RECALL_HOLDOUT_FRACTION set, the
-                                     randomized result and whole-product ledger
+memor recall-worth                   Whether recall is earning its context budget,
+                                     the randomized holdout result, and the
+                                     whole-product ledger
+memor recall-holdout [FRACTION]      Show or set the recall holdout (0.1 = withhold
+                                     memories from 10% of matched prompts; 0 = off)
 memor grade-recalls                  Settle verdicts on recalls the daemon passed
                                      over, so cross-tool memory becomes measurable
 memor compress-older                 Show or set whether payloads the agent has

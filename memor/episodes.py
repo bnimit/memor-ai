@@ -418,14 +418,18 @@ def measure_holdout(episodes: list[Episode]) -> dict:
     experiment that could not yet have seen a 20% effect; ``no_effect`` is a
     null from one that could have.
     """
-    from memor.recall_experiment import ARM_CONTROL, ARM_TREATMENT
+    from memor.recall_experiment import ARM_CONTROL, ARM_TREATMENT, holdout_setting
 
     usable = [e for e in episodes if e.assistant_steps > 0 and e.recall_arm]
     treat = [e for e in usable if e.recall_arm == ARM_TREATMENT]
     ctrl = [e for e in usable if e.recall_arm == ARM_CONTROL]
+    fraction, source = holdout_setting()
     out: dict = {
         "n_recall": len(treat), "n_withheld": len(ctrl),
         "min_per_arm": HOLDOUT_MIN_PER_ARM,
+        # Whether it is on *now*. Rows from an earlier run still count, so a
+        # result can exist while the experiment is off, and the reverse.
+        "setting": {"fraction": fraction, "source": source},
     }
     if not treat and not ctrl:
         out["verdict"] = "not_running"
@@ -474,7 +478,7 @@ def measure_holdout(episodes: list[Episode]) -> dict:
 
 
 HOLDOUT_VERDICT_TEXT = {
-    "not_running": "not running (set MEMOR_RECALL_HOLDOUT_FRACTION to start it)",
+    "not_running": "no episodes recorded yet",
     "insufficient_data": "collecting: too few episodes per arm to compare",
     "unresolved": "no clear difference yet, and too few episodes to rule out 20%",
     "no_effect": "no measurable effect: recall does not change episode cost by 20%",
@@ -486,9 +490,18 @@ HOLDOUT_VERDICT_TEXT = {
 def format_holdout(measured: dict) -> list[str]:
     """The randomized result: the one causal number about recall."""
     lines = ["", "MEASURED (randomized recall holdout)"]
+    setting = measured.get("setting") or {"fraction": 0.0, "source": "off"}
+    if setting["fraction"] > 0:
+        where = ("MEMOR_RECALL_HOLDOUT_FRACTION" if setting["source"] == "env"
+                 else "~/.memor/config.json")
+        lines.append(f"  holdout: on, {setting['fraction']:.0%} of matched prompts "
+                     f"withheld (from {where})")
+    else:
+        lines.append("  holdout: off. Start it with `memor recall-holdout 0.1`")
     v = measured.get("verdict", "not_running")
     if v == "not_running":
-        lines.append(f"  {HOLDOUT_VERDICT_TEXT[v]}")
+        if setting["fraction"] > 0:
+            lines.append(f"  {HOLDOUT_VERDICT_TEXT[v]}")
         return lines
     lines.append(
         f"  episodes: recall={measured['n_recall']:,}  "

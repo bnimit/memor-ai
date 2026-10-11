@@ -8,8 +8,8 @@ All notable changes to this project will be documented in this file.
 
 **Added**
 
-- **A randomized recall holdout.** With `MEMOR_RECALL_HOLDOUT_FRACTION` set,
-  recall is withheld from a random share of the prompts it found memories for.
+- **A randomized recall holdout.** `memor recall-holdout 0.1` withholds recall
+  from a random share of the prompts it found memories for.
   Both arms are prompts recall matched, so the difference in billed cost per
   episode is recall's effect, net of the tokens it injected. The existing
   `recall-worth` comparison could only bound that, because recall fires on
@@ -21,7 +21,13 @@ All notable changes to this project will be documented in this file.
   never in `recall_log`, so hit rates, the injection total, recall grading and
   the cross-tool matrix still describe memories that reached a model. A recall
   is only withheld once its row is written, so a failed write serves the memory
-  instead of silently losing it.
+  instead of silently losing it. The setting lives in `~/.memor/config.json`
+  rather than only in the environment: the hook sidecar inherits the agent's
+  environment, an app launched from the Dock never reads a shell profile, and
+  the launchd/systemd proxy reads neither, so an environment-only switch could
+  run the experiment on one path and silently not on another. Every recall
+  re-reads the config, so no restart is needed.
+  `MEMOR_RECALL_HOLDOUT_FRACTION` still overrides it for one shell.
 - **`recall-worth` reports the randomized result.** A MEASURED section gives
   billed cost and tool calls per arm, the cost difference against its detectable
   floor, and a verdict that separates `unresolved` (could not yet have seen a

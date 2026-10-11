@@ -32,6 +32,7 @@ import hashlib
 import os
 
 ENV_VAR = "MEMOR_RECALL_HOLDOUT_FRACTION"
+CONFIG_KEY = "recall_holdout_fraction"
 
 #: Arms as written to ``recall_experiment``. Rows exist only while the
 #: experiment runs, so there is no "experiment off" value to keep apart.
@@ -44,22 +45,45 @@ ARM_CONTROL = "withheld"
 _SALT = "memor-recall-holdout\x00"
 
 
-def holdout_fraction() -> float:
-    """Share of eligible prompts to withhold recall from. Off by default.
-
-    An experiment that runs without the operator knowing is one that quietly
-    takes their memory away.
-    """
-    raw = os.environ.get(ENV_VAR, "").strip()
-    if not raw:
-        return 0.0
+def _clamp(raw) -> float:
     try:
         value = float(raw)
-    except ValueError:
+    except (TypeError, ValueError):
         return 0.0
-    if value <= 0:
+    if value != value or value <= 0:  # NaN or non-positive
         return 0.0
     return min(value, 1.0)
+
+
+def holdout_setting() -> tuple[float, str]:
+    """The share of eligible prompts to withhold recall from, and where it came from.
+
+    Read from ``~/.memor/config.json`` (set by ``memor recall-holdout``), which
+    every memor process reads whatever started it. The environment variable
+    overrides it when set, for flipping one run without editing state, but
+    cannot be the only switch: the hook sidecar inherits the agent's
+    environment, an app launched from the Dock never sees a shell profile, and
+    the launchd/systemd proxy sees neither, so an env-only experiment can run
+    on one path and silently not on another.
+
+    Returns ``(fraction, source)`` with source ``env`` | ``config`` | ``off``.
+    Off by default: an experiment that runs without the operator knowing is one
+    that quietly takes their memory away.
+    """
+    raw = os.environ.get(ENV_VAR)
+    if raw is not None and raw.strip():
+        return _clamp(raw.strip()), "env"
+    try:
+        from memor.config import load_config
+
+        value = _clamp(load_config().get(CONFIG_KEY, 0.0))
+    except Exception:
+        value = 0.0
+    return value, ("config" if value > 0 else "off")
+
+
+def holdout_fraction() -> float:
+    return holdout_setting()[0]
 
 
 def is_enabled() -> bool:

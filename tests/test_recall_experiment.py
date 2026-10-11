@@ -356,3 +356,85 @@ def test_ledger_adds_measured_recall_without_double_counting(tmp_path):
     # Net of injection already, so the 1,500 injected is not subtracted again.
     assert ledger["net_with_measured_recall"] == 9_000
     assert "extrapolated" in "\n".join(format_ledger(ledger))
+
+
+# --- the switch: config, with the environment as an override -----------------
+
+def test_config_turns_it_on_without_any_environment():
+    """The proxy runs under launchd/systemd and never sees a shell profile."""
+    from memor.config import set_recall_holdout_fraction
+
+    set_recall_holdout_fraction(0.1)
+    assert rx.holdout_setting() == (0.1, "config")
+    assert rx.is_enabled()
+
+
+def test_environment_overrides_config_both_ways(monkeypatch):
+    from memor.config import set_recall_holdout_fraction
+
+    set_recall_holdout_fraction(0.1)
+    monkeypatch.setenv(rx.ENV_VAR, "0")
+    assert rx.holdout_setting() == (0.0, "env")
+    monkeypatch.setenv(rx.ENV_VAR, "0.3")
+    assert rx.holdout_setting() == (0.3, "env")
+    monkeypatch.setenv(rx.ENV_VAR, "  ")
+    assert rx.holdout_setting() == (0.1, "config")
+
+
+def test_hook_withholds_on_config_alone(tmp_path, recall_hits):
+    from memor.config import set_recall_holdout_fraction
+
+    db_path, e, s = _store_with_memory(tmp_path)
+    set_recall_holdout_fraction(1.0)
+    assert _hook(db_path, e)["hookSpecificOutput"]["additionalContext"] == ""
+    assert [r["arm"] for r in s.load_recall_experiment()] == [rx.ARM_CONTROL]
+
+
+@pytest.fixture
+def cli_home(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    home = tmp_path / "home"
+    (home / ".memor").mkdir(parents=True)
+    SqliteStore(str(home / ".memor" / "memor.db"), dim=16)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home
+
+
+def test_cli_sets_shows_and_turns_off(cli_home):
+    from typer.testing import CliRunner
+    from memor.cli import app
+
+    runner = CliRunner()
+    out = runner.invoke(app, ["recall-holdout"])
+    assert out.exit_code == 0 and "recall holdout: off" in out.output
+
+    out = runner.invoke(app, ["recall-holdout", "0.1"])
+    assert out.exit_code == 0, out.output
+    assert "on, 10% of matched prompts withheld" in out.output
+    assert "recorded so far: 0 served, 0 withheld" in out.output
+    assert rx.holdout_setting() == (0.1, "config")
+
+    out = runner.invoke(app, ["recall-holdout", "0"])
+    assert "recall holdout: off" in out.output
+    assert rx.holdout_setting() == (0.0, "off")
+
+
+def test_cli_rejects_out_of_range(cli_home):
+    from typer.testing import CliRunner
+    from memor.cli import app
+
+    out = CliRunner().invoke(app, ["recall-holdout", "10"])
+    assert out.exit_code == 2
+    assert rx.holdout_setting() == (0.0, "off")
+
+
+def test_report_says_whether_the_holdout_is_on():
+    from memor.config import set_recall_holdout_fraction
+
+    off = "\n".join(format_holdout(measure_holdout([_ep(1)])))
+    assert "holdout: off. Start it with `memor recall-holdout 0.1`" in off
+    set_recall_holdout_fraction(0.1)
+    on = "\n".join(format_holdout(measure_holdout([_ep(1)])))
+    assert "holdout: on, 10% of matched prompts withheld (from ~/.memor/config.json)" in on
+    assert "no episodes recorded yet" in on

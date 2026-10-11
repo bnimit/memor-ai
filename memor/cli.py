@@ -1387,10 +1387,11 @@ def recall_worth_cmd(
     stratified by prompt length so an aggregate difference cannot come purely
     from which prompts happen to get recall.
 
-    With MEMOR_RECALL_HOLDOUT_FRACTION set, recall is withheld from a random
-    share of the prompts it matched, and a MEASURED section compares the two
-    arms: the causal figure the observational one can only bound. The whole-
-    product ledger then counts recall's benefit, not only its cost.
+    With the recall holdout on (`memor recall-holdout 0.1`), recall is withheld
+    from a random share of the prompts it matched, and a MEASURED section
+    compares the two arms: the causal figure the observational one can only
+    bound. The whole-product ledger then counts recall's benefit, not only its
+    cost.
     """
     import json as _json
 
@@ -1664,6 +1665,56 @@ def recall_compare_cmd(
     typer.echo(
         f"\n  Observational, not randomised. Differences under {NOISE_FLOOR_PCT}pp "
         f"are not\n  distinguishable from noise on this corpus.")
+
+
+@app.command("recall-holdout")
+def recall_holdout_cmd(
+    fraction: float = typer.Argument(
+        None, help="Share of recall-matched prompts to withhold memories from "
+                   "(0-1). 0 turns the experiment off. Omit to show the setting."),
+):
+    """Show or set the randomized recall holdout.
+
+    Withholds memories from a random share of the prompts recall matched, so
+    `memor recall-worth` can measure what recall saves rather than bound it.
+    Stored in ~/.memor/config.json, which the hook sidecar and the proxy both
+    read on every recall, so it takes effect on the next prompt with no
+    restart, however the agent or service was launched.
+    """
+    from memor import recall_experiment as rx
+    from memor.config import set_recall_holdout_fraction
+
+    if fraction is not None:
+        if not 0 <= fraction <= 1:
+            typer.echo("Error: fraction must be between 0 and 1 (0.1 = 10%)", err=True)
+            raise typer.Exit(2)
+        set_recall_holdout_fraction(fraction)
+
+    value, source = rx.holdout_setting()
+    if value > 0:
+        typer.echo(f"recall holdout: on, {value:.0%} of matched prompts withheld")
+        typer.echo("  costs you memory on that share of prompts while it runs")
+    else:
+        typer.echo("recall holdout: off")
+    if source == "env":
+        typer.echo(f"  {rx.ENV_VAR} is set in this shell and overrides the config")
+    if fraction is not None and fraction > 0.5:
+        typer.echo("  above 0.5 most prompts get no memory; 0.1 is enough to measure")
+
+    db_path = Path.home() / ".memor" / "memor.db"
+    if db_path.exists():
+        try:
+            from memor.store.sqlite_store import read_dim
+
+            rows = SqliteStore(str(db_path), dim=read_dim(str(db_path), 256)) \
+                .load_recall_experiment()
+            arms = {a: sum(1 for r in rows if r["arm"] == a)
+                    for a in (rx.ARM_TREATMENT, rx.ARM_CONTROL)}
+            typer.echo(f"  recorded so far: {arms[rx.ARM_TREATMENT]:,} served, "
+                       f"{arms[rx.ARM_CONTROL]:,} withheld")
+        except Exception:
+            pass
+    typer.echo("  results: memor recall-worth")
 
 
 @app.command("compress-older")
