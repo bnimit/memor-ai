@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 from datetime import datetime, timedelta, timezone
 
 PATHS = [
@@ -277,9 +278,33 @@ def _hook_path(text: str) -> tuple[str, bool]:
     return out["hookSpecificOutput"]["updatedToolOutput"]["stdout"], True
 
 
-def retention(builder: LogBuilder, compressed: str) -> dict[str, tuple[int, int]]:
-    kept = set(compressed.split("\n"))
-    return {k: (sum(1 for ln in v if ln in kept), len(v)) for k, v in builder.needles.items() if v}
+_ID = re.compile(r"\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b|\d+")
+
+
+def _fact(line: str) -> str:
+    """A needle with its ids, numbers and timestamp blanked.
+
+    Written here rather than borrowed from the compressor, so the scorer does
+    not share the code it is scoring. Fifty pool timeouts that differ only in
+    request id are one fact; a compressor that keeps one of them and says how
+    many there were has not lost the other forty-nine.
+    """
+    return _ID.sub("#", line)
+
+
+def retention(builder: LogBuilder, compressed: str) -> dict[str, tuple[int, int, int, int]]:
+    """Per needle category: (lines kept, lines total, distinct kept, distinct total)."""
+    out_lines = compressed.split("\n")
+    kept = set(out_lines)
+    kept_facts = {_fact(ln) for ln in out_lines}
+    out = {}
+    for k, v in builder.needles.items():
+        if not v:
+            continue
+        facts = {_fact(ln) for ln in v}
+        out[k] = (sum(1 for ln in v if ln in kept), len(v),
+                  sum(1 for f in facts if f in kept_facts), len(facts))
+    return out
 
 
 def main() -> None:
@@ -321,7 +346,8 @@ def main() -> None:
         "as_file_read_saved_pct": round(100 * (1 - r_file.tokens_after / r_file.tokens_before), 1),
         "hook_fired": hook_fired,
         "hook_saved_pct": round(100 * (1 - hook_after / r.tokens_before), 1),
-        "retention": {k: {"kept": a, "total": t} for k, (a, t) in ret.items()},
+        "retention": {k: {"kept": a, "total": t, "distinct_kept": da, "distinct_total": dt}
+                      for k, (a, t, da, dt) in ret.items()},
     }
     if args.json:
         print(json.dumps(summary, indent=2))
@@ -333,10 +359,10 @@ def main() -> None:
           f"saved {summary['saved_pct']}%  ({summary['lines_after']} lines kept)")
     print(f"  as a .log file read:    saved {summary['as_file_read_saved_pct']}%")
     print(f"  via PostToolUse hook:   saved {summary['hook_saved_pct']}%  (fired={hook_fired})")
-    print("retention of answer-critical lines:")
-    for k, (a, t) in ret.items():
-        mark = "ok " if a == t else "LOST"
-        print(f"  {mark} {k:<20} {a}/{t}")
+    print("retention of answer-critical lines   (distinct = ids and numbers aside)")
+    for k, (a, t, da, dt) in ret.items():
+        mark = "ok " if da == dt else "LOST"
+        print(f"  {mark} {k:<20} distinct {da}/{dt}   lines {a}/{t}")
 
 
 if __name__ == "__main__":

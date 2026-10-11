@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Server logs: whole tracebacks, warnings kept, repeats collapsed
+
+**Fixed**
+
+- **A traceback is kept whole, so its exception line survives.** The log
+  crusher kept ±2 lines around `Traceback` and around any line naming an error,
+  so an exception like `httpx.ReadTimeout: timed out` (no error keyword) lost
+  the one line saying what happened. Python traces (chained ones included) and
+  JVM/JS `at ...` traces are now kept as a unit; one longer than 50 lines keeps
+  its head and tail. An identical trace (ids and numbers aside) is kept once,
+  with a note giving how many times it occurred.
+- **WARN lines and 5xx responses are kept.** Neither names an error keyword, so
+  both survived only when they happened to sit next to an error: on a seeded
+  5,000-line incident log, 7 of 45 warnings survived, including none of the
+  pool-saturation warnings that came before the outage. `WARN`, `level=warn`,
+  nginx's `[warn]`, and `status=5xx` / access-log 5xx lines are now kept on
+  their own, without context.
+
+**Changed**
+
+- **Repeated log records collapse to first and last.** Only lines with a clock
+  time or a level token qualify, so test-runner output is never collapsed. A
+  record seen three or more times (ids, hashes, numbers and timestamps aside)
+  keeps its first and last occurrence and a count. On the incident log, 51
+  identical pool timeouts became two lines.
+- Result on `python -m scripts.bench_server_log`: savings went from 95.3% to
+  **97.4%** (307,343 to 7,910 cl100k tokens), and every distinct error, warning,
+  traceback frame and 5xx line survives (before: 4 of 11 distinct warnings, 9 of
+  13 frames). Two facts are still lost: the INFO line with the config change
+  that caused the incident, and the rollback. A keyword crusher cannot know that
+  an innocuous INFO line matters.
+
 ### The last unread source, and a status that could not go stale
 
 **Added**
