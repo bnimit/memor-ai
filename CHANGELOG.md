@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Recall's benefit, measured rather than bounded
+
+**Added**
+
+- **A randomized recall holdout.** With `MEMOR_RECALL_HOLDOUT_FRACTION` set,
+  recall is withheld from a random share of the prompts it found memories for.
+  Both arms are prompts recall matched, so the difference in billed cost per
+  episode is recall's effect, net of the tokens it injected. The existing
+  `recall-worth` comparison could only bound that, because recall fires on
+  familiar work: on the development machine an earlier headline of -33.3% was
+  -6.1% once compared within projects. Assignment hashes the session and the
+  prompt, so a prompt the proxy sees on several requests stays in one arm, and
+  it is independent of the compression holdout. Both the hook and the proxy take
+  part. A withheld recall is recorded in a new `recall_experiment` table and
+  never in `recall_log`, so hit rates, the injection total, recall grading and
+  the cross-tool matrix still describe memories that reached a model. A recall
+  is only withheld once its row is written, so a failed write serves the memory
+  instead of silently losing it.
+- **`recall-worth` reports the randomized result.** A MEASURED section gives
+  billed cost and tool calls per arm, the cost difference against its detectable
+  floor, and a verdict that separates `unresolved` (could not yet have seen a
+  20% effect) from `no_effect` (could have, and did not). When unresolved, it
+  says how many episodes per arm would resolve 20% at the store's own variance.
+- **A whole-product ledger in `recall-worth`.** Until now the "compression saved
+  minus recall injected" figure in the README was put together by hand, and it
+  could only count recall as a cost. `recall-worth` now prints it from the
+  store, and once the holdout reaches a verdict it adds recall's measured effect
+  per episode, extrapolated over recalled episodes and marked as such. The
+  measured effect is already net of injection, so the injected tokens are not
+  subtracted twice.
+
 ### Server logs: whole tracebacks, warnings kept, repeats collapsed
 
 **Fixed**

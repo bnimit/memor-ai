@@ -153,6 +153,13 @@ class SqliteStore:
           timestamp REAL, project TEXT, query_preview TEXT,
           hits_count INTEGER, top_score REAL, tokens_injected INTEGER,
           latency_ms REAL, status TEXT, session_id TEXT);
+        CREATE TABLE IF NOT EXISTS recall_experiment(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp REAL NOT NULL, arm TEXT NOT NULL,
+          agent TEXT, project TEXT, session_id TEXT, conversation_key TEXT,
+          query_preview TEXT, hits_count INTEGER, tokens_offered INTEGER);
+        CREATE INDEX IF NOT EXISTS idx_recall_exp_session
+          ON recall_experiment(session_id, timestamp);
         CREATE TABLE IF NOT EXISTS recall_outcomes(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           recall_id INTEGER NOT NULL,
@@ -890,6 +897,43 @@ class SqliteStore:
              conversation_key))
         self.db.commit()
         return cur.lastrowid
+
+    def log_recall_experiment(self, *, arm: str, project: str, query_preview: str,
+                              hits_count: int, tokens_offered: int,
+                              session_id: str = "", agent: str = "claude",
+                              conversation_key: str = "") -> bool:
+        """Record one prompt's arm in the recall holdout. Never raises.
+
+        Kept apart from ``recall_log`` on purpose: see ``memor.recall_experiment``.
+        ``tokens_offered`` is what recall had ready to inject, which for the
+        withheld arm is what it *would* have cost. Returns False when the row
+        could not be written, so a caller can decline to withhold a recall it
+        cannot account for.
+        """
+        import time as _time
+        try:
+            self.db.execute(
+                "INSERT INTO recall_experiment(timestamp,arm,agent,project,session_id,"
+                "conversation_key,query_preview,hits_count,tokens_offered) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (_time.time(), arm, agent, project, session_id or "",
+                 conversation_key or "", query_preview[:100], hits_count,
+                 tokens_offered))
+            self.db.commit()
+            return True
+        except sqlite3.Error:
+            return False
+
+    def load_recall_experiment(self) -> list[dict]:
+        """Every holdout row, oldest first. Empty when the experiment never ran."""
+        try:
+            rows = self.db.execute(
+                "SELECT timestamp, arm, agent, project, session_id, conversation_key, "
+                "query_preview, hits_count, tokens_offered FROM recall_experiment "
+                "ORDER BY timestamp").fetchall()
+        except sqlite3.Error:
+            return []
+        return [dict(r) for r in rows]
 
     def record_recall_candidates(self, recall_id: int | None,
                                  artifact_ids: list[str]) -> None:

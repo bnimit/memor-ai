@@ -2,6 +2,7 @@
 from __future__ import annotations
 from pathlib import Path
 
+from memor.recall_experiment import ARM_CONTROL, ARM_TREATMENT
 from memor.types import GLOBAL_PROJECT
 
 
@@ -136,9 +137,36 @@ def inject_memory(provider: str, body: dict, *, project: str, db_path: str,
     # conversation's opening message without any client cooperation.
     from memor.conversation import key_from_body
 
+    convo_key = key_from_body(body)
+
+    # Recall holdout: among recalls that found something, withhold a random
+    # share so recall's effect on the rest of the episode can be measured. A
+    # withheld recall is recorded only in the experiment table (see
+    # memor.recall_experiment), and only if that write succeeds; one nobody
+    # wrote down would cost the user their memory and teach nothing.
+    arm = None
+    if result.hits_count and store is not None:
+        from memor import recall_experiment
+
+        if recall_experiment.is_enabled():
+            arm = recall_experiment.assign_arm(
+                recall_experiment.experiment_key(session_id, convo_key, query))
+    if arm == ARM_CONTROL:
+        if store.log_recall_experiment(
+                arm=arm, project=project, query_preview=query[:100],
+                hits_count=result.hits_count, tokens_offered=result.tokens_injected,
+                session_id=session_id, agent=agent, conversation_key=convo_key):
+            return body
+        arm = None
+
     _log_recall(store, project=project, query=query, result=result,
                 agent=agent, session_id=session_id,
-                conversation_key=key_from_body(body))
+                conversation_key=convo_key)
+    if arm == ARM_TREATMENT:
+        store.log_recall_experiment(
+            arm=arm, project=project, query_preview=query[:100],
+            hits_count=result.hits_count, tokens_offered=result.tokens_injected,
+            session_id=session_id, agent=agent, conversation_key=convo_key)
 
     if result.hits_count == 0:
         return body

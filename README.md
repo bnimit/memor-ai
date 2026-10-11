@@ -167,6 +167,26 @@ Comparing the same kind of payload within a conversation brings that to about
 57 requests per arm. The holdout share is the savings deliberately given up to
 learn whether the rest are real.
 
+**Recall gets the same treatment.** The ledger above counts recall only as a
+cost, because its benefit, the exploration it prevents, had no defensible
+number. `memor recall-worth` compares episodes with and without recall, but
+recall fires on the prompts it matches, so that comparison can only bound the
+effect. A recall holdout withholds memories from a random share of the prompts
+recall *did* match:
+
+```bash
+export MEMOR_RECALL_HOLDOUT_FRACTION=0.1   # off by default
+```
+
+Both arms are matched prompts, so the difference in billed cost per episode is
+recall's effect, net of what it injected. `recall-worth` reports it in a
+MEASURED section with its detectable floor, says how many episodes per arm
+would resolve a 20% effect, and only then adds recall's benefit to the
+whole-product ledger, marked as extrapolated. Withheld recalls are kept out of
+`recall_log`, so hit rates, the injection total and recall grading still
+describe memories that reached a model. Episode cost varies far more than
+payload size, so expect this to take weeks of use, not days.
+
 **Cross-tool recall is now graded.** Until 2026-08-23 the feedback loop ran for
 Claude only, so every cross-tool recall was served and never judged. The one
 capability memor exists for was the one it could not measure. All four agents
@@ -666,7 +686,9 @@ memor compression-worth              Realized savings, coverage, and net of cach
 memor hook-worth                     What tool-output compression saved on your
                                      own Bash output, with its denominator
   --sessions N                       How many recent sessions to scan (default 60)
-memor recall-worth                   Whether recall is earning its context budget
+memor recall-worth                   Whether recall is earning its context budget;
+                                     with MEMOR_RECALL_HOLDOUT_FRACTION set, the
+                                     randomized result and whole-product ledger
 memor grade-recalls                  Settle verdicts on recalls the daemon passed
                                      over, so cross-tool memory becomes measurable
 memor compress-older                 Show or set whether payloads the agent has

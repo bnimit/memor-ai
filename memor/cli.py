@@ -1386,17 +1386,38 @@ def recall_worth_cmd(
     episodes where memor injected context against those where it did not,
     stratified by prompt length so an aggregate difference cannot come purely
     from which prompts happen to get recall.
+
+    With MEMOR_RECALL_HOLDOUT_FRACTION set, recall is withheld from a random
+    share of the prompts it matched, and a MEASURED section compares the two
+    arms: the causal figure the observational one can only bound. The whole-
+    product ledger then counts recall's benefit, not only its cost.
     """
     import json as _json
 
-    from memor.episodes import format_report, scan_episodes, summarize
+    from memor.episodes import (
+        format_ledger, format_report, scan_episodes, summarize, whole_product_ledger,
+    )
 
-    summary = summarize(scan_episodes(), min_per_arm=min_per_arm)
+    episodes = scan_episodes()
+    summary = summarize(episodes, min_per_arm=min_per_arm)
+    db_path = Path.home() / ".memor" / "memor.db"
+    if db_path.exists():
+        try:
+            from memor.store.sqlite_store import read_dim
+
+            store = SqliteStore(str(db_path), dim=read_dim(str(db_path), 256))
+            recalled = sum(1 for e in episodes if e.assistant_steps > 0 and e.had_recall)
+            summary["ledger"] = whole_product_ledger(store, summary["measured"], recalled)
+        except Exception:
+            pass
     if json_out:
         typer.echo(_json.dumps(summary, indent=2, default=str))
         return
     for line in format_report(summary):
         typer.echo(line)
+    if "ledger" in summary:
+        for line in format_ledger(summary["ledger"]):
+            typer.echo(line)
 
 
 @app.command("compression-worth")
