@@ -13,6 +13,7 @@ import pytest
 
 from memor.trajectory import (
     MAX_APPENDED_CHARS,
+    MAX_TAIL_BYTES,
     TrajectorySignals,
     build_query,
     enrich_from_transcript,
@@ -166,23 +167,41 @@ def test_disabled_by_default(transcript, monkeypatch):
 # --- the hot path ------------------------------------------------------------
 
 
+def _best_ms(fn, runs: int = 5) -> float:
+    best = float("inf")
+    for _ in range(runs):
+        start = time.perf_counter()
+        fn()
+        best = min(best, (time.perf_counter() - start) * 1000)
+    return best
+
+
 def test_a_huge_transcript_costs_the_same_as_a_small_one(tmp_path):
-    """Cost must be bounded by the byte cap, not by session length."""
-    big = tmp_path / "big.jsonl"
+    """Cost must be bounded by the byte cap, not by session length.
+
+    Asserted against a transcript just at the cap, timed on the same machine,
+    rather than against a fixed millisecond figure. A single wall-clock sample
+    against 15ms passed locally in ~2ms and failed on a loaded CI runner at
+    27ms and then 50ms, while the code was unchanged. The ratio is what the
+    docstring claims; best-of-five removes scheduling spikes. Reading the whole
+    file instead of its tail still fails this by two orders of magnitude.
+    """
     filler = _rec("assistant", [_use("Read", {"file_path": "/repo/filler.py"})])
-    with big.open("w") as fh:
-        for _ in range(40_000):
-            fh.write(filler + "\n")
-        fh.write(_rec("assistant", [_use("Read", {"file_path": "/repo/target.py"})]) + "\n")
+    target = _rec("assistant", [_use("Read", {"file_path": "/repo/target.py"})])
+    big = tmp_path / "big.jsonl"
+    big.write_text((filler + "\n") * 40_000 + target + "\n")
+    small = tmp_path / "small.jsonl"
+    small.write_text((filler + "\n") * (MAX_TAIL_BYTES // len(filler) + 1) + target + "\n")
 
     assert big.stat().st_size > 5_000_000
+    assert "repo/target.py" in extract_signals(big).files, \
+        "the tail window missed the newest record"
 
-    start = time.perf_counter()
-    signals = extract_signals(big)
-    elapsed_ms = (time.perf_counter() - start) * 1000
-
-    assert "repo/target.py" in signals.files, "the tail window missed the newest record"
-    assert elapsed_ms < 15, f"took {elapsed_ms:.1f}ms of a 15ms recall budget"
+    big_ms = _best_ms(lambda: extract_signals(big))
+    small_ms = _best_ms(lambda: extract_signals(small))
+    assert big_ms < small_ms * 3 + 2, (
+        f"a {big.stat().st_size // 1_000_000}MB transcript took {big_ms:.1f}ms "
+        f"against {small_ms:.1f}ms for one at the {MAX_TAIL_BYTES:,}-byte cap")
 
 
 def test_the_tail_window_never_yields_a_partial_line(tmp_path):
