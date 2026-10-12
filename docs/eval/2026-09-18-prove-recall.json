@@ -1,0 +1,38 @@
+{
+  "date": "2026-09-18",
+  "campaign": "prove-recall",
+  "claim_scope": "claude_code_episodes",
+  "g0_meter": {
+    "pass": true,
+    "reason": "pairs=1494 match_rate=95% verdict=costs",
+    "overall": {
+      "verdict": "costs",
+      "matched_att_pct": -17.7,
+      "match_rate": 0.947,
+      "n_pairs": 1494,
+      "mde_pct": 17.0
+    }
+  },
+  "g1_offline_ab": {
+    "n_queries": 22,
+    "n_compared": 21,
+    "default_mean_tokens": 530.9,
+    "strict_mean_tokens": 220.5,
+    "default_memory_share": 0.019,
+    "strict_memory_share": 0.143,
+    "thrift_ratio": 0.415,
+    "g1_pass": true,
+    "g1_reason": "strict tokens 42% of default; memory share 0.14 \u2265 0.02"
+  },
+  "g2_forward": {
+    "due": false,
+    "stamped_at": 1789735573.259912,
+    "instructions": "export MEMOR_RECALL_PROFILE=strict; memor service restart; after \u22657 days of Claude use, re-run memor prove-recall"
+  },
+  "g3_counterfactual": {
+    "status": "not_run"
+  },
+  "decision": "needs_forward_window",
+  "rationale": "G0+G1 passed. Stamp a baseline, run with MEMOR_RECALL_PROFILE=strict for \u22657 days, then re-run prove-recall.",
+  "confound": "Observational, not randomised: recall fires only when it finds a good match, and it matches on familiar work \u2014 which may be cheaper anyway. Read a positive result as an upper bound on the true effect."
+}

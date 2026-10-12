@@ -115,14 +115,13 @@ def parse_verdict_json(raw: str) -> CounterfactualVerdict:
 
 
 def run_case(case: CounterfactualCase, *, store, embedder, llm, db_path,
-             k: int = 8) -> CounterfactualVerdict:
+             k: int = 8) -> tuple[CounterfactualVerdict, bool]:
     """Judge a case using the PRODUCTION recall() path, not a bare Retriever.
 
-    This mirrors what the hook actually injects: same-session exclusion,
-    the 0.3/0.15 score threshold, the per-tier token budget, and 600-char
-    truncation. Without this, the eval over-recalls (self-recall echoes and
-    sub-threshold hits production would never inject), inflating ties and
-    producing same-session "losses" that cannot happen in production.
+    Mirrors what the hook injects: same-session exclusion, score threshold,
+    per-tier token budget, and truncation. Returns
+    ``(verdict, dispute_present)`` where ``dispute_present`` is true when the
+    injected hit set contains both sides of an active dispute pair.
     """
     from memor.query_complexity import route_query, Tier
     from memor.recall import recall
@@ -132,17 +131,19 @@ def run_case(case: CounterfactualCase, *, store, embedder, llm, db_path,
         return CounterfactualVerdict(
             outcome=Outcome.TIE,
             reasoning="Production routes this query to SKIP — no recall would occur",
-            confidence=1.0)
+            confidence=1.0), False
 
     result = recall(case.query, case.scope_project, db_path, embedder=embedder,
                     k=tier.k, threshold=0.15, max_tokens=tier.max_tokens,
                     session_id=case.session_id)
 
+    dispute_present = hits_contain_dispute_pair(store, result.hit_ids)
+
     if not result.hit_ids:
         return CounterfactualVerdict(
             outcome=Outcome.TIE,
             reasoning="No context recalled via production path — nothing to evaluate",
-            confidence=1.0)
+            confidence=1.0), dispute_present
 
     # Judge exactly what production injects (post-exclusion/threshold/budget/truncation).
     recalled = result.formatted_context
@@ -151,7 +152,7 @@ def run_case(case: CounterfactualCase, *, store, embedder, llm, db_path,
     prompt = COUNTERFACTUAL_PROMPT.format(
         query=case.query, holdout=holdout, recalled_context=recalled)
     raw = llm.complete(prompt)
-    return parse_verdict_json(raw)
+    return parse_verdict_json(raw), dispute_present
 
 
 def run_suite(cases: list[CounterfactualCase], *, store, embedder, llm, db_path,
@@ -160,17 +161,20 @@ def run_suite(cases: list[CounterfactualCase], *, store, embedder, llm, db_path,
     n = len(cases)
     for i, c in enumerate(cases, 1):
         print(f"  [{i}/{n}] judging case...", end="", flush=True)
-        v = run_case(c, store=store, embedder=embedder, llm=llm, db_path=db_path, k=k)
-        print(f" {v.outcome.value}", flush=True)
-        verdicts.append((c, v))
-    verdict_list = [v for _, v in verdicts]
+        v, dispute_present = run_case(
+            c, store=store, embedder=embedder, llm=llm, db_path=db_path, k=k)
+        tag = " dispute" if dispute_present else ""
+        print(f" {v.outcome.value}{tag}", flush=True)
+        verdicts.append((c, v, dispute_present))
+    verdict_list = [v for _, v, _ in verdicts]
     summary = summarize_verdicts(verdict_list)
     summary["cases"] = [
         {"session_id": c.session_id, "query_preview": c.query[:100],
          "outcome": v.outcome.value, "reasoning": v.reasoning,
-         "confidence": v.confidence}
-        for c, v in verdicts
+         "confidence": v.confidence, "dispute_present": dispute_present}
+        for c, v, dispute_present in verdicts
     ]
+    summary["by_stratum"] = summarize_by_stratum(summary["cases"])
     return summary
 
 
@@ -213,7 +217,6 @@ def summarize_verdicts(verdicts: list[CounterfactualVerdict]) -> dict:
     wins = sum(1 for v in verdicts if v.outcome == Outcome.WIN)
     ties = sum(1 for v in verdicts if v.outcome == Outcome.TIE)
     losses = sum(1 for v in verdicts if v.outcome == Outcome.LOSS)
-
     return {
         "n_cases": n,
         "win_count": wins,
@@ -223,4 +226,51 @@ def summarize_verdicts(verdicts: list[CounterfactualVerdict]) -> dict:
         "tie_pct": round(ties / n * 100, 1),
         "loss_pct": round(losses / n * 100, 1),
         "do_no_harm_pct": round((wins + ties) / n * 100, 1),
+    }
+
+
+def hits_contain_dispute_pair(store, hit_ids: list[str] | None) -> bool:
+    """True when a recalled set includes both a disputed memory and an active disputer."""
+    if not hit_ids or len(hit_ids) < 2:
+        return False
+    if not hasattr(store, "active_disputers"):
+        return False
+    present = set(hit_ids)
+    for oid in hit_ids:
+        for mid in store.active_disputers(oid):
+            if mid in present:
+                return True
+    return False
+
+
+def summarize_by_stratum(rows: list[dict]) -> dict:
+    """Split counterfactual outcomes into dispute-present vs no-dispute."""
+    buckets = {"dispute_present": [], "no_dispute": []}
+    for row in rows:
+        key = "dispute_present" if row.get("dispute_present") else "no_dispute"
+        buckets[key].append(row)
+
+    def _bucket(items: list[dict]) -> dict:
+        n = len(items)
+        if n == 0:
+            return {"n_cases": 0, "win_count": 0, "tie_count": 0, "loss_count": 0,
+                    "win_pct": 0.0, "tie_pct": 0.0, "loss_pct": 0.0,
+                    "do_no_harm_pct": 100.0}
+        wins = sum(1 for r in items if r["outcome"] == "win")
+        ties = sum(1 for r in items if r["outcome"] == "tie")
+        losses = sum(1 for r in items if r["outcome"] == "loss")
+        return {
+            "n_cases": n,
+            "win_count": wins,
+            "tie_count": ties,
+            "loss_count": losses,
+            "win_pct": round(wins / n * 100, 1),
+            "tie_pct": round(ties / n * 100, 1),
+            "loss_pct": round(losses / n * 100, 1),
+            "do_no_harm_pct": round((wins + ties) / n * 100, 1),
+        }
+
+    return {
+        "dispute_present": _bucket(buckets["dispute_present"]),
+        "no_dispute": _bucket(buckets["no_dispute"]),
     }

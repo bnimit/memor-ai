@@ -21,27 +21,22 @@ def _extract_json(raw: str) -> dict:
 
 def _store_memory(store, embedder, text: str, mem_type: str, session_id: str,
                   project: str, created: float, source_chunks: list[Artifact]) -> str | None:
-    """Store a single memory with dedup/supersession check and provenance edges."""
+    """Store a single memory with dedup and soft temporal disputes.
+
+    Exact near-duplicates (store sim mapping to true cosine ≥ 0.92) are skipped.
+    Semantic updates no longer hard-deactivate the older memory: they record a
+    dispute so recall can demote or drop it when the flag is on.
+    """
+    from memor.retrieve.similarity import stored_sim_to_cosine, DISPUTE_COSINE_HI
+    from memor.supersession import find_and_record_disputes
+
     mid = f"mem:{session_id}:{hashlib.sha1(text.encode()).hexdigest()[:8]}"
     vec = embedder.embed([text])[0]
-    existing = store.search(vec, Scope(project=project, kinds=["memory"]), k=1)
+    existing = store.search(vec, Scope(project=project, kinds=["memory"]), k=8)
     if existing:
         old_art, sim = existing[0]
-        if sim >= DEDUP_SIM_THRESHOLD:
+        if stored_sim_to_cosine(sim) >= DISPUTE_COSINE_HI:
             return None
-        if (sim >= SUPERSEDE_SIM_THRESHOLD
-                and created > old_art.created_at
-                and _REPLACEMENT_RE.search(text)):
-            art = Artifact(
-                id=mid, kind="memory", project=project, source="distill",
-                text=text, token_count=max(1, count_tokens(text)), created_at=created,
-                meta={"mem_type": mem_type, "session_id": session_id},
-            )
-            store.add_artifacts([art], [vec])
-            store.deactivate(old_art.id, superseded_by=mid)
-            for c in source_chunks:
-                store.add_edge(mid, c.id, "derived_from")
-            return mid
     art = Artifact(
         id=mid, kind="memory", project=project, source="distill",
         text=text, token_count=max(1, count_tokens(text)), created_at=created,
@@ -50,6 +45,7 @@ def _store_memory(store, embedder, text: str, mem_type: str, session_id: str,
     store.add_artifacts([art], [vec])
     for c in source_chunks:
         store.add_edge(mid, c.id, "derived_from")
+    find_and_record_disputes(store, embedder, mid, project=project)
     return mid
 
 
@@ -77,14 +73,21 @@ class Distiller:
                                 session_id, project, created, key_chunks)
             if mid is None:
                 continue
+            # LLM-named supersedes_text: soft dispute only (no hard deactivate).
             sup = m.get("supersedes_text")
             if sup:
                 prior = self.store.search(
                     self.embedder.embed([sup])[0],
                     Scope(project=project, kinds=["memory"]), k=1,
                 )
-                if prior and prior[0][1] >= 0.8 and prior[0][0].id != mid:
-                    self.store.deactivate(prior[0][0].id, superseded_by=mid)
+                if prior and prior[0][0].id != mid:
+                    from memor.retrieve.similarity import (
+                        DISPUTE_COSINE_LO, stored_sim_to_cosine,
+                    )
+                    cos = stored_sim_to_cosine(prior[0][1])
+                    if cos >= DISPUTE_COSINE_LO:
+                        self.store.add_dispute(prior[0][0].id, mid)
+                        self.store.recompute_validity(prior[0][0].id)
             new_ids.append(mid)
         return new_ids
 

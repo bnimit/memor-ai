@@ -717,6 +717,9 @@ memor recall-worth                   Whether recall is earning its context budge
                                      whole-product ledger
 memor recall-holdout [FRACTION]      Show or set the recall holdout (0.1 = withhold
                                      memories from 10% of matched prompts; 0 = off)
+memor prove-recall                   Matched comparison plus strict-vs-default recall
+                                     A/B; --stamp starts a forward window for
+                                     MEMOR_RECALL_PROFILE=strict
 memor grade-recalls                  Settle verdicts on recalls the daemon passed
                                      over, so cross-tool memory becomes measurable
 memor compress-older                 Show or set whether payloads the agent has
@@ -740,6 +743,7 @@ memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything
 memor reingest --project <name>      Re-ingest only one project
 memor forget-stale                   Deactivate memories unused for 30+ days
+memor backfill-disputes              Scan memories and record soft temporal disputes
 memor prune                          Retire harness noise and duplicates from the
                                      retrieval pool (deactivates, never deletes)
 memor compact                        Rebuild vector index, reclaim wasted space
