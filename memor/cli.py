@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import re
 import sys
 from pathlib import Path
 import typer
@@ -67,6 +68,7 @@ MAINTENANCE
   memor reingest --project <name>  Re-ingest only one project
   memor distill --project <name>   Run distillation manually
   memor forget-stale               Deactivate memories not recalled in 30 days
+  memor backfill-disputes          Scan memories; record soft temporal disputes
   memor compact                    Rebuild vector index, reclaim space
   memor scan                       Audit DB for leaked secrets
   memor scan --purge               Redact secrets in place
@@ -229,6 +231,19 @@ def eval_counterfactual_cmd(project: str = typer.Option(...), db: str = typer.Op
     typer.echo(f"  Tie:  {summary['tie_count']}/{summary['n_cases']} ({summary['tie_pct']}%)")
     typer.echo(f"  Loss: {summary['loss_count']}/{summary['n_cases']} ({summary['loss_pct']}%)")
     typer.echo(f"  Do-no-harm: {summary['do_no_harm_pct']}%")
+    by = summary.get("by_stratum") or {}
+    if by:
+        dp = by.get("dispute_present") or {}
+        nd = by.get("no_dispute") or {}
+        typer.echo("")
+        typer.echo(
+            f"  Dispute-present: {dp.get('n_cases', 0)} cases · "
+            f"do-no-harm {dp.get('do_no_harm_pct', 0)}%"
+        )
+        typer.echo(
+            f"  No-dispute:      {nd.get('n_cases', 0)} cases · "
+            f"do-no-harm {nd.get('do_no_harm_pct', 0)}%"
+        )
     s.save_eval_run({"type": "counterfactual", "k": k, "project": project, "holdout": holdout}, summary)
 
 
@@ -702,6 +717,27 @@ def forget_stale(days: int = typer.Option(30, help="Deactivate memories not reca
     typer.echo(f"Deactivated {count} stale memories.")
 
 
+@app.command("backfill-disputes")
+def backfill_disputes_cmd(
+    project: str = typer.Option(None, help="Limit to one project"),
+    db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
+    fake: bool = False,
+):
+    """Scan active memories and record soft temporal disputes (KNN, idempotent)."""
+    from memor.supersession import backfill_disputes
+    db_path = _db_path(db)
+    if not Path(db_path).exists():
+        typer.echo("No database found.")
+        raise typer.Exit(1)
+    e = _embedder(fake)
+    s = SqliteStore(db_path, dim=e.dim)
+    stats = backfill_disputes(s, e, project=project)
+    typer.echo(
+        f"Scanned {stats['memories_scanned']} memories; "
+        f"recorded {stats['disputes_recorded']} new dispute edges."
+    )
+
+
 @app.command("compact")
 def compact(db: str = typer.Option(str(Path.home() / ".memor" / "memor.db")),
             fake: bool = False,
@@ -893,6 +929,33 @@ def _install_hook_logic_codex(hooks_path: Path, hook_command: str) -> None:
 POSTTOOL_HOOK_MARKER = "memor-posttool-compress"
 
 
+def _ci_pattern(names, extra: tuple[str, ...] = ()) -> str:
+    """Case-insensitive alternation that a JavaScript regex engine accepts.
+
+    Claude Code compiles ``matcher`` with JavaScript's ``RegExp``, which has no
+    inline-flag syntax: ``(?i)`` is not "ignore case" there, it is a syntax
+    error, and the whole group fails to compile. A matcher that does not
+    compile matches nothing, silently -- the hook is registered, the settings
+    file looks right, and no tool output is ever compressed. That is exactly
+    how this path went 13 days without recording a single saving while every
+    service reported healthy.
+
+    Per-character classes (``[Bb][Aa][Ss][Hh]``) say the same thing in the
+    subset both engines share, so the pattern keeps working whichever agent
+    reads it.
+    """
+    def one(name: str) -> str:
+        return "".join(
+            f"[{c.upper()}{c.lower()}]" if c.isalpha() else re.escape(c)
+            for c in name
+        )
+
+    # ``extra`` holds alternatives already written in that shared subset, such
+    # as the MCP prefix, which is lowercase by construction and must keep its
+    # ``.*`` rather than have it escaped.
+    return "^(" + "|".join([one(n) for n in sorted(names)] + list(extra)) + ")$"
+
+
 def _install_posttool_compress(settings_path: Path, hook_command: str) -> None:
     """Register the PostToolUse output compressor for Claude Code.
 
@@ -904,9 +967,17 @@ def _install_posttool_compress(settings_path: Path, hook_command: str) -> None:
     It stays an allowlist rather than ``.*`` for the reason it always was: the
     hook re-checks the tool name anyway, and a narrow matcher means no process
     is spawned for the Read and Edit calls it would refuse, which is most of
-    them.
+    them. ``LOSSLESS_TOOL_NAMES`` (Grep) and MCP tools are admitted too; the
+    hook only ever rewrites those without losing content.
+
+    Anchored, because an unanchored alternation matches by substring: a bare
+    ``ls`` also matches ``Tools``, and ``bash`` matches anything containing it.
+    The hook would decline those on its own allowlist, but only after paying
+    for a process spawn on tool calls it was never meant to see.
     """
-    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+    from memor.posttool_compress import (
+        COMPRESSIBLE_TOOLS, LOSSLESS_TOOL_NAMES, MCP_TOOL_PATTERN,
+    )
 
     if settings_path.exists():
         data = json.loads(settings_path.read_text())
@@ -915,9 +986,12 @@ def _install_posttool_compress(settings_path: Path, hook_command: str) -> None:
     hooks = data.setdefault("hooks", {})
     post_hooks = hooks.setdefault("PostToolUse", [])
     # Case-insensitive so one matcher serves agents that disagree on
-    # capitalisation for the same tool (`Bash` in Claude Code, `bash` in jcode).
+    # capitalisation for the same tool (`Bash` in Claude Code, `bash` in
+    # jcode) -- spelled out per character, because the matcher is consumed by
+    # a JavaScript regex engine. See `_ci_pattern`.
     entry = {
-        "matcher": f"(?i)({'|'.join(sorted(COMPRESSIBLE_TOOLS))})",
+        "matcher": _ci_pattern(COMPRESSIBLE_TOOLS | LOSSLESS_TOOL_NAMES,
+                               extra=(MCP_TOOL_PATTERN,)),
         "hooks": [{"type": "command", "command": hook_command, "timeout": 10}],
     }
     for i, group in enumerate(post_hooks):
@@ -1386,17 +1460,85 @@ def recall_worth_cmd(
     episodes where memor injected context against those where it did not,
     stratified by prompt length so an aggregate difference cannot come purely
     from which prompts happen to get recall.
+
+    With the recall holdout on (`memor recall-holdout 0.1`), recall is withheld
+    from a random share of the prompts it matched, and a MEASURED section
+    compares the two arms: the causal figure the observational one can only
+    bound. The whole-product ledger then counts recall's benefit, not only its
+    cost.
     """
     import json as _json
 
-    from memor.episodes import format_report, scan_episodes, summarize
+    from memor.episodes import (
+        format_ledger, format_report, scan_episodes, summarize, whole_product_ledger,
+    )
 
-    summary = summarize(scan_episodes(), min_per_arm=min_per_arm)
+    episodes = scan_episodes()
+    summary = summarize(episodes, min_per_arm=min_per_arm)
+    db_path = Path.home() / ".memor" / "memor.db"
+    if db_path.exists():
+        try:
+            from memor.store.sqlite_store import read_dim
+
+            store = SqliteStore(str(db_path), dim=read_dim(str(db_path), 256))
+            recalled = sum(1 for e in episodes if e.assistant_steps > 0 and e.had_recall)
+            summary["ledger"] = whole_product_ledger(store, summary["measured"], recalled)
+        except Exception:
+            pass
     if json_out:
         typer.echo(_json.dumps(summary, indent=2, default=str))
         return
     for line in format_report(summary):
         typer.echo(line)
+    if "ledger" in summary:
+        for line in format_ledger(summary["ledger"]):
+            typer.echo(line)
+
+
+@app.command("prove-recall")
+def prove_recall_cmd(
+    db: str = typer.Option(str(Path.home() / ".memor" / "memor.db"), "--db"),
+    project: str = typer.Option(None, "--project", help="Limit offline A/B to one project."),
+    offline_n: int = typer.Option(40, "--offline-n", help="Recent recall_log queries to re-score."),
+    stamp: bool = typer.Option(False, "--stamp", help="Stamp recall baseline for forward G2 window."),
+    skip_offline: bool = typer.Option(False, "--skip-offline"),
+    out: str = typer.Option(None, "--out", help="Evidence JSON path."),
+    fake: bool = typer.Option(False, "--fake", help="Use FakeEmbedder for offline A/B."),
+):
+    """Prove-recall campaign: matched ATT (G0) + strict vs default offline A/B (G1).
+
+    Strict inject is opt-in via MEMOR_RECALL_PROFILE=strict. This command measures
+    whether that profile is thriftier offline and whether the ATT meter is healthy.
+    Forward ROI (G2) needs a stamped window of live traffic under strict.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from memor.prove_recall import run_prove_recall
+
+    embedder = _embedder(fake)
+    evidence = run_prove_recall(
+        db_path=_db_path(db),
+        embedder=embedder,
+        offline_n=offline_n,
+        project=project,
+        stamp=stamp,
+        skip_offline=skip_offline,
+        out_path=_Path(out) if out else None,
+    )
+    typer.echo(_json.dumps({
+        "decision": evidence.get("decision"),
+        "rationale": evidence.get("rationale"),
+        "g0": evidence.get("g0_meter"),
+        "g1": {k: v for k, v in (evidence.get("g1_offline_ab") or {}).items()
+               if k in ("n_compared", "default_mean_tokens", "strict_mean_tokens",
+                        "thrift_ratio", "default_memory_share", "strict_memory_share",
+                        "g1_pass", "g1_reason")},
+        "evidence_path": evidence.get("evidence_path"),
+        "g2": evidence.get("g2_forward"),
+    }, indent=2))
+    if evidence.get("decision") in ("fail_meter", "fail_policy", "revert_strict"):
+        raise typer.Exit(2)
 
 
 @app.command("compression-worth")
@@ -1645,6 +1787,56 @@ def recall_compare_cmd(
         f"are not\n  distinguishable from noise on this corpus.")
 
 
+@app.command("recall-holdout")
+def recall_holdout_cmd(
+    fraction: float = typer.Argument(
+        None, help="Share of recall-matched prompts to withhold memories from "
+                   "(0-1). 0 turns the experiment off. Omit to show the setting."),
+):
+    """Show or set the randomized recall holdout.
+
+    Withholds memories from a random share of the prompts recall matched, so
+    `memor recall-worth` can measure what recall saves rather than bound it.
+    Stored in ~/.memor/config.json, which the hook sidecar and the proxy both
+    read on every recall, so it takes effect on the next prompt with no
+    restart, however the agent or service was launched.
+    """
+    from memor import recall_experiment as rx
+    from memor.config import set_recall_holdout_fraction
+
+    if fraction is not None:
+        if not 0 <= fraction <= 1:
+            typer.echo("Error: fraction must be between 0 and 1 (0.1 = 10%)", err=True)
+            raise typer.Exit(2)
+        set_recall_holdout_fraction(fraction)
+
+    value, source = rx.holdout_setting()
+    if value > 0:
+        typer.echo(f"recall holdout: on, {value:.0%} of matched prompts withheld")
+        typer.echo("  costs you memory on that share of prompts while it runs")
+    else:
+        typer.echo("recall holdout: off")
+    if source == "env":
+        typer.echo(f"  {rx.ENV_VAR} is set in this shell and overrides the config")
+    if fraction is not None and fraction > 0.5:
+        typer.echo("  above 0.5 most prompts get no memory; 0.1 is enough to measure")
+
+    db_path = Path.home() / ".memor" / "memor.db"
+    if db_path.exists():
+        try:
+            from memor.store.sqlite_store import read_dim
+
+            rows = SqliteStore(str(db_path), dim=read_dim(str(db_path), 256)) \
+                .load_recall_experiment()
+            arms = {a: sum(1 for r in rows if r["arm"] == a)
+                    for a in (rx.ARM_TREATMENT, rx.ARM_CONTROL)}
+            typer.echo(f"  recorded so far: {arms[rx.ARM_TREATMENT]:,} served, "
+                       f"{arms[rx.ARM_CONTROL]:,} withheld")
+        except Exception:
+            pass
+    typer.echo("  results: memor recall-worth")
+
+
 @app.command("compress-older")
 def compress_older_cmd(
     enable: bool = typer.Option(
@@ -1890,6 +2082,89 @@ def uninstall_proxy(
         typer.echo(f"Failed to uninstall proxy: {e}", err=True)
         raise typer.Exit(1)
 
+#: Regex constructs Python's `re` accepts and JavaScript's `RegExp` does not.
+#: An installed matcher containing one of these is not a narrow matcher, it is
+#: a dead one: the engine that compiles it is JavaScript's, the compile throws,
+#: and the hook never fires on any tool at all.
+_JS_INCOMPATIBLE = (
+    ("(?i)", "inline flags"),
+    ("(?m)", "inline flags"),
+    ("(?s)", "inline flags"),
+    ("(?x)", "inline flags"),
+    ("(?P<", "named groups in Python syntax"),
+    (r"\A", r"\A anchor"),
+    (r"\Z", r"\Z anchor"),
+)
+
+
+def check_posttool_wiring(settings_path: Path) -> list[str]:
+    """Problems with the installed compression hook, as user-facing lines.
+
+    This exists because the failure it looks for is invisible from every other
+    angle. The daemon was running, the proxy was running, the settings file
+    named the hook, and the hook binary worked perfectly when invoked by hand.
+    The only symptom was an absence: no hook savings for thirteen days, which
+    the dashboard could only report as "a stopped service looks the same as a
+    quiet week".
+
+    So the check is on the wiring rather than on the parts: is the hook
+    registered, does its command still exist, and would its matcher actually
+    select the tools it claims to. Empty list means nothing to report.
+    """
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS, LOSSLESS_TOOL_NAMES
+
+    if not settings_path.exists():
+        return []
+    try:
+        data = json.loads(settings_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return [f"{settings_path} is not readable as JSON; the hook cannot load."]
+
+    groups = data.get("hooks", {}).get("PostToolUse") or []
+    ours = [
+        g for g in groups
+        if any(POSTTOOL_HOOK_MARKER in h.get("command", "")
+               for h in g.get("hooks", []))
+    ]
+    if not ours:
+        # Not installed is a choice, not a fault. The dashboard's onboarding
+        # banner covers it and repeating it here would be nagging.
+        return []
+
+    problems: list[str] = []
+    group = ours[0]
+    matcher = group.get("matcher", "")
+
+    for token, what in _JS_INCOMPATIBLE:
+        if token in matcher:
+            problems.append(
+                f"the compression hook's matcher uses {what} ({token!r}), which "
+                "Claude Code's regex engine rejects, so the hook never runs on "
+                "any tool. Fix: memor install-compress-hook")
+            break
+    else:
+        # Grep and MCP joined after the first JavaScript-safe matcher shipped,
+        # so a matcher can compile, cover Bash, and still predate them.
+        missed = sorted(
+            t for t in COMPRESSIBLE_TOOLS | LOSSLESS_TOOL_NAMES
+            if not (re.fullmatch(matcher, t) or re.fullmatch(matcher, t.capitalize()))
+        )
+        if not re.fullmatch(matcher, "mcp__server__tool"):
+            missed.append("MCP tools")
+        if missed:
+            problems.append(
+                "the compression hook's matcher excludes "
+                f"{', '.join(missed)}, which it is configured to compress. "
+                "Fix: memor install-compress-hook")
+
+    for h in group.get("hooks", []):
+        cmd = h.get("command", "")
+        if POSTTOOL_HOOK_MARKER in cmd and not Path(cmd).exists():
+            problems.append(
+                f"the compression hook points at {cmd}, which no longer "
+                "exists. Fix: memor install-compress-hook")
+    return problems
+
 
 @app.command("doctor")
 def doctor(
@@ -1908,6 +2183,14 @@ def doctor(
     if not Path(db_path).exists():
         typer.echo("memor: no memory store yet.")
         return
+
+    # Reported before the read table, and regardless of what it says: a broken
+    # write path is invisible in read statistics, which is how it survived.
+    wiring = check_posttool_wiring(Path.home() / ".claude" / "settings.json")
+    for problem in wiring:
+        typer.echo(f"!! {problem}")
+    if wiring:
+        typer.echo("")
 
     store = SqliteStore(db_path, dim=read_dim(db_path, 384))
     agents = agent_liveness(store)

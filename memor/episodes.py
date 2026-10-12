@@ -39,6 +39,18 @@ CONFOUND_NOTE = (
     "Read a positive result as an upper bound on the true effect."
 )
 
+#: Weak injects dilute ATT and must not enter the control arm either.
+MIN_RECALL_CHARS = 80
+
+#: Matched ATT ship floors (design Approach 1′).
+MIN_MATCH_RATE = 0.60
+MIN_MATCHED_PAIRS = 50
+
+#: Prompt-length ratio caliper: reject controls outside [1/r, r].
+PROMPT_RATIO_CALIPER = 3.0
+
+CLAIM_SCOPE = "claude_code_episodes"
+
 
 @dataclass
 class Episode:
@@ -56,6 +68,12 @@ class Episode:
     cache_creation_tokens: int = 0
     output_tokens: int = 0
     tool_names: list[str] = field(default_factory=list)
+    #: The prompt as the recall holdout recorded it, for matching its rows.
+    prompt_preview: str = ""
+    #: Arm in the randomized recall holdout, or None when this prompt was not
+    #: in it. Unlike ``had_recall`` this was assigned at random among prompts
+    #: recall matched, so the two arms differ only in whether memories arrived.
+    recall_arm: str | None = None
 
     @property
     def context_tokens(self) -> int:
@@ -201,6 +219,7 @@ def parse_episodes(path: Path, *, project: str = "", session_id: str = "") -> li
                 conversation_key=convo_key,
                 started_at=_epoch(rec.get("timestamp")),
                 prompt_chars=len(text),
+                prompt_preview=text[:400],
             )
             episodes.append(current)
             continue
@@ -257,6 +276,7 @@ def scan_episodes(projects_dir: Path | None = None) -> list[Episode]:
             except Exception:
                 continue
     _attach_proxy_recalls(out)
+    _attach_experiment(out)
     return out
 
 
@@ -297,6 +317,284 @@ def _attach_proxy_recalls(episodes: list[Episode]) -> None:
             attach_logged_recalls(group, recalls)
 
 
+def _norm(text: str) -> str:
+    return " ".join((text or "").split())
+
+
+def _preview_matches(row_preview: str, prompt: str) -> bool:
+    """Whether a holdout row's 100-char preview is this episode's prompt.
+
+    A preview shorter than the cut is the whole prompt and must match exactly;
+    otherwise "fix" would claim the episode "fix the login bug".
+    """
+    a, b = _norm(row_preview), _norm(prompt)
+    if not a or not b:
+        return False
+    if len(row_preview) < 100:
+        return a == b
+    return b.startswith(a)
+
+
+#: How far after a recall's timestamp an episode may start and still own it.
+#: The hook logs after recall runs, which can land a moment after or before
+#: the transcript stamps the prompt.
+_ARM_CLOCK_SLACK_S = 30.0
+
+
+def attach_experiment_arms(episodes: list[Episode], rows: list[dict]) -> int:
+    """Mark each episode with the holdout arm its prompt was assigned.
+
+    Rows are matched within their conversation (hook rows by session id, proxy
+    rows by conversation key) on the prompt text first, because a timestamp
+    alone can land a hook row on the neighbouring prompt. Without a text match,
+    a row belongs to the last episode that began before it, as for any other
+    logged recall. An episode that collects both arms is excluded rather than
+    guessed at. Returns how many episodes were excluded that way.
+    """
+    if not episodes or not rows:
+        return 0
+    by_session: dict[str, list[Episode]] = {}
+    by_convo: dict[str, list[Episode]] = {}
+    for e in episodes:
+        if e.session_id:
+            by_session.setdefault(e.session_id, []).append(e)
+        if e.conversation_key:
+            by_convo.setdefault(e.conversation_key, []).append(e)
+
+    seen: dict[int, set[str]] = {}
+    owners: dict[int, Episode] = {}
+    for row in rows:
+        arm = row.get("arm")
+        if not arm:
+            continue
+        cands = by_session.get(row.get("session_id") or "") or \
+            by_convo.get(row.get("conversation_key") or "")
+        if not cands:
+            continue
+        ts = float(row.get("timestamp") or 0.0)
+        preview = row.get("query_preview") or ""
+        matched = [e for e in cands if _preview_matches(preview, e.prompt_preview)]
+        if matched:
+            owner = min(matched, key=lambda e: abs(e.started_at - ts))
+        else:
+            before = [e for e in cands if e.started_at <= ts + _ARM_CLOCK_SLACK_S]
+            if not before:
+                continue
+            owner = max(before, key=lambda e: e.started_at)
+        seen.setdefault(id(owner), set()).add(arm)
+        owners[id(owner)] = owner
+
+    conflicts = 0
+    for key, arms in seen.items():
+        if len(arms) == 1:
+            owners[key].recall_arm = next(iter(arms))
+        else:
+            conflicts += 1
+    return conflicts
+
+
+def _attach_experiment(episodes: list[Episode]) -> None:
+    """Fold in the recall holdout's arms. Best effort, like the proxy join."""
+    try:
+        from memor.store.sqlite_store import SqliteStore, read_dim
+
+        db_path = str(Path.home() / ".memor" / "memor.db")
+        if not Path(db_path).exists():
+            return
+        rows = SqliteStore(db_path, dim=read_dim(db_path, 256)).load_recall_experiment()
+    except Exception:
+        return
+    attach_experiment_arms(episodes, rows)
+
+
+#: Episodes per arm before the randomized comparison is reported at all.
+HOLDOUT_MIN_PER_ARM = 30
+
+#: The effect size the experiment is sized to resolve. Below a detectable floor
+#: of this, a null result means "recall does not save 20%", which is worth
+#: saying; above it, a null only means "not enough data yet".
+HOLDOUT_TARGET_EFFECT_PCT = 20.0
+
+
+def measure_holdout(episodes: list[Episode]) -> dict:
+    """Recall's causal effect on episode cost, from the randomized arms.
+
+    Both arms are prompts recall found memories for; assignment decided which
+    ones received them. So the difference in billed cost per episode is what
+    recall did, net of the tokens it injected, with no selection to correct
+    for. Cost is weighted like the provider bills it (``cost_units``), so
+    exploration avoided in cached reads is valued at cache-read price.
+
+    Verdicts: ``not_running`` | ``insufficient_data`` | ``unresolved`` |
+    ``no_effect`` | ``saves`` | ``costs``. ``unresolved`` is a null from an
+    experiment that could not yet have seen a 20% effect; ``no_effect`` is a
+    null from one that could have.
+    """
+    from memor.recall_experiment import ARM_CONTROL, ARM_TREATMENT, holdout_setting
+
+    usable = [e for e in episodes if e.assistant_steps > 0 and e.recall_arm]
+    treat = [e for e in usable if e.recall_arm == ARM_TREATMENT]
+    ctrl = [e for e in usable if e.recall_arm == ARM_CONTROL]
+    fraction, source = holdout_setting()
+    out: dict = {
+        "n_recall": len(treat), "n_withheld": len(ctrl),
+        "min_per_arm": HOLDOUT_MIN_PER_ARM,
+        # Whether it is on *now*. Rows from an earlier run still count, so a
+        # result can exist while the experiment is off, and the reverse.
+        "setting": {"fraction": fraction, "source": source},
+    }
+    if not treat and not ctrl:
+        out["verdict"] = "not_running"
+        return out
+
+    def mean(xs, key):
+        return sum(key(e) for e in xs) / len(xs) if xs else 0.0
+
+    cost = lambda e: e.cost_units  # noqa: E731
+    out.update({
+        "mean_cost_recall": round(mean(treat, cost), 1),
+        "mean_cost_withheld": round(mean(ctrl, cost), 1),
+        "mean_tool_calls_recall": round(mean(treat, lambda e: e.tool_calls), 2),
+        "mean_tool_calls_withheld": round(mean(ctrl, lambda e: e.tool_calls), 2),
+    })
+    if len(treat) < HOLDOUT_MIN_PER_ARM or len(ctrl) < HOLDOUT_MIN_PER_ARM:
+        out["verdict"] = "insufficient_data"
+        return out
+
+    delta = _delta_pct_mean(ctrl, treat, cost)
+    floor = _mde_pct(ctrl, treat, cost)
+    out["cost_delta_pct"] = delta
+    out["tool_call_delta_pct"] = _delta_pct_mean(ctrl, treat, lambda e: e.tool_calls)
+    out["mde_pct"] = floor
+    out["avoided_units_per_episode"] = round(mean(ctrl, cost) - mean(treat, cost), 1)
+
+    # Episodes per arm needed to resolve the target effect at this store's own
+    # variance: the same 80%-power, alpha-0.05 rule as ``_mde_pct``, inverted.
+    base = mean(ctrl, cost)
+    var = sum((cost(e) - base) ** 2 for e in ctrl) / len(ctrl)
+    tmean = mean(treat, cost)
+    var += sum((cost(e) - tmean) ** 2 for e in treat) / len(treat)
+    if base > 0:
+        out["n_needed_per_arm"] = math.ceil(
+            2.8 ** 2 * var / (HOLDOUT_TARGET_EFFECT_PCT / 100 * base) ** 2)
+
+    if delta is None or floor is None:
+        out["verdict"] = "insufficient_data"
+    elif abs(delta) > floor:
+        out["verdict"] = "saves" if delta > 0 else "costs"
+    elif floor <= HOLDOUT_TARGET_EFFECT_PCT:
+        out["verdict"] = "no_effect"
+    else:
+        out["verdict"] = "unresolved"
+    return out
+
+
+HOLDOUT_VERDICT_TEXT = {
+    "not_running": "no episodes recorded yet",
+    "insufficient_data": "collecting: too few episodes per arm to compare",
+    "unresolved": "no clear difference yet, and too few episodes to rule out 20%",
+    "no_effect": "no measurable effect: recall does not change episode cost by 20%",
+    "saves": "recall makes episodes cheaper",
+    "costs": "recall makes episodes MORE expensive",
+}
+
+
+def format_holdout(measured: dict) -> list[str]:
+    """The randomized result: the one causal number about recall."""
+    lines = ["", "MEASURED (randomized recall holdout)"]
+    setting = measured.get("setting") or {"fraction": 0.0, "source": "off"}
+    if setting["fraction"] > 0:
+        where = ("MEMOR_RECALL_HOLDOUT_FRACTION" if setting["source"] == "env"
+                 else "~/.memor/config.json")
+        lines.append(f"  holdout: on, {setting['fraction']:.0%} of matched prompts "
+                     f"withheld (from {where})")
+    else:
+        lines.append("  holdout: off. Start it with `memor recall-holdout 0.1`")
+    v = measured.get("verdict", "not_running")
+    if v == "not_running":
+        if setting["fraction"] > 0:
+            lines.append(f"  {HOLDOUT_VERDICT_TEXT[v]}")
+        return lines
+    lines.append(
+        f"  episodes: recall={measured['n_recall']:,}  "
+        f"withheld={measured['n_withheld']:,}  (need {measured['min_per_arm']} per arm)")
+    lines.append(
+        f"  billed cost per episode: recall={measured['mean_cost_recall']:,.0f}  "
+        f"withheld={measured['mean_cost_withheld']:,.0f}  (base-input tokens)")
+    lines.append(
+        f"  tool calls per episode:  recall={measured['mean_tool_calls_recall']}  "
+        f"withheld={measured['mean_tool_calls_withheld']}")
+    if "cost_delta_pct" in measured and measured["cost_delta_pct"] is not None:
+        lines.append(
+            f"  cost difference: {measured['cost_delta_pct']:+.1f}% "
+            f"(positive = cheaper with recall), detectable floor "
+            f"{measured['mde_pct']:.1f}%")
+    if v == "unresolved" and measured.get("n_needed_per_arm"):
+        lines.append(
+            f"  ~{measured['n_needed_per_arm']:,} episodes per arm would resolve a "
+            f"{HOLDOUT_TARGET_EFFECT_PCT:.0f}% effect at this variance")
+    lines.append(f"  VERDICT: {HOLDOUT_VERDICT_TEXT[v]}")
+    lines.append(
+        "  Both arms are prompts recall matched; only delivery was randomized, so")
+    lines.append(
+        "  this difference is an effect, net of the tokens recall injected.")
+    return lines
+
+
+def whole_product_ledger(store, measured: dict, recalled_episodes: int) -> dict:
+    """Compression and recall on one ledger, with recall's benefit when measured.
+
+    The ledger memor has always shown counted recall purely as a cost, the
+    tokens it injected, because its benefit (exploration it prevented) had no
+    defensible number. The holdout supplies one. It is added only when the
+    randomized comparison reached a verdict, and only as an extrapolation over
+    recalled episodes, labelled as such.
+    """
+    saved = store.get_proxy_savings_summary(days=None)["tokens_saved"]
+    try:
+        injected = store.db.execute(
+            "SELECT COALESCE(SUM(tokens_injected), 0) AS t FROM recall_log").fetchone()["t"]
+    except Exception:
+        injected = 0
+    out = {
+        "compression_saved": int(saved),
+        "recall_injected": int(injected),
+        "net_counted": int(saved) - int(injected),
+        "recalled_episodes": recalled_episodes,
+    }
+    if measured.get("verdict") in ("saves", "costs"):
+        per = measured["avoided_units_per_episode"]
+        out["recall_measured_per_episode"] = per
+        out["recall_extrapolated"] = round(per * recalled_episodes)
+        # The measured effect is already net of injection, so the counted cost
+        # is not subtracted a second time.
+        out["net_with_measured_recall"] = int(saved) + out["recall_extrapolated"]
+    return out
+
+
+def format_ledger(ledger: dict) -> list[str]:
+    def row(label: str, value: float, note: str = "", signed: bool = False) -> str:
+        num = f"{value:+,.0f}" if signed else f"{value:,.0f}"
+        return f"  {label:<28}{num:>14}  {note}".rstrip()
+
+    lines = ["", "WHOLE PRODUCT, lifetime"]
+    lines.append(row("compression saved", ledger["compression_saved"], "tokenizer estimate"))
+    lines.append(row("recall injected", -ledger["recall_injected"], "counted cost"))
+    lines.append(row("net, recall as a cost only", ledger["net_counted"]))
+    if "recall_extrapolated" not in ledger:
+        lines.append("  recall's benefit is not counted until the holdout reaches a verdict")
+        return lines
+    lines.append(row("recall, measured", ledger["recall_measured_per_episode"],
+                     "per episode, net of injection (randomized)", signed=True))
+    lines.append(row(f"  x {ledger['recalled_episodes']:,} recalled episodes",
+                     ledger["recall_extrapolated"], "extrapolated", signed=True))
+    lines.append(row("net, with recall measured", ledger["net_with_measured_recall"]))
+    lines.append(
+        "  Recall's line is billed-cost weighted (cache reads at 0.1x); compression's")
+    lines.append("  is raw tokens. Read the net as a direction, not an invoice.")
+    return lines
+
+
 def _stats(episodes: list[Episode]) -> dict:
     if not episodes:
         return {"n": 0}
@@ -312,14 +610,17 @@ def _stats(episodes: list[Episode]) -> dict:
 
 
 def summarize(episodes: list[Episode], *, min_per_arm: int = 20) -> dict:
-    """Compare episodes with recall against episodes without, per project.
+    """Compare episodes with recall against episodes without, via matched ATT.
 
-    ``min_per_arm`` guards against reporting a difference computed from a
-    handful of episodes. Projects below it are counted but not scored.
+    ``min_per_arm`` still gates per-project diagnostic blocks. The headline
+    verdict comes from matched ATT (Approach 1′), not stratum sign-flip.
     """
+    treated, controls, excluded_weak = eligible_episodes(episodes)
     usable = [e for e in episodes if e.assistant_steps > 0]
-    with_r = [e for e in usable if e.had_recall]
-    without = [e for e in usable if not e.had_recall]
+
+    # Keep legacy arm stats for the report table (eligible treated vs controls).
+    with_r = treated
+    without = controls
 
     by_project: dict[str, dict] = {}
     for project in sorted({e.project for e in usable}):
@@ -339,32 +640,198 @@ def summarize(episodes: list[Episode], *, min_per_arm: int = 20) -> dict:
             )
         by_project[project] = entry
 
+    pairs, match_stats = match_treated_controls(with_r, without)
+    matched = matched_att(pairs)
+    matched.update(match_stats)
+    matched["excluded_weak_injects"] = excluded_weak
+
     overall = {
         "episodes": len(episodes),
         "usable": len(usable),
         "with_recall": _stats(with_r),
         "without_recall": _stats(without),
-        "scored": len(with_r) >= min_per_arm and len(without) >= min_per_arm,
+        "scored": matched.get("n_pairs", 0) >= MIN_MATCHED_PAIRS,
         "median_injected_chars": (
             median(e.recall_chars for e in with_r) if with_r else 0
         ),
         "min_per_arm": min_per_arm,
+        "matched": matched,
+        "matched_att_pct": matched.get("tool_call_delta_pct"),
+        "match_rate": matched.get("match_rate"),
     }
-    if overall["scored"]:
+    if len(with_r) >= min_per_arm and len(without) >= min_per_arm:
         overall["tool_call_delta_pct"] = _delta_pct_mean(
             without, with_r, lambda e: e.tool_calls
         )
         overall["token_delta_pct"] = _delta_pct(without, with_r, lambda e: e.total_tokens)
 
     strata = stratified_deltas(with_r, without)
+    # Mark exploratory band for report copy; it does not set the headline.
+    for cell in strata:
+        if cell["prompt_chars"].endswith("+") or cell["prompt_chars"].startswith("400"):
+            cell["exploratory"] = True
+        else:
+            cell["exploratory"] = False
+
     overall["project_adjusted"] = project_adjusted_delta(with_r, without)
-    overall["verdict"] = verdict(overall, strata)
+    overall["verdict"] = verdict_from_matched(
+        matched, match_rate=matched.get("match_rate") or 0.0
+    )
     return {
         "overall": overall,
         "by_project": by_project,
         "strata": strata,
+        "measured": measure_holdout(episodes),
         "confound": CONFOUND_NOTE,
+        "claim_scope": CLAIM_SCOPE,
     }
+
+
+def eligible_episodes(
+    episodes: list[Episode],
+) -> tuple[list[Episode], list[Episode], int]:
+    """Split usable episodes into treated / control; drop weak injects."""
+    treated: list[Episode] = []
+    controls: list[Episode] = []
+    excluded = 0
+    for e in episodes:
+        if e.assistant_steps <= 0:
+            continue
+        if e.had_recall:
+            if e.recall_chars >= MIN_RECALL_CHARS:
+                treated.append(e)
+            else:
+                excluded += 1
+        else:
+            controls.append(e)
+    return treated, controls, excluded
+
+
+def _prompt_band(chars: int) -> tuple[int, int]:
+    for lo, hi in _PROMPT_STRATA:
+        if lo <= chars < hi:
+            return lo, hi
+    return _PROMPT_STRATA[-1]
+
+
+def match_treated_controls(
+    treated: list[Episode], controls: list[Episode]
+) -> tuple[list[tuple[Episode, Episode]], dict]:
+    """Match each treated episode to a control in the same project × prompt band."""
+    from collections import defaultdict
+
+    pools: dict[tuple, list[int]] = defaultdict(list)
+    for i, c in enumerate(controls):
+        pools[(_prompt_band(c.prompt_chars), c.project)].append(i)
+
+    def _best(t: Episode, *, allow_used: bool, used: set[int]) -> int | None:
+        key = (_prompt_band(t.prompt_chars), t.project)
+        best_i = None
+        best_score = None
+        for idx in pools.get(key, []):
+            if not allow_used and idx in used:
+                continue
+            c = controls[idx]
+            if t.prompt_chars <= 0 or c.prompt_chars <= 0:
+                continue
+            ratio = max(t.prompt_chars / c.prompt_chars, c.prompt_chars / t.prompt_chars)
+            if ratio > PROMPT_RATIO_CALIPER:
+                continue
+            score = abs(math.log1p(c.prompt_chars) - math.log1p(t.prompt_chars))
+            if best_score is None or score < best_score:
+                best_score = score
+                best_i = idx
+        return best_i
+
+    used: set[int] = set()
+    pairs: list[tuple[Episode, Episode]] = []
+    unmatched: list[Episode] = []
+    for t in treated:
+        idx = _best(t, allow_used=False, used=used)
+        if idx is None:
+            unmatched.append(t)
+            continue
+        used.add(idx)
+        pairs.append((t, controls[idx]))
+
+    reuse_count = 0
+    still: list[Episode] = []
+    for t in unmatched:
+        idx = _best(t, allow_used=True, used=used)
+        if idx is None:
+            still.append(t)
+            continue
+        reuse_count += 1
+        pairs.append((t, controls[idx]))
+
+    n_treated = len(treated)
+    n_pairs = len(pairs)
+    stats = {
+        "match_rate": round(n_pairs / n_treated, 3) if n_treated else 0.0,
+        "unmatched_treated": len(still),
+        "reuse_rate": round(reuse_count / n_pairs, 3) if n_pairs else 0.0,
+        "n_treated_eligible": n_treated,
+        "n_controls": len(controls),
+    }
+    return pairs, stats
+
+
+def matched_att(pairs: list[tuple[Episode, Episode]]) -> dict:
+    """Tool-call ATT on matched pairs. Positive = recall used fewer tools."""
+    if not pairs:
+        return {
+            "n_pairs": 0,
+            "tool_call_delta_pct": None,
+            "token_delta_pct": None,
+            "mde_pct": None,
+        }
+    ctrl_tools = [c.tool_calls for _, c in pairs]
+    treat_tools = [t.tool_calls for t, _ in pairs]
+    mean_c = sum(ctrl_tools) / len(ctrl_tools)
+    mean_t = sum(treat_tools) / len(treat_tools)
+    delta = None
+    if mean_c:
+        delta = round((mean_c - mean_t) / mean_c * 100, 1)
+
+    diffs = [c.tool_calls - t.tool_calls for t, c in pairs]
+    mde = None
+    if mean_c and len(diffs) >= 2:
+        mean_d = sum(diffs) / len(diffs)
+        var = sum((d - mean_d) ** 2 for d in diffs) / (len(diffs) - 1)
+        se = math.sqrt(var / len(diffs))
+        mde = round(100.0 * 2.8 * se / mean_c, 1)
+
+    ctrl_tok = [c.total_tokens for _, c in pairs]
+    treat_tok = [t.total_tokens for t, _ in pairs]
+    mean_ct = sum(ctrl_tok) / len(ctrl_tok) if ctrl_tok else 0
+    mean_tt = sum(treat_tok) / len(treat_tok) if treat_tok else 0
+    token_delta = (
+        round((mean_ct - mean_tt) / mean_ct * 100, 1) if mean_ct else None
+    )
+
+    return {
+        "n_pairs": len(pairs),
+        "tool_call_delta_pct": delta,
+        "token_delta_pct": token_delta,
+        "mde_pct": mde,
+    }
+
+
+def verdict_from_matched(att: dict, *, match_rate: float) -> str:
+    """Headline verdict from matched ATT (design Approach 1′)."""
+    n_pairs = att.get("n_pairs") or 0
+    if n_pairs < MIN_MATCHED_PAIRS or match_rate < MIN_MATCH_RATE:
+        return "insufficient_data"
+    delta = att.get("tool_call_delta_pct")
+    if delta is None:
+        return "insufficient_data"
+    mde = att.get("mde_pct")
+    floor = EFFECT_THRESHOLD_PCT
+    if mde is not None:
+        floor = max(floor, mde)
+    if abs(delta) <= floor:
+        return "no_effect"
+    return "saves" if delta > 0 else "costs"
 
 
 def project_adjusted_delta(with_r: list[Episode], without: list[Episode],
@@ -544,16 +1011,35 @@ VERDICT_TEXT = {
 
 def format_report(summary: dict) -> list[str]:
     o = summary["overall"]
+    matched = o.get("matched") or {}
     lines = ["memor recall — episode-level accounting", "=" * 58]
     lines.append(
         f"episodes={o['episodes']:,}  usable={o['usable']:,}  "
         f"with_recall={o['with_recall'].get('n', 0):,}  "
         f"without={o['without_recall'].get('n', 0):,}"
     )
-    if not o["scored"]:
+    scope = summary.get("claim_scope") or CLAIM_SCOPE
+    lines.append(f"claim_scope={scope}")
+    if matched:
+        lines.append(
+            f"matched_pairs={matched.get('n_pairs', 0):,}  "
+            f"match_rate={matched.get('match_rate', 0):.0%}  "
+            f"reuse_rate={matched.get('reuse_rate', 0):.0%}  "
+            f"unmatched={matched.get('unmatched_treated', 0):,}"
+        )
+        if matched.get("excluded_weak_injects"):
+            lines.append(
+                f"excluded_weak_injects={matched['excluded_weak_injects']:,} "
+                f"(recall_chars < {MIN_RECALL_CHARS})"
+            )
+
+    if o.get("verdict") == "insufficient_data" and not matched.get("n_pairs"):
         lines.append("")
         lines.append(f"VERDICT: {VERDICT_TEXT['insufficient_data']} "
-                     f"(need {o['min_per_arm']} per arm)")
+                     f"(need {MIN_MATCHED_PAIRS} matched pairs, "
+                     f"match_rate ≥ {MIN_MATCH_RATE:.0%})")
+        if "measured" in summary:
+            lines.extend(format_holdout(summary["measured"]))
         return lines
 
     a, b = o["with_recall"], o["without_recall"]
@@ -561,36 +1047,51 @@ def format_report(summary: dict) -> list[str]:
     lines.append(f"{'':<16}{'n':>7}{'tools(med)':>12}{'tools(mean)':>13}{'total tok':>12}")
     for label, d in (("with recall", a), ("without recall", b)):
         lines.append(
-            f"{label:<16}{d['n']:>7}{d['median_tool_calls']:>12}"
-            f"{d['mean_tool_calls']:>13}{d['median_total_tokens']:>12,}"
+            f"{label:<16}{d.get('n', 0):>7}{d.get('median_tool_calls', 0):>12}"
+            f"{d.get('mean_tool_calls', 0):>13}{d.get('median_total_tokens', 0):>12,}"
         )
     lines.append("")
-    lines.append(f"median context injected per recall: ~{o['median_injected_chars']:,} chars")
+    lines.append(f"median context injected per recall: ~{o.get('median_injected_chars', 0):,} chars")
+    att = matched.get("tool_call_delta_pct")
+    if att is not None:
+        lines.append(
+            f"matched ATT (tool calls): {att:+.1f}%  "
+            f"(MDE {matched.get('mde_pct')}%)"
+        )
     lines.append("")
-    lines.append("Tool-call delta by prompt length (positive = recall did less work):")
+    lines.append("Tool-call delta by prompt length (diagnostic; 400-+ exploratory):")
     for cell in summary["strata"]:
+        tag = " exploratory" if cell.get("exploratory") else ""
         if not cell["scored"]:
             lines.append(
                 f"  {cell['prompt_chars']:<10} n={cell['n_with']}/{cell['n_without']}"
-                "   (too few to score)"
+                f"   (too few to score){tag}"
             )
             continue
         lines.append(
             f"  {cell['prompt_chars']:<10} n={cell['n_with']}/{cell['n_without']}"
-            f"   {cell['tool_call_delta_pct']:+.1f}%"
+            f"   {cell['tool_call_delta_pct']:+.1f}%{tag}"
         )
     lines.append("")
     lines.append("=" * 58)
     lines.append(f"VERDICT: {VERDICT_TEXT[o['verdict']]}")
     if o["verdict"] == "no_effect":
         lines.append(
-            "  The aggregate difference does not survive stratification — the sign"
+            "  Matched ATT did not clear the noise floor (or MDE) after pairing"
         )
         lines.append(
-            "  flips across prompt-length bands, so it reflects which prompts get"
+            "  within project × prompt-length band. Strata above are diagnostic only."
         )
-        lines.append("  recall rather than what recall does.")
+    elif o["verdict"] == "insufficient_data":
+        lines.append(
+            f"  Need ≥{MIN_MATCHED_PAIRS} matched pairs and match_rate "
+            f"≥{MIN_MATCH_RATE:.0%} "
+            f"(have {matched.get('n_pairs', 0)} pairs, "
+            f"{matched.get('match_rate', 0):.0%})."
+        )
     lines.append(f"  {summary['confound']}")
+    if "measured" in summary:
+        lines.extend(format_holdout(summary["measured"]))
     return lines
 
 

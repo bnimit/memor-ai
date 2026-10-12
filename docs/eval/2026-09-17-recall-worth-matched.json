@@ -1,0 +1,65 @@
+{
+  "date": "2026-09-17",
+  "meter": "matched_att_v1",
+  "claim_scope": "claude_code_episodes",
+  "overall": {
+    "episodes": 4228,
+    "usable": 3950,
+    "verdict": "no_effect",
+    "matched_att_pct": -15.6,
+    "match_rate": 0.948,
+    "n_pairs": 1476,
+    "mde_pct": 16.9,
+    "reuse_rate": 0.297,
+    "unmatched_treated": 81
+  },
+  "strata": [
+    {
+      "prompt_chars": "0-60",
+      "n_with": 293,
+      "n_without": 631,
+      "scored": true,
+      "tool_call_delta_pct": -4.7,
+      "mde_pct": 31.0,
+      "significant": false,
+      "exploratory": false
+    },
+    {
+      "prompt_chars": "60-150",
+      "n_with": 546,
+      "n_without": 804,
+      "scored": true,
+      "tool_call_delta_pct": -28.7,
+      "mde_pct": 30.6,
+      "significant": false,
+      "exploratory": false
+    },
+    {
+      "prompt_chars": "150-400",
+      "n_with": 326,
+      "n_without": 362,
+      "scored": true,
+      "tool_call_delta_pct": -21.6,
+      "mde_pct": 46.7,
+      "significant": false,
+      "exploratory": false
+    },
+    {
+      "prompt_chars": "400-+",
+      "n_with": 392,
+      "n_without": 596,
+      "scored": true,
+      "tool_call_delta_pct": 52.7,
+      "mde_pct": 16.9,
+      "significant": true,
+      "exploratory": true
+    }
+  ],
+  "decision_tree": {
+    "result": "powered_null",
+    "reason": "match_rate>=0.60, n_pairs>=50, verdict=no_effect, abs(matched_att_pct) <= max(EFFECT_THRESHOLD, mde)",
+    "next": "M2_memory_vs_chunk",
+    "m2_note": "Memory lane already ships (MEMORY_LANE_SHARE=0.25). Prior distilled-aware widen was shelved 2026-06-16 on judge noise. Do not revive that change; open a fresh M2 design targeting why matched ATT is slightly negative (−15.6%) before claiming recall reduces work."
+  },
+  "confound": "Observational, not randomised: recall fires only when it finds a good match, and it matches on familiar work \u2014 which may be cheaper anyway. Read a positive result as an upper bound on the true effect."
+}

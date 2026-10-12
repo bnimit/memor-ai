@@ -4,6 +4,154 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-12
+
+### The hook that never ran, and a daemon that never rested
+
+**Fixed**
+
+- **The compression hook was registered but never invoked.** Its PostToolUse
+  matcher was `(?i)(agentgrep|bash|bg|ls|todo)`. Python accepts the inline
+  flag; Claude Code compiles matchers with JavaScript's `RegExp`, which rejects
+  `(?i)` as an invalid group, and a matcher that does not compile matches
+  nothing. From 21 Aug the hook sat in `settings.json`, worked when run by
+  hand, and compressed nothing; the last hook saving in the ledger is from
+  22 Aug. The matcher now spells case-insensitivity per character and is
+  anchored, so `ls` no longer also matches `Tools`. A test hands the generated
+  matcher to node, the engine that matters, and `memor doctor` checks the
+  wiring. **Re-run `memor install-compress-hook` to replace the broken
+  matcher.**
+- **The daemon no longer re-embeds unchanged transcript chunks.** Every mtime
+  bump re-parsed long Claude sessions, embedded every prior chunk and re-ran
+  distill and feedback, keeping CPU near a full core. Only chunks whose
+  content-hashed ids are missing are embedded, work is capped per poll, and
+  post-ingest work runs only when something new was stored.
+- **Hook savings are counted once.** PostToolUse retries recorded the same
+  compression several times. Ledger writes are idempotent on a `ledger_key`,
+  with a one-shot dedupe of same-second duplicates already recorded.
+- **The savings hero and the lifetime total tell the same story.** The KPI was
+  a recent hook rate beside a lifetime token total; it now uses lifetime
+  before, after and percentage, labelled all time.
+
+**Added**
+
+- **Soft temporal disputes between memories.** When a newer memory contradicts
+  an older one, both are marked disputed and carry a derived validity rather
+  than the older one being deleted. Detection runs on distill and backfill;
+  `memor backfill-disputes` marks existing memories. Demoting stale memories
+  in recall (`MEMOR_SUPERSESSION`) and type-aware half-lives for quality decay
+  (`MEMOR_TYPE_HALFLIFE`) ship off: 15 micro-fixtures pass, but a stratified
+  counterfactual on a real corpus has not been run, which is the bar for
+  turning them on.
+- **`recall-worth` headlines a matched comparison.** Recalled episodes are
+  paired with unrecalled ones within project and prompt-length band, and the
+  verdict comes from that matched difference and its detectable floor rather
+  than from strata disagreeing in sign. On the development machine's 1,476
+  pairs it read **-15.6%** (recalled episodes used more tool calls) against a
+  16.9% floor: a powered null, and in a second run a "costs" verdict at
+  -17.7%. Both are observational. The randomized holdout below is the test
+  that can settle it.
+- **`memor prove-recall`** runs that matched comparison plus an offline A/B of
+  a strict recall profile (`MEMOR_RECALL_PROFILE=strict`: prefers distilled
+  memories, raises the score floor, caps hits), which injected 42% of the
+  default's tokens on 21 recent queries. `--stamp` starts a forward window for
+  trying strict on live use.
+
+### Recall's benefit, measured rather than bounded
+
+**Added**
+
+- **A randomized recall holdout.** `memor recall-holdout 0.1` withholds recall
+  from a random share of the prompts it found memories for.
+  Both arms are prompts recall matched, so the difference in billed cost per
+  episode is recall's effect, net of the tokens it injected. The existing
+  `recall-worth` comparison could only bound that, because recall fires on
+  familiar work: on the development machine an earlier headline of -33.3% was
+  -6.1% once compared within projects. Assignment hashes the session and the
+  prompt, so a prompt the proxy sees on several requests stays in one arm, and
+  it is independent of the compression holdout. Both the hook and the proxy take
+  part. A withheld recall is recorded in a new `recall_experiment` table and
+  never in `recall_log`, so hit rates, the injection total, recall grading and
+  the cross-tool matrix still describe memories that reached a model. A recall
+  is only withheld once its row is written, so a failed write serves the memory
+  instead of silently losing it. The setting lives in `~/.memor/config.json`
+  rather than only in the environment: the hook sidecar inherits the agent's
+  environment, an app launched from the Dock never reads a shell profile, and
+  the launchd/systemd proxy reads neither, so an environment-only switch could
+  run the experiment on one path and silently not on another. Every recall
+  re-reads the config, so no restart is needed.
+  `MEMOR_RECALL_HOLDOUT_FRACTION` still overrides it for one shell.
+- **`recall-worth` reports the randomized result.** A MEASURED section gives
+  billed cost and tool calls per arm, the cost difference against its detectable
+  floor, and a verdict that separates `unresolved` (could not yet have seen a
+  20% effect) from `no_effect` (could have, and did not). When unresolved, it
+  says how many episodes per arm would resolve 20% at the store's own variance.
+- **A whole-product ledger in `recall-worth`.** Until now the "compression saved
+  minus recall injected" figure in the README was put together by hand, and it
+  could only count recall as a cost. `recall-worth` now prints it from the
+  store, and once the holdout reaches a verdict it adds recall's measured effect
+  per episode, extrapolated over recalled episodes and marked as such. The
+  measured effect is already net of injection, so the injected tokens are not
+  subtracted twice.
+
+### Server logs: whole tracebacks, warnings kept, repeats collapsed
+
+**Added**
+
+- **Log compression keeps lines naming what you asked about.** The PostToolUse
+  hook now reads your latest prompt from the transcript tail, plus the command
+  and its description, and the log compressor keeps lines containing a word
+  from them that picks out few lines (at most 1% of the log; at most 40 lines
+  kept this way). On the seeded incident log, "Did a config change cause the
+  outage?" keeps the root cause and the rollback, both lost before; "what
+  caused it?" and "why is the db pool timing out?" do not, because no word in
+  them singles those lines out ("pool" is on 117 lines). Savings are unchanged
+  at 97.4%. Only the hook passes a query: it compresses once, before the
+  payload enters the transcript, while the proxy rewrites history and would
+  change cached text if its output depended on the latest prompt.
+- **Grep and MCP results are rewritten, losslessly.** Grep in content mode goes
+  through the search compressor alone, which folds the repeated path off each
+  line and keeps every match and line number; the file-list mode is left alone.
+  MCP results lose JSON formatting whitespace and nothing else, removed by a
+  scanner rather than a parse-and-dump, which would round long decimals and
+  merge duplicate keys, and returned in the shape the server sent. The JSON
+  crusher is deliberately not used on them: it samples long arrays, which is
+  wrong when the list is the answer. WebFetch stays excluded, as measured
+  before. `memor hook-worth` reports both in their own section, apart from the
+  Bash headline; on this sandbox's session 9 large GitHub MCP results were
+  already compact, so none were rewritten. Re-run `memor install-compress-hook`
+  to widen an existing hook's matcher.
+
+**Fixed**
+
+- **A traceback is kept whole, so its exception line survives.** The log
+  crusher kept ±2 lines around `Traceback` and around any line naming an error,
+  so an exception like `httpx.ReadTimeout: timed out` (no error keyword) lost
+  the one line saying what happened. Python traces (chained ones included) and
+  JVM/JS `at ...` traces are now kept as a unit; one longer than 50 lines keeps
+  its head and tail. An identical trace (ids and numbers aside) is kept once,
+  with a note giving how many times it occurred.
+- **WARN lines and 5xx responses are kept.** Neither names an error keyword, so
+  both survived only when they happened to sit next to an error: on a seeded
+  5,000-line incident log, 7 of 45 warnings survived, including none of the
+  pool-saturation warnings that came before the outage. `WARN`, `level=warn`,
+  nginx's `[warn]`, and `status=5xx` / access-log 5xx lines are now kept on
+  their own, without context.
+
+**Changed**
+
+- **Repeated log records collapse to first and last.** Only lines with a clock
+  time or a level token qualify, so test-runner output is never collapsed. A
+  record seen three or more times (ids, hashes, numbers and timestamps aside)
+  keeps its first and last occurrence and a count. On the incident log, 51
+  identical pool timeouts became two lines.
+- Result on `python -m scripts.bench_server_log`: savings went from 95.3% to
+  **97.4%** (307,343 to 7,910 cl100k tokens), and every distinct error, warning,
+  traceback frame and 5xx line survives (before: 4 of 11 distinct warnings, 9 of
+  13 frames). Two facts are still lost: the INFO line with the config change
+  that caused the incident, and the rollback. A keyword crusher cannot know that
+  an innocuous INFO line matters.
+
 ### The last unread source, and a status that could not go stale
 
 **Added**

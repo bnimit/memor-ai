@@ -21,6 +21,10 @@ _DEFAULTS = {
     # directories where decisions live outside any repo (an obsidian vault, a
     # docs/ tree, an incident log) and they stay in step with the files.
     "document_dirs": [],
+    # Share of recall-matched prompts that get no memories, so recall's effect
+    # can be measured (memor.recall_experiment). Off until the operator opts in;
+    # `memor recall-holdout 0.1` sets it.
+    "recall_holdout_fraction": 0.0,
 }
 
 def load_config() -> dict:
@@ -84,6 +88,12 @@ def clear_proxy_upstream(agent: str) -> None:
     upstreams = dict(cfg.get("proxy_upstreams", {}))
     upstreams.pop(agent, None)
     cfg["proxy_upstreams"] = upstreams
+    save_config(cfg)
+
+
+def set_recall_holdout_fraction(fraction: float) -> None:
+    cfg = load_config()
+    cfg["recall_holdout_fraction"] = float(fraction)
     save_config(cfg)
 
 

@@ -125,3 +125,140 @@ def test_fenced_code_inside_a_log_is_not_crushed():
                  "    amount_remaining -= payment.amount"):
         assert line in r.text, f"crusher ate fenced code: {line!r}"
     assert r.tokens_after < r.tokens_before
+
+
+def _noise(n, start=0):
+    return [f"2026-10-11T14:00:{(start + i) % 60:02d}.000Z INFO  http req_id={i:012x} "
+            f"method=GET path=/api/v1/orders/{i} status=200 dur_ms=12" for i in range(n)]
+
+
+def test_traceback_keeps_exception_line_without_error_vocabulary():
+    """The exception is the last line of a traceback, however long it is.
+
+    Real gap, found by scripts/bench_server_log.py: a ±2 window around the
+    `Traceback` header kept the first frames and dropped
+    `httpx.ReadTimeout: timed out`, which names no error keyword, so every
+    copy of the one line saying what happened was deleted.
+    """
+    trace = [
+        "Traceback (most recent call last):",
+        '  File "/app/orders/payments/capture.py", line 94, in capture',
+        "    resp = await self._client.post(url, json=body, timeout=8.0)",
+        '  File "/usr/local/lib/python3.12/site-packages/httpx/_client.py", line 1905, in post',
+        "    return await self.request(",
+        "httpx.ReadTimeout: timed out after 8.0s waiting for payments-gw.internal:443",
+    ]
+    text = "\n".join(_noise(60) + trace + _noise(60, 60))
+    r = compress_text(text, content_type="log")
+    for line in trace:
+        assert line in r.text, f"traceback line lost: {line!r}"
+    assert r.tokens_after < r.tokens_before / 3
+
+
+def test_chained_python_traceback_is_one_unit():
+    trace = [
+        "Traceback (most recent call last):",
+        '  File "a.py", line 1, in f',
+        "    g()",
+        "KeyboardInterrupt",
+        "",
+        "During handling of the above exception, another exception occurred:",
+        "",
+        "Traceback (most recent call last):",
+        '  File "a.py", line 9, in main',
+        "    cleanup()",
+        "SystemExit: 3",
+    ]
+    text = "\n".join(_noise(40) + trace + _noise(40, 40))
+    r = compress_text(text, content_type="log")
+    for line in trace:
+        if line:
+            assert line in r.text, f"chained trace line lost: {line!r}"
+
+
+def test_java_stack_trace_keeps_frames_and_cause():
+    trace = [
+        "2026-10-11 14:00:01,123 ERROR [main] OrderService - request failed",
+        "java.lang.IllegalStateException: pool closed",
+        "\tat com.acme.orders.Pool.acquire(Pool.java:88)",
+        "\tat com.acme.orders.OrderService.get(OrderService.java:41)",
+        "\tat com.acme.http.Router.dispatch(Router.java:120)",
+        "\tat com.acme.http.Router.handle(Router.java:97)",
+        "Caused by: java.net.SocketTimeoutException: connect timed out",
+        "\tat java.base/java.net.Socket.connect(Socket.java:633)",
+        "\t... 12 more",
+    ]
+    text = "\n".join(_noise(40) + trace + _noise(40, 40))
+    r = compress_text(text, content_type="log")
+    for line in trace:
+        assert line in r.text, f"java trace line lost: {line!r}"
+
+
+def test_identical_tracebacks_are_kept_once():
+    trace = [
+        "Traceback (most recent call last):",
+        '  File "/app/db.py", line 58, in session',
+        "    conn = await pool.acquire()",
+        "sqlalchemy.exc.TimeoutError: QueuePool limit of size 20 reached",
+    ]
+    lines = []
+    for k in range(6):
+        lines += _noise(30, k * 30)
+        lines.append(f"2026-10-11T14:01:{k:02d}.000Z ERROR db req_id={k:012x} could not acquire connection")
+        lines += trace
+    lines += _noise(30)
+    r = compress_text("\n".join(lines), content_type="log")
+    assert r.text.count("sqlalchemy.exc.TimeoutError") == 1
+    assert "this traceback occurs 6 times" in r.text
+
+
+def test_repeated_records_keep_first_last_and_count():
+    """Fifty identical pool timeouts are one fact, with a start and an end."""
+    lines = []
+    for k in range(50):
+        lines += _noise(8, k)
+        lines.append(f"2026-10-11T14:{k:02d}:00.000Z ERROR db req_id={k + 1000:012x} "
+                     f"could not acquire connection, waited {k * 10}ms")
+    lines.append("2026-10-11T14:59:00.000Z ERROR payments capture failed for order 7")
+    lines += _noise(8)
+    r = compress_text("\n".join(lines), content_type="log")
+    kept = [ln for ln in r.text.split("\n") if "could not acquire connection" in ln]
+    assert len(kept) == 2
+    assert "14:00:00.000Z" in kept[0] and "14:49:00.000Z" in kept[1]
+    assert "occurs 50 times" in r.text
+    assert "capture failed for order 7" in r.text
+
+
+def test_test_runner_failures_are_never_collapsed():
+    """`FAILED test_1` and `FAILED test_2` are two failures, not a repeat."""
+    lines = [f"tests/test_mod.py::test_case_{i} PASSED" for i in range(60)]
+    lines += [f"FAILED tests/test_mod.py::test_case_{i} - AssertionError" for i in range(10)]
+    lines += ["===== 10 failed, 60 passed in 1.20s ====="]
+    r = compress_text("\n".join(lines), content_type="log")
+    for i in range(10):
+        assert f"FAILED tests/test_mod.py::test_case_{i} - AssertionError" in r.text
+
+
+def test_warn_lines_survive_without_error_vocabulary():
+    """A warning is often the only early sign of what later fails."""
+    warns = [
+        "2026-10-11T14:13:48.498Z WARN  db pool acquire slow wait_ms=1689 pool.waiting=4",
+        '2026/10/11 14:13:50 [warn] 31#31: *812 upstream response is buffered to a temporary file',
+        'ts=2026-10-11T14:13:52Z level=warn msg="disk usage above 85%"',
+    ]
+    lines = _noise(40) + [warns[0]] + _noise(40, 40) + [warns[1]] + _noise(40, 20) + [warns[2]] + _noise(40, 30)
+    r = compress_text("\n".join(lines), content_type="log")
+    for w in warns:
+        assert w in r.text, f"warning lost: {w!r}"
+
+
+def test_server_error_responses_survive():
+    """A 503 in an access log names no error keyword, but it is the outage."""
+    hits = [
+        "2026-10-11T14:14:31.300Z INFO http req_id=4d3a method=POST path=/api/v1/orders status=503 dur_ms=44",
+        '10.0.0.7 - - [11/Oct/2026:14:14:32 +0000] "GET /api/v1/orders/9 HTTP/1.1" 502 157 "-" "curl/8.5"',
+    ]
+    lines = _noise(50) + [hits[0]] + _noise(50, 50) + [hits[1]] + _noise(50, 40)
+    r = compress_text("\n".join(lines), content_type="log")
+    for h in hits:
+        assert h in r.text

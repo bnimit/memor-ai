@@ -9,12 +9,18 @@ from memor.compress.text import compress_plain_text
 from memor.tokencount import count_tokens
 
 def compress_text(
-    text: str, *, content_type: str | None = None, file_path: str | None = None
+    text: str, *, content_type: str | None = None, file_path: str | None = None,
+    query: str | None = None,
 ) -> CompressResult:
     """Compress text based on content type.
 
     ``file_path`` makes detection evidence-based rather than a guess — see
     ``detect_content_type``.
+
+    ``query`` is the user's latest prompt plus the command that produced the
+    payload. Only the log compressor uses it, and only callers that compress
+    once at write time should pass it: a result that depends on the latest
+    prompt would rewrite cached history if the proxy used it.
     """
 
     tokens_before = count_tokens(text)
@@ -28,7 +34,7 @@ def compress_text(
         if content_type == "diff":
             compressed = compress_diff(text)
         elif content_type == "log":
-            compressed = compress_log(text)
+            compressed = compress_log(text, query=query)
         elif content_type == "json":
             compressed = compress_json(text)
         elif content_type == "search":

@@ -95,3 +95,88 @@ def test_hook_and_proxy_savings_are_split(tmp_path):
     assert summary["hook_saved"] == 900
     assert summary["proxy_saved"] == 200
     assert summary["hook_saved"] + summary["proxy_saved"] == summary["tokens_saved"]
+
+
+def test_ledger_key_makes_hook_retries_a_noop(tmp_path):
+    """PostToolUse can fire several times for one tool result."""
+    s = SqliteStore(str(tmp_path / "m.db"), dim=16)
+    row = _row(1000, 100)
+    row["provider"] = "hook"
+    row["ledger_key"] = "hook:same-event"
+    first = s.record_proxy_savings(row)
+    second = s.record_proxy_savings(row)
+    assert first == second
+    assert s.db.execute("SELECT COUNT(*) AS c FROM proxy_savings").fetchone()["c"] == 1
+    assert s.get_proxy_savings_summary(days=None)["tokens_saved"] == 900
+
+
+def test_existing_hook_duplicates_are_collapsed_on_open(tmp_path):
+    """Rows written before ledger_key inflated hook savings ~2x on a real store."""
+    path = str(tmp_path / "m.db")
+    # Build a pre-migration ledger by writing raw SQL, then open SqliteStore so
+    # the one-shot dedupe migration runs.
+    s0 = SqliteStore(path, dim=16)
+    ts = time.time()
+    for _ in range(4):
+        s0.db.execute(
+            "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
+            "tokens_before, tokens_after, content_types, passthrough) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (ts, "claude", "hook", "s1", 1000, 100, "{}", 0),
+        )
+    # A second later is a different event and must survive.
+    s0.db.execute(
+        "INSERT INTO proxy_savings(timestamp, agent, provider, session_id, "
+        "tokens_before, tokens_after, content_types, passthrough) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (ts + 2, "claude", "hook", "s1", 1000, 100, "{}", 0),
+    )
+    s0.db.execute("DELETE FROM meta WHERE key='hook_ledger_deduped'")
+    s0.db.commit()
+    s0.db.close()
+
+    s = SqliteStore(path, dim=16)
+    n = s.db.execute(
+        "SELECT COUNT(*) AS c FROM proxy_savings WHERE provider='hook'"
+    ).fetchone()["c"]
+    assert n == 2
+    assert s.get_proxy_savings_summary(days=None)["hook_saved"] == 1800
+
+
+def test_opening_a_pre_ledger_key_database_does_not_crash(tmp_path):
+    """Regression for CI: schema script must not index ledger_key before migrate.
+
+    An existing DB's ``CREATE TABLE IF NOT EXISTS`` is a no-op. Putting the
+    unique index in ``_init_schema`` then failed with ``no such column:
+    ledger_key`` on every open until the migration ran — which never ran.
+    """
+    path = str(tmp_path / "legacy.db")
+    s0 = SqliteStore(path, dim=16)
+    s0.db.executescript("""
+        DROP INDEX IF EXISTS idx_proxy_savings_ledger_key;
+        DROP TABLE proxy_savings;
+        CREATE TABLE proxy_savings(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp REAL, agent TEXT, provider TEXT, session_id TEXT,
+          tokens_before INTEGER, tokens_after INTEGER, content_types TEXT,
+          passthrough INTEGER DEFAULT 0,
+          upstream_input_tokens INTEGER,
+          upstream_cache_read_tokens INTEGER,
+          upstream_output_tokens INTEGER,
+          upstream_cache_creation_tokens INTEGER,
+          experiment_arm TEXT
+        );
+        DELETE FROM meta WHERE key='hook_ledger_deduped';
+    """)
+    s0.db.commit()
+    s0.db.close()
+
+    s = SqliteStore(path, dim=16)
+    cols = [r[1] for r in s.db.execute("PRAGMA table_info(proxy_savings)")]
+    assert "ledger_key" in cols
+    row = _row(500, 100)
+    row["provider"] = "hook"
+    row["ledger_key"] = "hook:legacy-open"
+    assert s.record_proxy_savings(row) is not None
+    assert s.record_proxy_savings(row) is not None
+    assert s.db.execute("SELECT COUNT(*) AS c FROM proxy_savings").fetchone()["c"] == 1

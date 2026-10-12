@@ -262,8 +262,11 @@ def test_install_registers_matcher_covering_the_allowlist(tmp_path):
         assert re.fullmatch(group["matcher"], tool), tool
     # Claude Code capitalises; jcode does not. One matcher serves both.
     assert re.fullmatch(group["matcher"], "Bash")
+    # Grep and MCP tools are admitted, for lossless rewrites only.
+    for tool in ("Grep", "mcp__github__list_issues"):
+        assert re.fullmatch(group["matcher"], tool), tool
     # Still an allowlist: no process spawned for what it always refuses.
-    for tool in ("Read", "Edit", "Grep", "Glob", "batch", "browser"):
+    for tool in ("Read", "Edit", "Glob", "batch", "browser", "WebFetch"):
         assert not re.fullmatch(group["matcher"], tool), tool
     assert "memor-posttool-compress" in group["hooks"][0]["command"]
 

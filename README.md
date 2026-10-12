@@ -167,6 +167,31 @@ Comparing the same kind of payload within a conversation brings that to about
 57 requests per arm. The holdout share is the savings deliberately given up to
 learn whether the rest are real.
 
+**Recall gets the same treatment.** The ledger above counts recall only as a
+cost, because its benefit, the exploration it prevents, had no defensible
+number. `memor recall-worth` compares episodes with and without recall, but
+recall fires on the prompts it matches, so that comparison can only bound the
+effect. A recall holdout withholds memories from a random share of the prompts
+recall *did* match:
+
+```bash
+memor recall-holdout 0.1   # off by default; `memor recall-holdout 0` stops it
+```
+
+The setting lives in `~/.memor/config.json`, which the hook sidecar and the
+proxy service both read on every recall, so it takes effect on the next prompt
+with no restart, however the agent or service was launched.
+`MEMOR_RECALL_HOLDOUT_FRACTION` overrides it for a single shell.
+
+Both arms are matched prompts, so the difference in billed cost per episode is
+recall's effect, net of what it injected. `recall-worth` reports it in a
+MEASURED section with its detectable floor, says how many episodes per arm
+would resolve a 20% effect, and only then adds recall's benefit to the
+whole-product ledger, marked as extrapolated. Withheld recalls are kept out of
+`recall_log`, so hit rates, the injection total and recall grading still
+describe memories that reached a model. Episode cost varies far more than
+payload size, so expect this to take weeks of use, not days.
+
 **Cross-tool recall is now graded.** Until 2026-08-23 the feedback loop ran for
 Claude only, so every cross-tool recall was served and never judged. The one
 capability memor exists for was the one it could not measure. All four agents
@@ -261,9 +286,11 @@ that is source code, most often a heredoc or a `cat`, and an agent editing
 against a mutilated read is a worse outcome than any token saving is worth.
 Pushing coverage higher means weakening that guard.
 
-Read, Grep and Glob results are never touched at all and are excluded from
-these figures rather than counted as missed coverage: they feed edits directly,
-so the hook declines them by design rather than by failure.
+Read and Glob results are never touched at all and are excluded from these
+figures rather than counted as missed coverage: a read feeds edits directly, so
+the hook declines it by design rather than by failure. Grep (content mode) and
+MCP results are rewritten only losslessly and are reported in their own section
+of `memor hook-worth`, never folded into the Bash figures above.
 
 None of these are numbers you have to take on trust. `memor hook-worth` replays
 the hook over your own sessions and prints the same breakdown, including the
@@ -337,10 +364,27 @@ and every failure diagnostic intact. Because the payload is shrunk on the way
 in, no already-cached prompt prefix is rewritten, so there is no cache
 re-formation cost to weigh against the saving.
 
-Scope is deliberately narrow: Bash output only. Reads, greps and source code
-are never rewritten, and a command that exits non-zero passes through whole.
-A failing build is when every line matters most. Savings land in the same
-ledger the dashboard reads.
+Scope is deliberately narrow. Bash output is compressed; file reads and source
+code are never rewritten, and a command that exits non-zero passes through
+whole, because a failing build is when every line matters most. Two other kinds
+of output are rewritten, but only losslessly:
+
+- **Grep in content mode:** the repeated path is folded off each line; every
+  match and line number is kept. (Claude Code refuses an edit to a file the
+  agent has not read, so edits are made against the read, not the grep.)
+- **MCP tool results:** JSON formatting whitespace is removed and nothing else,
+  so a server that already returns compact JSON is left alone.
+
+Log compression also reads your latest prompt from the transcript, with the
+command that produced the output, and keeps lines naming a word from them that
+picks out only a few lines: "did a config change break this?" keeps the
+`config ... changed` line that keyword rules drop. It cannot recover a cause
+your question does not name. This happens only here, at write time: a proxy
+rewrite that depended on the latest prompt would change already-cached history.
+
+Savings land in the same ledger the dashboard reads. If you installed the hook
+before this change, re-run `memor install-compress-hook` so it also matches
+Grep and MCP tools.
 
 **Full request compression (proxy):**
 
@@ -659,14 +703,23 @@ memor uninstall-proxy                Restore original agent config
 memor proxy                          Run proxy server in foreground (localhost:8421)
 memor install-cursor-compress-hooks  Cursor Shell output compression (subscription)
 memor uninstall-cursor-compress-hooks
-memor install-compress-hook          Compress Bash output before it enters the
+memor install-compress-hook          Compress Bash output (and fold Grep and MCP
+                                     output losslessly) before it enters the
                                      transcript (Claude Code); no proxy needed
 memor uninstall-compress-hook        Remove it
 memor compression-worth              Realized savings, coverage, and net of cache
 memor hook-worth                     What tool-output compression saved on your
-                                     own Bash output, with its denominator
+                                     own Bash output, with its denominator, and
+                                     on Grep and MCP output, reported apart
   --sessions N                       How many recent sessions to scan (default 60)
-memor recall-worth                   Whether recall is earning its context budget
+memor recall-worth                   Whether recall is earning its context budget,
+                                     the randomized holdout result, and the
+                                     whole-product ledger
+memor recall-holdout [FRACTION]      Show or set the recall holdout (0.1 = withhold
+                                     memories from 10% of matched prompts; 0 = off)
+memor prove-recall                   Matched comparison plus strict-vs-default recall
+                                     A/B; --stamp starts a forward window for
+                                     MEMOR_RECALL_PROFILE=strict
 memor grade-recalls                  Settle verdicts on recalls the daemon passed
                                      over, so cross-tool memory becomes measurable
 memor compress-older                 Show or set whether payloads the agent has
@@ -690,6 +743,7 @@ memor query <text>                   Search memories from the CLI
 memor reingest                       Wipe DB and re-ingest everything
 memor reingest --project <name>      Re-ingest only one project
 memor forget-stale                   Deactivate memories unused for 30+ days
+memor backfill-disputes              Scan memories and record soft temporal disputes
 memor prune                          Retire harness noise and duplicates from the
                                      retrieval pool (deactivates, never deletes)
 memor compact                        Rebuild vector index, reclaim wasted space

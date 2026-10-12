@@ -85,6 +85,7 @@ _MAX_TRACKED_SESSIONS = 50
 
 from memor.session_context import SessionContextWindow
 from memor.trajectory import enrich_from_transcript
+from memor.recall_experiment import ARM_CONTROL, ARM_TREATMENT
 _session_ctx = SessionContextWindow(max_queries=5, max_sessions=_MAX_TRACKED_SESSIONS)
 
 _UNSET = object()  # sentinel for "auto-discover embedder"
@@ -257,6 +258,16 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
     if session_id:
         _session_ctx.record(session_id, query)
 
+    arm = _holdout_arm(result, query=query, session_id=session_id, db_path=db_path)
+    if arm == ARM_CONTROL:
+        # Withheld: write the arm, inject nothing, and leave every trace a served
+        # recall would leave (session dedup, recall_log, pending verdicts)
+        # untouched, because these memories never reached the model.
+        if _log_holdout(db_path, embedder.dim, arm=arm, result=result, query=query,
+                        project=project, session_id=session_id, agent=agent):
+            return format_hook_response(agent, "")
+        arm = None  # unaccounted, so serve it: a silent withhold is pure loss
+
     if session_id and result.hit_ids:
         _session_injected.setdefault(session_id, set()).update(result.hit_ids)
         if len(_session_injected) > _MAX_TRACKED_SESSIONS:
@@ -278,9 +289,43 @@ def handle_request(req: dict, *, db_path: str = DEFAULT_DB,
                 store.record_recall_candidates(recall_id, result.hit_ids)
         except Exception:
             pass
+    if arm == ARM_TREATMENT:
+        _log_holdout(db_path, embedder.dim, arm=arm, result=result, query=query,
+                     project=project, session_id=session_id, agent=agent)
 
     additional_context = result.formatted_context or f"---\n{result.status_message}"
     return format_hook_response(agent, additional_context)
+
+
+def _holdout_arm(result, *, query: str, session_id: str, db_path: str) -> str | None:
+    """This prompt's arm in the recall holdout, or None when it is not in it.
+
+    Only a recall that found something is eligible, and only when there is a
+    store to record the arm in: a withheld recall nobody wrote down costs the
+    user their memory and teaches nothing.
+    """
+    from memor import recall_experiment
+
+    if not result.hits_count or not recall_experiment.is_enabled():
+        return None
+    if not Path(db_path).exists():
+        return None
+    return recall_experiment.assign_arm(
+        recall_experiment.experiment_key(session_id, "", query))
+
+
+def _log_holdout(db_path: str, dim: int, *, arm: str, result, query: str,
+                 project: str, session_id: str, agent: str) -> bool:
+    try:
+        from memor.store.sqlite_store import SqliteStore
+
+        store = SqliteStore(db_path, dim=dim)
+        return store.log_recall_experiment(
+            arm=arm, project=project, query_preview=query[:100],
+            hits_count=result.hits_count, tokens_offered=result.tokens_injected,
+            session_id=session_id, agent=agent)
+    except Exception:
+        return False
 
 
 async def _handle_client(reader: asyncio.StreamReader,
