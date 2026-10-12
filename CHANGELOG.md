@@ -4,6 +4,59 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-12
+
+### The hook that never ran, and a daemon that never rested
+
+**Fixed**
+
+- **The compression hook was registered but never invoked.** Its PostToolUse
+  matcher was `(?i)(agentgrep|bash|bg|ls|todo)`. Python accepts the inline
+  flag; Claude Code compiles matchers with JavaScript's `RegExp`, which rejects
+  `(?i)` as an invalid group, and a matcher that does not compile matches
+  nothing. From 21 Aug the hook sat in `settings.json`, worked when run by
+  hand, and compressed nothing; the last hook saving in the ledger is from
+  22 Aug. The matcher now spells case-insensitivity per character and is
+  anchored, so `ls` no longer also matches `Tools`. A test hands the generated
+  matcher to node, the engine that matters, and `memor doctor` checks the
+  wiring. **Re-run `memor install-compress-hook` to replace the broken
+  matcher.**
+- **The daemon no longer re-embeds unchanged transcript chunks.** Every mtime
+  bump re-parsed long Claude sessions, embedded every prior chunk and re-ran
+  distill and feedback, keeping CPU near a full core. Only chunks whose
+  content-hashed ids are missing are embedded, work is capped per poll, and
+  post-ingest work runs only when something new was stored.
+- **Hook savings are counted once.** PostToolUse retries recorded the same
+  compression several times. Ledger writes are idempotent on a `ledger_key`,
+  with a one-shot dedupe of same-second duplicates already recorded.
+- **The savings hero and the lifetime total tell the same story.** The KPI was
+  a recent hook rate beside a lifetime token total; it now uses lifetime
+  before, after and percentage, labelled all time.
+
+**Added**
+
+- **Soft temporal disputes between memories.** When a newer memory contradicts
+  an older one, both are marked disputed and carry a derived validity rather
+  than the older one being deleted. Detection runs on distill and backfill;
+  `memor backfill-disputes` marks existing memories. Demoting stale memories
+  in recall (`MEMOR_SUPERSESSION`) and type-aware half-lives for quality decay
+  (`MEMOR_TYPE_HALFLIFE`) ship off: 15 micro-fixtures pass, but a stratified
+  counterfactual on a real corpus has not been run, which is the bar for
+  turning them on.
+- **`recall-worth` headlines a matched comparison.** Recalled episodes are
+  paired with unrecalled ones within project and prompt-length band, and the
+  verdict comes from that matched difference and its detectable floor rather
+  than from strata disagreeing in sign. On the development machine's 1,476
+  pairs it read **-15.6%** (recalled episodes used more tool calls) against a
+  16.9% floor: a powered null, and in a second run a "costs" verdict at
+  -17.7%. Both are observational. The randomized holdout below is the test
+  that can settle it.
+- **`memor prove-recall`** runs that matched comparison plus an offline A/B of
+  a strict recall profile (`MEMOR_RECALL_PROFILE=strict`: prefers distilled
+  memories, raises the score floor, caps hits), which injected 42% of the
+  default's tokens on 21 recent queries. `--stamp` starts a forward window for
+  trying strict on live use.
+
 ### Recall's benefit, measured rather than bounded
 
 **Added**

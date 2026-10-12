@@ -379,6 +379,20 @@ def test_doctor_is_silent_on_a_correct_install(tmp_path, sandbox_home, monkeypat
     assert check_posttool_wiring(settings) == []
 
 
+def test_doctor_flags_a_valid_matcher_that_predates_grep_and_mcp(tmp_path):
+    """The first JavaScript-safe matcher covered Bash-like tools only.
+
+    It compiles and selects every tool in COMPRESSIBLE_TOOLS, so nothing else
+    would say the Grep and MCP rewrites added since are never reached.
+    """
+    from memor.cli import _ci_pattern, check_posttool_wiring
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+
+    problems = check_posttool_wiring(_settings(tmp_path, _ci_pattern(COMPRESSIBLE_TOOLS)))
+    assert problems and "grep" in problems[0] and "MCP tools" in problems[0]
+    assert "install-compress-hook" in problems[0]
+
+
 def test_doctor_stays_quiet_when_the_hook_is_not_installed(tmp_path):
     """Not installing is a choice, and nagging about it trains people to skim."""
     from memor.cli import check_posttool_wiring

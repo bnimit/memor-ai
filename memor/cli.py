@@ -2111,7 +2111,7 @@ def check_posttool_wiring(settings_path: Path) -> list[str]:
     registered, does its command still exist, and would its matcher actually
     select the tools it claims to. Empty list means nothing to report.
     """
-    from memor.posttool_compress import COMPRESSIBLE_TOOLS
+    from memor.posttool_compress import COMPRESSIBLE_TOOLS, LOSSLESS_TOOL_NAMES
 
     if not settings_path.exists():
         return []
@@ -2143,10 +2143,14 @@ def check_posttool_wiring(settings_path: Path) -> list[str]:
                 "any tool. Fix: memor install-compress-hook")
             break
     else:
+        # Grep and MCP joined after the first JavaScript-safe matcher shipped,
+        # so a matcher can compile, cover Bash, and still predate them.
         missed = sorted(
-            t for t in COMPRESSIBLE_TOOLS
+            t for t in COMPRESSIBLE_TOOLS | LOSSLESS_TOOL_NAMES
             if not (re.fullmatch(matcher, t) or re.fullmatch(matcher, t.capitalize()))
         )
+        if not re.fullmatch(matcher, "mcp__server__tool"):
+            missed.append("MCP tools")
         if missed:
             problems.append(
                 "the compression hook's matcher excludes "
