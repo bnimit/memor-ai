@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-17
+
+### The first screen is a receipt
+
+**Changed**
+
+- **The dashboard Overview leads with savings.** Lifetime tokens saved are the
+  hero. Under them sit the last 30 days' realized compression rate and an
+  editable dollar figure, labelled as an API-equivalent estimate rather than
+  an invoice. Recall is a status pill, not a savings number: the matched
+  comparison has not shown that recall reduces work. The evidence stack lives
+  on Measure.
+
+**Fixed**
+
+- **Warm Cursor and jcode polls no longer re-read everything.** Full
+  bubble-value scans and journal reads every 30 seconds were the load left
+  after the embed cap. Unchanged threads and journals are cached, so a quiet
+  poll stays near idle. Daemon logs are line-buffered, so a busy poll shows
+  up in the log instead of looking like a hang.
+
 ## [0.15.0] - 2026-10-12
 
 ### The hook that never ran, and a daemon that never rested
