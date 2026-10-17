@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -673,6 +674,14 @@ def _make_embedder():
 
 def run_daemon(poll_interval: int = POLL_INTERVAL, projects_dir: Path = CLAUDE_PROJECTS_DIR) -> None:
     """Run the daemon loop (foreground, blocking)."""
+    # launchd redirects stdout to a file; without line buffering the log sits
+    # silent for minutes while the process burns a core, which made the last
+    # CPU incident look like a hang.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:
+        pass
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     embedder = _make_embedder()
     store = SqliteStore(str(DEFAULT_DB), dim=embedder.dim)

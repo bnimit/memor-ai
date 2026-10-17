@@ -98,9 +98,11 @@ def test_dashboard_html_has_desk_tabs(tmp_path):
     # figure fell as old traffic aged out and read as a regression. Naming the
     # window in the title was not enough either: the big number was still the
     # 30d one. The panel is now titled for the lifetime total it leads with.
-    assert "Tokens saved" in html
+    assert "Token savings" in html
     assert "(last 30d)" not in html
     assert "cum-saved-lifetime" in html
+    assert "hero-subtitle" in html
+    assert "hero-recall-pill" in html
     assert "badge-cursor" in html
     # The Cursor wire MITM was removed — no chip, colour, or label may survive.
     assert "cursor-wire" not in html
@@ -284,10 +286,12 @@ def test_moved_sections_are_nested_in_the_pane_that_loads_them(tmp_path):
     owner = _pane_of(TestClient(app).get("/").text)
     for el_id in ("savings-periods-section", "recall-baseline-section",
                   "quality-section", "proxy-savings-section", "trend-chart",
-                  "e-latency"):
+                  "e-latency", "projects-body", "recalls-body",
+                  "agent-compare-section", "cross-tool-section",
+                  "compression-panel"):
         assert owner.get(el_id) == "pane-measure", el_id
-    for el_id in ("projects-body", "recalls-body", "savings-equity",
-                  "cum-saved-lifetime", "agent-compare-section"):
+    for el_id in ("savings-equity", "cum-saved-lifetime", "hero-subtitle",
+                  "hero-recall-pill"):
         assert owner.get(el_id) == "pane-overview", el_id
     assert owner.get("ap-contrib-body") == "pane-agent"
 
@@ -346,20 +350,20 @@ def test_hero_leads_with_the_total_that_never_falls(tmp_path):
 
 
 def test_hero_heading_and_value_do_not_disagree(tmp_path):
-    """The heading promises lifetime, so the value may only ever be lifetime.
+    """The hero is lifetime tokens; the 30d rate is subtitle-only.
 
     Falling back to the 30d total when lifetime is missing would print a
-    window's figure under an all-time heading -- the same swap this panel has
-    been fixed for twice.
+    window's figure as the headline -- the same swap this panel has been fixed
+    for twice.
     """
     app, _ = _seed(tmp_path)
     html = TestClient(app).get("/").text
-    assert "Tokens saved (lifetime)" in html
+    assert "Token savings" in html
+    assert "hero-subtitle" in html
     js = html.split("function renderSavingsHero")[1].split("\n  function ")[0]
     live = js.split("getElementById('cum-saved-big').textContent =")[-1].split(";")[0]
     assert "lifetimeSaved" in live
     assert "cum" not in live, live
-    # And the value must not restate the qualifier the heading already carries.
     assert "saved all time" not in html
 
 

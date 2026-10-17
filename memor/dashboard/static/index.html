@@ -24,6 +24,8 @@
     --accent-dim: rgba(232,147,32,0.14);
     --ok: #2fd67b;
     --ok-dim: rgba(47,214,123,0.12);
+    --saved: #7aa06d;
+    --hero-paper: rgba(196, 160, 110, 0.14);
     --warn: #e89320;
     --warn-dim: rgba(232,147,32,0.12);
     --error: #e85454;
@@ -36,6 +38,85 @@
     --claude: #e89320; --codex: #2fd67b; --copilot: #64a0ff;
     --cursor: #c084fc; --kimi: #ff8c5a; --goose: #50c8b4; --jcode: #f2b705;
   }
+
+  /* Savings-first Overview hero */
+  .savings-hero {
+    position: relative;
+    padding: 28px 24px 20px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .savings-hero::before {
+    content: "";
+    position: absolute;
+    inset: -20% 10% auto;
+    height: 70%;
+    background: radial-gradient(ellipse at center, var(--hero-paper), transparent 68%);
+    pointer-events: none;
+  }
+  .savings-hero-inner { position: relative; z-index: 1; }
+  .savings-hero-label {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;
+  }
+  .savings-hero-row {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+  }
+  .savings-hero-main { min-width: 0; flex: 1; }
+  #cum-saved-big, .hero-tokens {
+    font-family: var(--mono);
+    font-size: clamp(2.4rem, 5vw, 3.4rem);
+    font-weight: 600; line-height: 1.1;
+    color: var(--saved); letter-spacing: -0.03em;
+  }
+  #hero-subtitle {
+    margin-top: 10px; color: var(--text-secondary); font-size: 14px;
+  }
+  #hero-dollar {
+    margin-top: 6px; color: var(--text-muted); font-size: 13px;
+    font-family: var(--mono);
+  }
+  #hero-dollar[hidden] { display: none !important; }
+  #hero-rate-btn, #hero-rate-input {
+    font: inherit; font-family: var(--mono); color: var(--text-secondary);
+    background: transparent; border: 1px dashed var(--border); border-radius: 4px;
+    padding: 0 4px; cursor: pointer;
+  }
+  #hero-rate-input {
+    width: 4.5rem; border-style: solid; color: var(--text); cursor: text;
+  }
+  #hero-footnote {
+    margin-top: 14px; max-width: 72ch;
+    font-size: 11px; color: var(--text-muted); line-height: 1.45;
+  }
+  #hero-recall-pill {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    margin-top: 4px;
+    appearance: none;
+    border: 1px solid rgba(232,147,32,0.45);
+    background: var(--warn-dim);
+    color: var(--text-secondary);
+    font: 500 12px var(--font);
+    padding: 8px 12px; border-radius: 999px;
+    cursor: pointer; white-space: nowrap;
+  }
+  #hero-recall-pill.kind-saves {
+    border-color: rgba(122,160,109,0.5); background: var(--ok-dim); color: var(--saved);
+  }
+  #hero-recall-pill.kind-costs,
+  #hero-recall-pill.kind-none {
+    border-color: rgba(232,147,32,0.45);
+  }
+  .savings-hero-chart { margin-top: 8px; }
+  .savings-hero-chart .chart-panel {
+    background: transparent; border: none; padding: 0;
+  }
+  .savings-hero-chart .chart-canvas.tall { height: 160px; }
 
   body {
     font-family: var(--font);
@@ -436,140 +517,73 @@
       <div class="chip">Agents <strong id="status-agents">–</strong></div>
     </div>
 
-    <section>
-      <div class="section-label"><span class="dot"></span> Portfolio</div>
-      <div class="kpi-grid">
-        <div class="kpi" style="--kpi-accent:var(--ok)">
-          <div class="kpi-label">Token Savings</div>
-          <div class="kpi-value pnl" id="savings-pct">–</div>
-          <div class="kpi-sub"><span id="savings-before">–</span> → <span id="savings-after">–</span> · all time</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-label">Memories</div>
-          <div class="kpi-value" id="m-memories">–</div>
-          <div class="kpi-sub"><span id="m-chunks">–</span> chunks · <span id="m-global">–</span> global</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-label">Recalls</div>
-          <div class="kpi-value" id="m-recalls">–</div>
-          <div class="kpi-sub" id="m-recalls-sub">hook + proxy</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-label">Projects</div>
-          <div class="kpi-value" id="m-projects">–</div>
-          <div class="kpi-sub" id="content-types-list">compressed by type</div>
+    <section class="savings-hero" aria-label="Token savings">
+      <div class="savings-hero-inner">
+        <div class="savings-hero-label">Token savings</div>
+        <div class="savings-hero-row">
+          <div class="savings-hero-main">
+            <div class="hero-tokens" id="cum-saved-big">–</div>
+            <div hidden>
+              <span id="savings-pct">–</span>
+              <span id="savings-before">–</span>
+              <span id="savings-after">–</span>
+              <span id="content-types-list"></span>
+              <span id="m-memories">–</span>
+              <span id="m-chunks">–</span>
+              <span id="m-global">–</span>
+              <span id="m-recalls">–</span>
+              <span id="m-recalls-sub"></span>
+              <span id="m-projects">–</span>
+            </div>
+            <div id="hero-subtitle">–</div>
+            <div id="hero-dollar" hidden>
+              ≈ $<span id="hero-dollar-value">0</span> at
+              $<button type="button" id="hero-rate-btn" title="Edit rate">3</button>
+              <input id="hero-rate-input" type="number" min="0" step="0.1" hidden>
+              / 1M · API-equivalent estimate
+            </div>
+            <div id="cum-saved-lifetime" class="chart-meta" style="margin-top:8px;"></div>
+            <div id="hero-footnote"></div>
+          </div>
+          <button type="button" id="hero-recall-pill" class="kind-measuring">Recall · measuring</button>
         </div>
       </div>
     </section>
 
-    <section>
+    <section class="savings-hero-chart">
       <div class="chart-panel">
         <div class="chart-head">
-          <div>
-            <div class="chart-title">Tokens saved (lifetime)</div>
-            <div class="chart-big" id="cum-saved-big">–</div>
-            <div class="chart-meta" id="cum-saved-lifetime"></div>
-          </div>
           <div class="chart-meta" id="cum-saved-meta">30d equity curve · all proxied agents</div>
         </div>
         <div class="chart-canvas tall" id="savings-equity"></div>
       </div>
     </section>
-
-    <section id="cross-tool-section" style="display:none;">
-      <div class="section-label"><span class="dot"></span> Cross-tool memory</div>
-      <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">
-        Did a memory written while using one agent help in another? Kept apart from
-        same-tool, because blending the two hides the only comparison that matters.
-      </div>
-      <div class="agent-compare" id="cross-tool-totals"></div>
-      <div class="table-card" style="margin-top:12px;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Read by</th>
-              <th>Written by</th>
-              <th style="text-align:right">Used</th>
-              <th style="text-align:right">Judged</th>
-              <th style="text-align:right">Use rate</th>
-              <th style="text-align:right">Awaiting verdict</th>
-            </tr>
-          </thead>
-          <tbody id="cross-tool-body"></tbody>
-        </table>
-      </div>
-      <div class="metric-sub" id="cross-tool-note"
-           style="margin-top:8px;color:var(--text-muted);font-size:11px;"></div>
-      <div class="metric-sub" id="cross-tool-projects-label"
-           style="margin:16px 0 6px;color:var(--text-muted);font-size:12px;"></div>
-      <div class="table-card">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Project</th>
-              <th>Agents active</th>
-              <th style="text-align:right">Cross-tool</th>
-              <th style="text-align:right">Same-tool</th>
-            </tr>
-          </thead>
-          <tbody id="cross-tool-projects-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-
-    <section id="agent-compare-section" style="display:none;">
-      <div class="section-label"><span class="dot"></span> Desks</div>
-      <div class="agent-compare" id="agent-compare"></div>
-    </section>
-
-    <section>
-      <div class="table-card">
-        <div class="table-header">
-          <div class="table-title"><span class="dot"></span> Projects</div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th class="sortable" data-col="project" data-type="str">Project <span class="sort-icon">↕</span></th>
-              <th class="sortable" data-col="artifacts" data-type="num"><span id="th-col1">Chunks</span> <span class="sort-icon">↕</span></th>
-              <th class="sortable" data-col="memories" data-type="num"><span id="th-col2">Memories</span> <span class="sort-icon">↕</span></th>
-              <th class="sortable" data-col="total_tokens" data-type="num"><span id="th-col3">Tokens</span> <span class="sort-icon">↕</span></th>
-              <th id="th-col4">Status</th>
-              <th id="th-col5"></th>
-              <th id="th-col6"></th>
-            </tr>
-          </thead>
-          <tbody id="projects-body" class="projects-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section>
-      <div class="table-card">
-        <div class="table-header">
-          <div class="table-title"><span class="dot"></span> Recent recalls</div>
-          <div class="filter-bar" id="filter-bar"></div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th><th>Agent</th><th>Project</th><th>Query</th>
-              <th>Hits</th><th>Score</th><th>Tokens</th><th>Latency</th><th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="recalls-body"></tbody>
-        </table>
-      </div>
-    </section>
   </div>
 
   <!-- ═══════════════ MEASUREMENT PANE ═══════════════
-       The overview answers "is it working"; this answers "how do we know".
-       Split because 13 sections and 6 tables on one scroll meant the four
-       numbers a user checks daily were buried under the evidence for them. -->
+       Compression receipt first, then ledger, then recall evidence, then ops.
+       Overview answers "are you saving tokens"; this answers "how do we know". -->
   <div class="pane" id="pane-measure" data-pane="measure">
-    <section id="savings-periods-section" style="display:none;">
+<section>
+      <div class="chart-panel" id="compression-panel">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Compression</div>
+            <div class="chart-big" id="cx-headline">–</div>
+          </div>
+          <div class="chart-meta" id="cx-meta">realized on your traffic</div>
+        </div>
+        <div class="rw-body">
+          <div class="rw-detail" id="cx-live"></div>
+          <div class="rw-detail" id="cx-cache"></div>
+          <div class="rw-detail" id="cx-hook"></div>
+          <div class="rw-strata" id="cx-types"></div>
+          <div class="rw-note" id="cx-note"></div>
+        </div>
+      </div>
+    </section>
+
+<section id="savings-periods-section" style="display:none;">
       <div class="section-label"><span class="dot"></span> Token savings over time</div>
       <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">
         Hook and proxy kept apart: blended, a change in traffic mix reads as a change in performance.
@@ -599,7 +613,7 @@
            style="margin-top:8px;color:var(--text-muted);font-size:11px;"></div>
     </section>
 
-    <section>
+<section>
       <div class="chart-panel" id="recall-worth-panel">
         <div class="chart-head">
           <div>
@@ -616,7 +630,7 @@
       </div>
     </section>
 
-    <section id="recall-baseline-section" style="display:none;">
+<section id="recall-baseline-section" style="display:none;">
       <div class="chart-panel" id="recall-baseline-panel">
         <div class="chart-head">
           <div>
@@ -633,26 +647,7 @@
       </div>
     </section>
 
-    <section>
-      <div class="chart-panel" id="compression-panel">
-        <div class="chart-head">
-          <div>
-            <div class="chart-title">Compression</div>
-            <div class="chart-big" id="cx-headline">–</div>
-          </div>
-          <div class="chart-meta" id="cx-meta">realized on your traffic</div>
-        </div>
-        <div class="rw-body">
-          <div class="rw-detail" id="cx-live"></div>
-          <div class="rw-detail" id="cx-cache"></div>
-          <div class="rw-detail" id="cx-hook"></div>
-          <div class="rw-strata" id="cx-types"></div>
-          <div class="rw-note" id="cx-note"></div>
-        </div>
-      </div>
-    </section>
-
-    <section>
+<section>
       <div class="chart-grid-2">
         <div class="chart-panel">
           <div class="chart-head">
@@ -700,13 +695,13 @@
       </div>
     </section>
 
-    <section id="proxy-savings-section" style="display:none;">
+<section id="proxy-savings-section" style="display:none;">
       <div class="section-label"><span class="dot"></span> Proxy savings by agent</div>
       <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">Across every proxied agent</div>
       <div class="agent-compare" id="proxy-savings-grid"></div>
     </section>
 
-    <section>
+<section>
       <div class="table-card" id="quality-section" style="display:none;">
         <div class="table-header">
           <div class="table-title"><span class="dot"></span> Memory quality</div>
@@ -719,6 +714,92 @@
             </tr>
           </thead>
           <tbody id="quality-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+<section id="cross-tool-section" style="display:none;">
+      <div class="section-label"><span class="dot"></span> Cross-tool memory</div>
+      <div class="metric-sub" style="margin:-4px 0 10px;color:var(--text-muted);font-size:12px;">
+        Did a memory written while using one agent help in another? Kept apart from
+        same-tool, because blending the two hides the only comparison that matters.
+      </div>
+      <div class="agent-compare" id="cross-tool-totals"></div>
+      <div class="table-card" style="margin-top:12px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Read by</th>
+              <th>Written by</th>
+              <th style="text-align:right">Used</th>
+              <th style="text-align:right">Judged</th>
+              <th style="text-align:right">Use rate</th>
+              <th style="text-align:right">Awaiting verdict</th>
+            </tr>
+          </thead>
+          <tbody id="cross-tool-body"></tbody>
+        </table>
+      </div>
+      <div class="metric-sub" id="cross-tool-note"
+           style="margin-top:8px;color:var(--text-muted);font-size:11px;"></div>
+      <div class="metric-sub" id="cross-tool-projects-label"
+           style="margin:16px 0 6px;color:var(--text-muted);font-size:12px;"></div>
+      <div class="table-card">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Agents active</th>
+              <th style="text-align:right">Cross-tool</th>
+              <th style="text-align:right">Same-tool</th>
+            </tr>
+          </thead>
+          <tbody id="cross-tool-projects-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+<section id="agent-compare-section" style="display:none;">
+      <div class="section-label"><span class="dot"></span> Desks</div>
+      <div class="agent-compare" id="agent-compare"></div>
+    </section>
+
+<section>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-title"><span class="dot"></span> Projects</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th class="sortable" data-col="project" data-type="str">Project <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="artifacts" data-type="num"><span id="th-col1">Chunks</span> <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="memories" data-type="num"><span id="th-col2">Memories</span> <span class="sort-icon">↕</span></th>
+              <th class="sortable" data-col="total_tokens" data-type="num"><span id="th-col3">Tokens</span> <span class="sort-icon">↕</span></th>
+              <th id="th-col4">Status</th>
+              <th id="th-col5"></th>
+              <th id="th-col6"></th>
+            </tr>
+          </thead>
+          <tbody id="projects-body" class="projects-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+<section>
+      <div class="table-card">
+        <div class="table-header">
+          <div class="table-title"><span class="dot"></span> Recent recalls</div>
+          <div class="filter-bar" id="filter-bar"></div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th><th>Agent</th><th>Project</th><th>Query</th>
+              <th>Hits</th><th>Score</th><th>Tokens</th><th>Latency</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="recalls-body"></tbody>
         </table>
       </div>
     </section>
@@ -848,6 +929,56 @@
   var knownAgents = CORE_AGENTS.slice();
 
   var FIXED_PANES = ['overview', 'measure', 'provenance'];
+
+  /* memor-dashboard-helpers */
+  var DEFAULT_TOKEN_RATE_PER_M = 3;
+  var TOKEN_RATE_STORAGE_KEY = 'memor.dashboard.tokenRatePerM';
+
+  function estimateDollarSavings(tokensSaved, ratePerM) {
+    var tokens = Number(tokensSaved) || 0;
+    var rate = Number(ratePerM);
+    if (!(tokens > 0) || !(rate >= 0) || !isFinite(rate)) return null;
+    return tokens * (rate / 1e6);
+  }
+
+  function recallPillCopy(verdict) {
+    if (verdict === 'saves') {
+      return { text: 'Recall · effect detected', kind: 'saves' };
+    }
+    if (verdict === 'costs') {
+      return { text: 'Recall · no measurable savings yet', kind: 'costs' };
+    }
+    if (verdict === 'no_effect') {
+      return { text: 'Recall · no measurable savings yet', kind: 'none' };
+    }
+    return { text: 'Recall · measuring', kind: 'measuring' };
+  }
+
+  function isHookDominated(life) {
+    if (!life) return true;
+    var hook = Number(life.hook_saved) || 0;
+    var proxy = Number(life.proxy_saved) || 0;
+    var total = hook + proxy;
+    if (total <= 0) return true;
+    return (proxy / total) < 0.05;
+  }
+
+  function readTokenRatePerM() {
+    try {
+      var raw = localStorage.getItem(TOKEN_RATE_STORAGE_KEY);
+      if (raw == null || raw === '') return DEFAULT_TOKEN_RATE_PER_M;
+      var n = Number(raw);
+      if (!isFinite(n) || n < 0) return DEFAULT_TOKEN_RATE_PER_M;
+      return n;
+    } catch (e) {
+      return DEFAULT_TOKEN_RATE_PER_M;
+    }
+  }
+
+  function writeTokenRatePerM(rate) {
+    try { localStorage.setItem(TOKEN_RATE_STORAGE_KEY, String(rate)); } catch (e) {}
+  }
+  /* end-memor-dashboard-helpers */
 
   function isValidPane(id) {
     return FIXED_PANES.indexOf(id) !== -1 || CORE_AGENTS.indexOf(id) !== -1 || knownAgents.indexOf(id) !== -1;
@@ -1522,20 +1653,39 @@
     }
   }
 
-  function renderSavingsHero(data) {
-    // KPI rate and before→after must use the same lifetime population as the
-    // big "tokens saved" figure. The 30d summary was leaving a 91% hook-only
-    // window next to a 2.5M lifetime total that was mostly historical proxy,
-    // so the two numbers on one panel could not reconcile.
+  function renderSavingsHero(data, compression) {
+    // Lifetime absolute from ledger; 30d % from /api/compression realized.
+    // Never apply one population's rate to the other's count.
     var life = (data && data.lifetime) || {};
-    if (!data || !life.tokens_before) {
+    var subEl = document.getElementById('hero-subtitle');
+    var dollarEl = document.getElementById('hero-dollar');
+    var dollarVal = document.getElementById('hero-dollar-value');
+    var rateBtn = document.getElementById('hero-rate-btn');
+    var footEl = document.getElementById('hero-footnote');
+    var rate = readTokenRatePerM();
+    if (rateBtn) rateBtn.textContent = String(rate);
+
+    function clearHero() {
       document.getElementById('savings-pct').textContent = '–';
       document.getElementById('savings-before').textContent = '–';
       document.getElementById('savings-after').textContent = '–';
       document.getElementById('cum-saved-big').textContent = '–';
+      if (subEl) subEl.textContent = 'No savings measured yet';
+      if (dollarEl) dollarEl.hidden = true;
+      if (footEl) {
+        footEl.textContent = 'Install hooks or run compressible agent traffic to start measuring.';
+      }
+      var lifeEl0 = document.getElementById('cum-saved-lifetime');
+      if (lifeEl0) lifeEl0.textContent = '';
       renderEquityChart('savings-equity', [], 'cumulative_saved');
+    }
+
+    if (!data || !life.tokens_before) {
+      clearHero();
       return;
     }
+
+    // Hidden legacy KPI fields stay on lifetime for any leftover consumers.
     document.getElementById('savings-pct').textContent = life.pct_saved + '%';
     document.getElementById('savings-before').textContent = fmt(life.tokens_before);
     document.getElementById('savings-after').textContent = fmt(life.tokens_after);
@@ -1550,19 +1700,31 @@
         return Object.assign({}, d, { tokens_saved: saved, cumulative_saved: cum });
       });
     }
-    // The lifetime total leads. Naming the window in the title was not enough:
-    // a panel called "Tokens saved" whose big number is a rolling 30 days still
-    // reads as the headline figure, and still falls as old traffic ages out.
-    // The number that answers "how much has memor saved me" is the one that
-    // never goes down, so it gets the large type and the window becomes context.
+
     var lifetimeSaved = life.tokens_saved || 0;
-    // The title carries "lifetime", so the value does not repeat it: bare
-    // number, qualifier in the heading. No falling back to the 30d total when
-    // lifetime is absent either -- that would print a window's figure under a
-    // heading promising all time, which is the exact swap this panel keeps
-    // being fixed for.
     document.getElementById('cum-saved-big').textContent = fmt(lifetimeSaved);
-    renderEquityChart('savings-equity', series, 'cumulative_saved', '#2fd67b');
+    renderEquityChart('savings-equity', series, 'cumulative_saved', '#7aa06d');
+
+    var realized = compression && compression.realized;
+    if (subEl) {
+      if (realized && realized.tokens_before > 0) {
+        subEl.textContent =
+          (realized.saved_pct != null ? realized.saved_pct : '–') + '% last 30d · ' +
+          fmt(realized.tokens_before) + ' → ' + fmt(realized.tokens_after);
+      } else {
+        subEl.textContent = '— last 30d · measuring';
+      }
+    }
+
+    var dollars = estimateDollarSavings(lifetimeSaved, rate);
+    if (dollarEl && dollarVal) {
+      if (dollars == null) {
+        dollarEl.hidden = true;
+      } else {
+        dollarEl.hidden = false;
+        dollarVal.textContent = dollars.toFixed(2);
+      }
+    }
 
     var lifeEl = document.getElementById('cum-saved-lifetime');
     if (lifeEl) {
@@ -1573,10 +1735,6 @@
         : '';
     }
 
-    // A cumulative total is indistinguishable from a broken one when it stops
-    // moving: the figure looks current whether the proxy saved nothing today
-    // or stopped recording weeks ago. Naming the last day that actually
-    // contributed makes a flat curve self-explaining.
     var metaEl = document.getElementById('cum-saved-meta');
     if (metaEl) {
       var lastActive = null;
@@ -1595,14 +1753,77 @@
       }
     }
 
-    var parts = [];
-    if (data.content_types && data.content_types.length) {
-      data.content_types.slice(0, 3).forEach(function(ct) {
-        parts.push(esc(ct.content_type) + ' ' + fmt(ct.count));
-      });
+    if (footEl) {
+      var parts = [];
+      if (isHookDominated(life)) {
+        parts.push('Hook-path tokenizer estimate — provider never saw the uncompressed payload.');
+      } else {
+        parts.push('Blended hook + proxy ledger.');
+      }
+      if (!compression || compression.cache == null) {
+        parts.push('Net-of-cache unmeasured.');
+      }
+      if (dollars != null) {
+        parts.push('On a flat subscription this is headroom, not a lower bill.');
+      }
+      footEl.textContent = parts.join(' ');
     }
-    document.getElementById('content-types-list').textContent =
-      parts.length ? parts.join(' · ') : 'compressed by type';
+
+    var ctEl = document.getElementById('content-types-list');
+    if (ctEl) {
+      var ctParts = [];
+      if (data.content_types && data.content_types.length) {
+        data.content_types.slice(0, 3).forEach(function(ct) {
+          ctParts.push(esc(ct.content_type) + ' ' + fmt(ct.count));
+        });
+      }
+      ctEl.textContent = ctParts.length ? ctParts.join(' · ') : 'compressed by type';
+    }
+  }
+
+  function renderRecallPill(verdict) {
+    var pill = document.getElementById('hero-recall-pill');
+    if (!pill) return;
+    var copy = recallPillCopy(verdict);
+    pill.textContent = copy.text;
+    pill.className = 'kind-' + copy.kind;
+  }
+
+  function bindHeroRateEdit() {
+    var btn = document.getElementById('hero-rate-btn');
+    var input = document.getElementById('hero-rate-input');
+    if (!btn || !input || btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    var lastGood = readTokenRatePerM();
+
+    function showInput() {
+      lastGood = readTokenRatePerM();
+      btn.hidden = true;
+      input.hidden = false;
+      input.value = String(lastGood);
+      input.focus();
+      input.select();
+    }
+    function commit() {
+      var n = Number(input.value);
+      if (!isFinite(n) || n < 0 || input.value === '') n = lastGood;
+      writeTokenRatePerM(n);
+      btn.textContent = String(n);
+      input.hidden = true;
+      btn.hidden = false;
+      loadSavingsHero();
+    }
+    function cancel() {
+      input.hidden = true;
+      btn.hidden = false;
+      btn.textContent = String(lastGood);
+    }
+    btn.addEventListener('click', showInput);
+    input.addEventListener('keydown', function(ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+      if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+    });
+    input.addEventListener('blur', commit);
   }
 
   function renderEfficiency(data) {
@@ -2314,7 +2535,26 @@
   async function loadROITrend() { try { renderROITrend(await api('/api/roi-trend')); } catch (e) { console.warn(e); } }
   async function loadQuality() { try { renderQuality(await api('/api/quality')); } catch (e) { console.warn(e); } }
   async function loadAgentBreakdown() { try { renderAgentBreakdown(await api('/api/agent-breakdown')); } catch (e) { console.warn(e); } }
-  async function loadSavingsHero() { try { renderSavingsHero(await api('/api/savings-ledger?days=30')); } catch (e) { console.warn(e); } }
+  async function loadSavingsHero() {
+    try {
+      var results = await Promise.allSettled([
+        api('/api/savings-ledger?days=30'),
+        api('/api/compression'),
+      ]);
+      var ledger = results[0].status === 'fulfilled' ? results[0].value : null;
+      var compression = results[1].status === 'fulfilled' ? results[1].value : null;
+      renderSavingsHero(ledger, compression);
+    } catch (e) { console.warn(e); }
+  }
+  async function loadOverviewRecallPill() {
+    try {
+      var data = await api('/api/recall-worth');
+      var verdict = (data && data.overall && data.overall.verdict) || 'insufficient_data';
+      renderRecallPill(verdict);
+    } catch (e) {
+      renderRecallPill('insufficient_data');
+    }
+  }
   async function loadProxyStatus() { try { renderProxyStatus(await api('/api/proxy-status')); } catch (e) { console.warn(e); } }
   async function loadCrossTool() { try { renderCrossTool(await api('/api/cross-tool')); } catch (e) { console.warn(e); } }
   async function loadSavingsPeriods() {
@@ -2585,19 +2825,17 @@
     }
   }
 
-  // Overview loads only what it renders. It previously fired all 19 endpoints
-  // regardless of which pane was showing, so moving sections out would have cut
-  // the clutter while leaving the request cost exactly where it was.
+  // Overview: savings receipt only. Measure owns evidence and ops tables.
   async function refreshOverview() {
     await Promise.allSettled([
-      loadSummary(), loadProjects(), loadHealth(), loadRecalls(),
-      loadAgentBreakdown(), loadSavingsHero(), loadProxyStatus(), loadCrossTool(),
+      loadHealth(), loadSavingsHero(), loadProxyStatus(), loadOverviewRecallPill(),
     ]);
     document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
   }
 
   async function refreshMeasure() {
     await Promise.allSettled([
+      loadSummary(), loadProjects(), loadRecalls(), loadAgentBreakdown(), loadCrossTool(),
       loadEfficiency(), loadSessionEfficiency(), loadTrend(), loadROI(), loadROITrend(),
       loadQuality(), loadProxySavingsByAgent(), loadRecallWorth(), loadRecallBaseline(),
       loadCompression(), loadSavingsPeriods(),
@@ -2640,6 +2878,11 @@
 
   activePane = readStoredPane();
   renderTabs();
+  bindHeroRateEdit();
+  var recallPill = document.getElementById('hero-recall-pill');
+  if (recallPill) {
+    recallPill.addEventListener('click', function() { switchPane('measure'); });
+  }
   window.addEventListener('hashchange', function() {
     var id = (location.hash || '').replace(/^#/, '') || 'overview';
     if (id !== activePane && isValidPane(id)) switchPane(id);
