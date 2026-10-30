@@ -2157,6 +2157,51 @@ class SqliteStore:
             out[name] = [merged[k] for k in sorted(merged)]
         return out
 
+    def get_savings_by_model(
+        self, *, bucket: str | None = None, since: float | None = None
+    ) -> list[dict]:
+        """Tokens saved per model, optionally per time bucket.
+
+        ``bucket`` is a strftime format (local time); None aggregates over the
+        whole window. Passthrough rows are excluded, as everywhere else the
+        ledger is summed. ``model`` is None for rows written before the column
+        existed: the dashboard prices those at the user's flat rate rather than
+        guessing which model they were.
+        """
+        bucket_sql = (
+            "strftime(?, timestamp, 'unixepoch', 'localtime')" if bucket else "NULL"
+        )
+        params: list = [bucket] if bucket else []
+        where = "passthrough = 0"
+        if since is not None:
+            where += " AND timestamp >= ?"
+            params.append(since)
+        try:
+            rows = self.db.execute(
+                f"""
+                SELECT {bucket_sql} AS bucket,
+                       NULLIF(model, '') AS model,
+                       SUM(MAX(tokens_before - tokens_after, 0)) AS tokens_saved,
+                       COUNT(*) AS requests
+                FROM proxy_savings
+                WHERE {where}
+                GROUP BY bucket, NULLIF(model, '')
+                ORDER BY bucket
+                """,
+                params,
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [
+            {
+                "bucket": r["bucket"],
+                "model": r["model"],
+                "tokens_saved": int(r["tokens_saved"] or 0),
+                "requests": int(r["requests"] or 0),
+            }
+            for r in rows
+        ]
+
     def get_proxy_savings_by_agent(self, days: int = 30) -> list[dict]:
         import time as _time
         cutoff = _time.time() - (days * 86400)

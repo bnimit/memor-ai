@@ -402,7 +402,7 @@ A proxy is handed an HTTP request and nothing else, with no working directory, s
 
 To revert: `memor uninstall-proxy --agent claude`
 
-> **Codex support is experimental.** The proxy implements the OpenAI Chat Completions API (`/v1/chat/completions`). Codex CLI may instead use the Responses API (`/v1/responses`) depending on version and model, in which case requests will not route through the proxy and you will see no savings. Memory via hooks is unaffected. Track it in [#26](https://github.com/bnimit/memor-ai/issues/26).
+> **Codex support is experimental.** Current Codex CLI speaks only the OpenAI Responses API (`/v1/responses`), which the proxy now serves alongside Chat Completions (`/v1/chat/completions`): tool outputs are compressed, usage is recorded from the stream, and recall extends a fresh user turn. The request shapes are tested from recorded fixtures, not yet against a live Codex session. `memor_retrieve` reaches Codex through the MCP server `memor install-proxy --agent codex` registers, not through the proxy. Memory via hooks is unaffected. Track it in [#26](https://github.com/bnimit/memor-ai/issues/26).
 
 ### Optional: Full Cursor install (recommended)
 
@@ -511,7 +511,7 @@ Both paths write to the same recall ledger, including recalls that return nothin
 | Agent | Memory (hooks) | Proxy / savings |
 |-------|----------------|-----------------|
 | **Claude Code** | Yes | Yes, `memor install-proxy --agent claude` |
-| **Codex CLI** | Yes | Experimental, `memor install-proxy --agent codex` (Chat Completions only) |
+| **Codex CLI** | Yes | Experimental, `memor install-proxy --agent codex` (Responses and Chat Completions) |
 | **Cursor** | Yes, own ingest, plus hooks | BYOK proxy + Shell compress hooks |
 | **Copilot CLI** | Yes | No, hooks only |
 | **Kimi CLI** | Yes | Yes, `memor install-proxy --agent kimi` |
@@ -661,7 +661,14 @@ memor dashboard
 
 Trading-desk style UI with an **Overview** plus per-agent panes (Claude, Cursor, Codex, Copilot, Kimi, Goose):
 
-- **Overview.** Status chips (proxy / hook / daemon, plus which agents are actually *reading* memory and how long any has been silent), portfolio KPIs, cumulative tokens-saved equity curve, recall activity, efficiency, projects, quality, recent recalls
+- **Overview.** Status chips (proxy / hook / daemon, plus which agents are actually *reading* memory and how long any has been silent), lifetime tokens saved with a dollar estimate priced per model, the 30-day savings curve, savings by day / week / month with averages, and savings by model
+- **Pricing.** Each saving is priced at its model's first-party list input rate (Claude models are built in). Models memor has no price for use the flat rate you set on the Overview; add or correct rates in `~/.memor/config.json`:
+
+  ```json
+  {"model_prices": {"gpt-5.5": {"input": 1.25, "cache_read": 0.125}}}
+  ```
+
+  The figure is an estimate, not an invoice: Bedrock, Vertex and Foundry price differently, most resends of a saved token are cache reads (shown as the lower bound), and on a subscription plan saved tokens are headroom, not a lower bill. Savings recorded before models were tracked carry none and are priced at the flat rate.
 - **Agent desks.** Click a tab (or a desk tile) for that environment’s hit rate, latency, proxy savings %, recall volume chart, savings curve, and filtered recalls
 - **Proxy savings by agent.** Every agent routed through the proxy
 

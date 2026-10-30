@@ -143,6 +143,35 @@ def _last_user_prompt(transcript_path) -> str:
     return ""
 
 
+def _transcript_model(transcript_path) -> str | None:
+    """The model behind the latest assistant turn, from the transcript's tail.
+
+    The hook is not told which model it serves, but the assistant turn that
+    issued this tool call is already in the transcript, stamped with its model.
+    Recorded so the dashboard can price a saving at that model's rate. Never
+    raises; Claude Code's own ``<synthetic>`` turns name no real model.
+    """
+    if not transcript_path:
+        return None
+    try:
+        from memor.trajectory import read_tail
+
+        for line in reversed(read_tail(transcript_path)):
+            if '"assistant"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            message = rec.get("message") if isinstance(rec, dict) else None
+            model = message.get("model") if isinstance(message, dict) else None
+            if isinstance(model, str) and model and not model.startswith("<"):
+                return model
+    except Exception:
+        return None
+    return None
+
+
 def hook_query(request: dict) -> str:
     """What the user is looking for: the command, its description, the prompt.
 
@@ -407,6 +436,7 @@ def record_savings(request: dict, before: int, after: int, content_type: str,
             "content_types": {content_type: 1},
             "passthrough": 0,
             "ledger_key": ledger_key,
+            "model": _transcript_model(request.get("transcript_path")),
         })
     except Exception:
         pass

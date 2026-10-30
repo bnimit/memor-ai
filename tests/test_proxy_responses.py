@@ -298,3 +298,35 @@ def test_recall_leaves_a_mid_loop_request_alone(tmp_path):
     body = _body()
     assert inject_memory("responses", body, project="testproj",
                          db_path=db_path, embedder=e) is body
+
+
+# --- project scope --------------------------------------------------------
+
+
+def test_codex_environment_context_scopes_the_project(tmp_path):
+    from memor.proxy.scope import project_from_body
+
+    repo = tmp_path / "shop-api"
+    (repo / ".git").mkdir(parents=True)
+    body = {"instructions": "You are Codex.", "input": [
+        {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "# AGENTS.md instructions\nbe nice"}]},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text":
+            f"<environment_context>\n  <cwd>{repo}</cwd>\n  <shell>zsh</shell>\n</environment_context>"}]},
+        {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "why is checkout slow?"}]},
+    ]}
+    assert project_from_body(body) == "shop-api"
+
+
+def test_messages_bodies_still_read_only_the_opening_turn(tmp_path):
+    from memor.proxy.scope import project_from_body
+
+    repo = tmp_path / "other"
+    (repo / ".git").mkdir(parents=True)
+    body = {"messages": [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+        {"role": "user", "content": f"cwd: {repo}"},
+    ]}
+    assert project_from_body(body) is None
