@@ -77,8 +77,31 @@ def resolve_agent(
     return "unknown"
 
 
+def responses_url(chat_completions_url: str) -> str:
+    """The Responses endpoint beside a Chat Completions endpoint.
+
+    Upstreams are stored as the Chat Completions URL that ``memor
+    install-proxy codex`` captured. Both endpoints live under the same ``/v1``
+    root, so the Responses URL is derived rather than stored a second time.
+    """
+    url = chat_completions_url.rstrip("/")
+    if url.endswith("/chat/completions"):
+        return url[: -len("/chat/completions")] + "/responses"
+    if url.endswith("/responses"):
+        return url
+    if url.endswith("/v1"):
+        return f"{url}/responses"
+    return f"{url}/v1/responses"
+
+
 def resolve_upstream_url(agent: str, protocol: str) -> str | None:
-    """Resolve upstream URL for agent and API protocol."""
+    """Resolve upstream URL for agent and API protocol.
+
+    ``responses`` (the OpenAI Responses API) shares the OpenAI upstream.
+    """
+    if protocol == "responses":
+        base = resolve_upstream_url(agent, "openai")
+        return responses_url(base) if base else None
     upstream = get_proxy_upstream(agent)
     if upstream and upstream.get("protocol") == protocol:
         return upstream.get("base_url")

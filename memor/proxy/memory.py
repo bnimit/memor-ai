@@ -6,11 +6,14 @@ from memor.recall_experiment import ARM_CONTROL, ARM_TREATMENT
 from memor.types import GLOBAL_PROJECT
 
 
+_TEXT_BLOCKS = ("text", "input_text")
+
+
 def _content_to_text(content) -> str:
     """Flatten a message's content into plain text for use as a recall query.
 
-    Both providers allow a list of typed blocks; only the text ones carry a
-    question worth searching on.
+    Every provider allows a list of typed blocks; only the text ones carry a
+    question worth searching on. The Responses API calls them ``input_text``.
     """
     if isinstance(content, str):
         return content
@@ -19,7 +22,7 @@ def _content_to_text(content) -> str:
         for block in content:
             if isinstance(block, str):
                 parts.append(block)
-            elif isinstance(block, dict) and block.get("type") == "text":
+            elif isinstance(block, dict) and block.get("type") in _TEXT_BLOCKS:
                 parts.append(block.get("text", ""))
         return "\n".join(p for p in parts if p)
     return ""
@@ -30,8 +33,33 @@ def _append_memories(content, memories_text: str):
     if isinstance(content, str):
         return f"{content}\n\n{memories_text}"
     if isinstance(content, list):
-        return [*content, {"type": "text", "text": memories_text}]
+        block_type = "text"
+        if any(isinstance(b, dict) and b.get("type") == "input_text" for b in content):
+            block_type = "input_text"
+        return [*content, {"type": block_type, "text": memories_text}]
     return content
+
+
+def _responses_user_turn(body: dict):
+    """The Responses ``input`` user turn recall may extend, or None.
+
+    Returns ``(index, content)``; index is None when ``input`` is a bare
+    string. Only a user message that is the *last* input item qualifies. In an
+    agent loop the newest user message sits before the tool calls and outputs
+    of later steps, and extending it there would rewrite a prefix the
+    provider has already cached. Chat-shaped bodies get the same rule for free,
+    because there the newest user message is the last message.
+    """
+    items = body.get("input")
+    if isinstance(items, str):
+        return None, items
+    if not isinstance(items, list) or not items:
+        return None
+    last = items[-1]
+    if (isinstance(last, dict) and last.get("role") == "user"
+            and last.get("type", "message") == "message"):
+        return len(items) - 1, last.get("content", "")
+    return None
 
 
 def _log_recall(store, *, project: str, query: str, result, agent: str,
@@ -71,7 +99,7 @@ def inject_memory(provider: str, body: dict, *, project: str, db_path: str,
     """Inject recalled memories into the latest user message.
 
     Args:
-        provider: API provider ("anthropic" or "openai")
+        provider: API provider ("anthropic", "openai" or "responses")
         body: Request body dict with messages
         project: Project name for memory scoping
         db_path: Path to the memor database
@@ -86,21 +114,29 @@ def inject_memory(provider: str, body: dict, *, project: str, db_path: str,
     """
     from memor.recall import recall
 
-    messages = body.get("messages", [])
-    if not messages:
-        return body
+    if provider == "responses":
+        turn = _responses_user_turn(body)
+        if turn is None:
+            return body
+        last_user_idx, content = turn
+        messages = body["input"]
+        user_msg = messages[last_user_idx] if last_user_idx is not None else None
+    else:
+        messages = body.get("messages", [])
+        if not messages:
+            return body
 
-    last_user_idx = None
-    for i in range(len(messages) - 1, -1, -1):
-        if messages[i].get("role") == "user":
-            last_user_idx = i
-            break
+        last_user_idx = None
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                last_user_idx = i
+                break
 
-    if last_user_idx is None:
-        return body
+        if last_user_idx is None:
+            return body
 
-    user_msg = messages[last_user_idx]
-    content = user_msg.get("content", "")
+        user_msg = messages[last_user_idx]
+        content = user_msg.get("content", "")
     query = _content_to_text(content).strip()
     if not query:
         return body
@@ -185,6 +221,17 @@ def inject_memory(provider: str, body: dict, *, project: str, db_path: str,
         return body
 
     modified_body = body.copy()
+    if provider == "responses":
+        if last_user_idx is None:
+            modified_body["input"] = _append_memories(content, memories_text)
+            return modified_body
+        items = list(messages)
+        modified_item = dict(user_msg)
+        modified_item["content"] = _append_memories(content, memories_text)
+        items[last_user_idx] = modified_item
+        modified_body["input"] = items
+        return modified_body
+
     modified_messages = list(messages)
     modified_msg = dict(user_msg)
     modified_msg["content"] = _append_memories(content, memories_text)
