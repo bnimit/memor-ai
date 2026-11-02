@@ -88,6 +88,14 @@ def _choose_chunk_size(active_count: int) -> int:
         return 512
     return 1024
 
+
+def _model_label(value) -> str | None:
+    """A model id fit for the ledger, or None when there is none to record."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value[:200] or None
+
 class SqliteStore:
     #: Cap on the memoised document-frequency table. Vocabulary is unbounded
     #: in principle; the terms that matter are the few hundred common ones.
@@ -118,6 +126,7 @@ class SqliteStore:
         self._migrate_attribute_unknown_savings()
         self._migrate_cache_creation_tokens()
         self._migrate_experiment_arm()
+        self._migrate_savings_model()
         self._migrate_ledger_key()
         self._migrate_dedupe_hook_savings()
         self._migrate_recall_agent()
@@ -434,6 +443,24 @@ class SqliteStore:
             try:
                 self.db.execute(
                     "ALTER TABLE proxy_savings ADD COLUMN experiment_arm TEXT")
+                self.db.commit()
+            except sqlite3.Error:
+                pass
+
+    def _migrate_savings_model(self):
+        """Add the model a saving was made against.
+
+        A token saved is worth what the model it was sent to charges for it,
+        and prices differ more than tenfold across models. Without the model a
+        dollar figure can only be one flat guess. NULL means "not recorded":
+        rows from before this column are priced at the dashboard's flat rate,
+        never assigned a model after the fact.
+        """
+        cols = [r[1] for r in self.db.execute(
+            "PRAGMA table_info(proxy_savings)").fetchall()]
+        if "model" not in cols:
+            try:
+                self.db.execute("ALTER TABLE proxy_savings ADD COLUMN model TEXT")
                 self.db.commit()
             except sqlite3.Error:
                 pass
@@ -1911,15 +1938,15 @@ class SqliteStore:
                 "tokens_before, tokens_after, content_types, passthrough, "
                 "upstream_input_tokens, upstream_cache_read_tokens, "
                 "upstream_output_tokens, upstream_cache_creation_tokens, "
-                "experiment_arm, ledger_key) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "experiment_arm, ledger_key, model) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (row.get("timestamp"), row.get("agent"), row.get("provider"),
                  row.get("session_id"), row.get("tokens_before"), row.get("tokens_after"),
                  content_types_json, row.get("passthrough", 0),
                  row.get("upstream_input_tokens"), row.get("upstream_cache_read_tokens"),
                  row.get("upstream_output_tokens"),
                  row.get("upstream_cache_creation_tokens"),
-                 row.get("experiment_arm"), ledger_key))
+                 row.get("experiment_arm"), ledger_key, _model_label(row.get("model"))))
             self.db.commit()
             return cur.lastrowid
         except sqlite3.IntegrityError:
@@ -2129,6 +2156,51 @@ class SqliteStore:
                 }
             out[name] = [merged[k] for k in sorted(merged)]
         return out
+
+    def get_savings_by_model(
+        self, *, bucket: str | None = None, since: float | None = None
+    ) -> list[dict]:
+        """Tokens saved per model, optionally per time bucket.
+
+        ``bucket`` is a strftime format (local time); None aggregates over the
+        whole window. Passthrough rows are excluded, as everywhere else the
+        ledger is summed. ``model`` is None for rows written before the column
+        existed: the dashboard prices those at the user's flat rate rather than
+        guessing which model they were.
+        """
+        bucket_sql = (
+            "strftime(?, timestamp, 'unixepoch', 'localtime')" if bucket else "NULL"
+        )
+        params: list = [bucket] if bucket else []
+        where = "passthrough = 0"
+        if since is not None:
+            where += " AND timestamp >= ?"
+            params.append(since)
+        try:
+            rows = self.db.execute(
+                f"""
+                SELECT {bucket_sql} AS bucket,
+                       NULLIF(model, '') AS model,
+                       SUM(MAX(tokens_before - tokens_after, 0)) AS tokens_saved,
+                       COUNT(*) AS requests
+                FROM proxy_savings
+                WHERE {where}
+                GROUP BY bucket, NULLIF(model, '')
+                ORDER BY bucket
+                """,
+                params,
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [
+            {
+                "bucket": r["bucket"],
+                "model": r["model"],
+                "tokens_saved": int(r["tokens_saved"] or 0),
+                "requests": int(r["requests"] or 0),
+            }
+            for r in rows
+        ]
 
     def get_proxy_savings_by_agent(self, days: int = 30) -> list[dict]:
         import time as _time

@@ -117,6 +117,36 @@
     background: transparent; border: none; padding: 0;
   }
   .savings-hero-chart .chart-canvas.tall { height: 160px; }
+  .savings-breakdown {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 16px; margin-top: 16px; align-items: start;
+  }
+  .savings-breakdown[hidden] { display: none !important; }
+  @media (max-width: 900px) { .savings-breakdown { grid-template-columns: minmax(0, 1fr); } }
+  .savings-breakdown .chart-head { flex-wrap: wrap; align-items: center; }
+  .sb-tabs { display: flex; gap: 6px; }
+  .sb-tab {
+    background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  .sb-tab[aria-selected="true"] { color: var(--text); border-color: var(--text-muted); }
+  .sb-stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px; margin: 12px 0;
+  }
+  .sb-stat {
+    background: var(--bg-elev); border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm); padding: 8px 10px; min-width: 0;
+  }
+  .sb-stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); }
+  .sb-stat-value { font-family: var(--mono); font-size: 16px; font-weight: 600; margin-top: 4px; }
+  .sb-stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .sb-scroll { max-height: 360px; overflow: auto; }
+  .sb-table { width: 100%; }
+  .sb-table th, .sb-table td { padding: 8px 10px; white-space: nowrap; }
+  .sb-table th.num, .sb-table td.num { text-align: right; font-family: var(--mono); }
+  .sb-table td.model { font-family: var(--mono); font-size: 12px; }
+  .sb-table td.dim { color: var(--text-muted); }
 
   body {
     font-family: var(--font);
@@ -537,10 +567,12 @@
             </div>
             <div id="hero-subtitle">–</div>
             <div id="hero-dollar" hidden>
-              ≈ $<span id="hero-dollar-value">0</span> at
-              $<button type="button" id="hero-rate-btn" title="Edit rate">3</button>
+              ≈ $<span id="hero-dollar-value">0</span>
+              <span id="hero-dollar-basis">at</span>
+              <span id="hero-rate-wrap">$<button type="button" id="hero-rate-btn" title="Edit rate">3</button>
               <input id="hero-rate-input" type="number" min="0" step="0.1" hidden>
-              / 1M · API-equivalent estimate
+              / 1M<span id="hero-rate-rest"></span></span>
+              · API-equivalent estimate
             </div>
             <div id="cum-saved-lifetime" class="chart-meta" style="margin-top:8px;"></div>
             <div id="hero-footnote"></div>
@@ -556,6 +588,54 @@
           <div class="chart-meta" id="cum-saved-meta">30d equity curve · all proxied agents</div>
         </div>
         <div class="chart-canvas tall" id="savings-equity"></div>
+      </div>
+    </section>
+
+    <section class="savings-breakdown" id="savings-breakdown" hidden>
+      <div class="chart-panel">
+        <div class="chart-head">
+          <div class="chart-title">Savings by period</div>
+          <div class="sb-tabs" role="tablist">
+            <button type="button" class="sb-tab" data-period="daily">Daily</button>
+            <button type="button" class="sb-tab" data-period="weekly">Weekly</button>
+            <button type="button" class="sb-tab" data-period="monthly">Monthly</button>
+          </div>
+        </div>
+        <div class="sb-stats" id="sb-stats"></div>
+        <div class="sb-scroll">
+          <table class="data-table sb-table">
+            <thead>
+              <tr>
+                <th id="sb-period-head">Day</th>
+                <th class="num">Tokens saved</th>
+                <th class="num">≈ $</th>
+                <th class="num">Cumulative</th>
+              </tr>
+            </thead>
+            <tbody id="sb-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-head">
+          <div class="chart-title">By model</div>
+          <div class="chart-meta">lifetime</div>
+        </div>
+        <div class="sb-scroll">
+          <table class="data-table sb-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th class="num">Tokens saved</th>
+                <th class="num" title="List input price per million tokens">Rate / 1M</th>
+                <th class="num">≈ $ saved</th>
+                <th class="num" title="The same tokens priced as prompt-cache reads">As cache reads</th>
+              </tr>
+            </thead>
+            <tbody id="sb-models"></tbody>
+          </table>
+        </div>
+        <div class="rw-note" id="sb-note"></div>
       </div>
     </section>
   </div>
@@ -977,6 +1057,65 @@
 
   function writeTokenRatePerM(rate) {
     try { localStorage.setItem(TOKEN_RATE_STORAGE_KEY, String(rate)); } catch (e) {}
+  }
+
+  // Dollars for a priced bucket from /api/savings-value: tokens on models with
+  // a known price come pre-priced; the rest use the flat rate. The server never
+  // guesses a price and the page never guesses a model.
+  function bucketDollars(bucket, ratePerM) {
+    if (!bucket) return 0;
+    var rate = Number(ratePerM);
+    if (!(rate >= 0) || !isFinite(rate)) rate = 0;
+    return (Number(bucket.usd_priced) || 0)
+      + (Number(bucket.tokens_unpriced) || 0) * rate / 1e6;
+  }
+
+  // Lifetime estimate and which basis priced it: 'model' (every token had a
+  // model price), 'flat' (none did) or 'mixed'. Null when nothing was saved.
+  function pricedDollars(lifetime, ratePerM) {
+    if (!lifetime) return null;
+    var tokens = Number(lifetime.tokens_saved) || 0;
+    if (!(tokens > 0)) return null;
+    var unpriced = Number(lifetime.tokens_unpriced) || 0;
+    var mode = unpriced >= tokens ? 'flat' : (unpriced > 0 ? 'mixed' : 'model');
+    return {
+      usd: bucketDollars(lifetime, ratePerM),
+      floor: Number(lifetime.usd_floor_priced) || 0,
+      mode: mode,
+    };
+  }
+
+  function fmtUsd(n) {
+    if (n == null || !isFinite(n)) return '–';
+    if (n > 0 && n < 0.01) return '<$0.01';
+    if (n >= 100) return '$' + Math.round(n).toLocaleString('en-US');
+    return '$' + n.toFixed(2);
+  }
+
+  // Averages over daily buckets. "Per week" spreads the total over the weeks
+  // since the first active day, so a quiet stretch lowers it as it should.
+  function periodStats(daily, ratePerM, todayIso) {
+    var rows = (daily || []).filter(function(r) { return (r.tokens_saved || 0) > 0; });
+    if (!rows.length) return null;
+    var tokens = 0, usd = 0, best = rows[0];
+    rows.forEach(function(r) {
+      tokens += r.tokens_saved;
+      usd += bucketDollars(r, ratePerM);
+      if (r.tokens_saved > best.tokens_saved) best = r;
+    });
+    var first = new Date(rows[0].bucket + 'T00:00:00').getTime();
+    var today = new Date((todayIso || rows[rows.length - 1].bucket) + 'T00:00:00').getTime();
+    var spanDays = Math.max(1, Math.round((today - first) / 86400000) + 1);
+    var weeks = Math.max(1, spanDays / 7);
+    return {
+      active_days: rows.length,
+      span_days: spanDays,
+      tokens: tokens,
+      usd: usd,
+      per_active_day: { tokens: tokens / rows.length, usd: usd / rows.length },
+      per_week: { tokens: tokens / weeks, usd: usd / weeks },
+      best: { bucket: best.bucket, tokens: best.tokens_saved, usd: bucketDollars(best, ratePerM) },
+    };
   }
   /* end-memor-dashboard-helpers */
 
@@ -1716,7 +1855,11 @@
       }
     }
 
-    var dollars = estimateDollarSavings(lifetimeSaved, rate);
+    // Priced per model when /api/savings-value is available; the flat rate
+    // covers whatever has no model price, or everything when it is not.
+    var priced = pricedDollars(data.value && data.value.lifetime, rate);
+    var dollars = priced ? priced.usd : estimateDollarSavings(lifetimeSaved, rate);
+    var basis = priced ? priced.mode : 'flat';
     if (dollarEl && dollarVal) {
       if (dollars == null) {
         dollarEl.hidden = true;
@@ -1725,6 +1868,15 @@
         dollarVal.textContent = dollars.toFixed(2);
       }
     }
+    var basisEl = document.getElementById('hero-dollar-basis');
+    var rateWrap = document.getElementById('hero-rate-wrap');
+    var rateRest = document.getElementById('hero-rate-rest');
+    if (basisEl) {
+      basisEl.textContent = basis === 'flat' ? 'at'
+        : "at each model's list input rate" + (basis === 'mixed' ? ',' : '');
+    }
+    if (rateWrap) rateWrap.hidden = basis === 'model';
+    if (rateRest) rateRest.textContent = basis === 'mixed' ? ' for models without a price' : '';
 
     var lifeEl = document.getElementById('cum-saved-lifetime');
     if (lifeEl) {
@@ -1766,6 +1918,10 @@
       if (dollars != null) {
         parts.push('On a flat subscription this is headroom, not a lower bill.');
       }
+      if (priced && basis !== 'flat' && priced.floor > 0) {
+        parts.push('Priced as cache reads, which most resends are: '
+          + fmtUsd(priced.floor) + (basis === 'mixed' ? ' for the priced share.' : '.'));
+      }
       footEl.textContent = parts.join(' ');
     }
 
@@ -1779,6 +1935,85 @@
       }
       ctEl.textContent = ctParts.length ? ctParts.join(' · ') : 'compressed by type';
     }
+  }
+
+  var SAVINGS_VALUE = null;
+  var SB_PERIOD = 'daily';
+  var SB_HEADS = { daily: 'Day', weekly: 'Week', monthly: 'Month' };
+
+  function localIsoDate(d) {
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return d.getFullYear() + '-' + m + '-' + day;
+  }
+
+  function renderSavingsBreakdown(data) {
+    var section = document.getElementById('savings-breakdown');
+    if (!section) return;
+    if (data) SAVINGS_VALUE = data;
+    var v = SAVINGS_VALUE;
+    if (!v || !v.lifetime || !(v.lifetime.tokens_saved > 0)) { section.hidden = true; return; }
+    section.hidden = false;
+    var rate = readTokenRatePerM();
+
+    Array.prototype.forEach.call(document.querySelectorAll('.sb-tab'), function(btn) {
+      btn.setAttribute('aria-selected', btn.dataset.period === SB_PERIOD ? 'true' : 'false');
+    });
+    document.getElementById('sb-period-head').textContent = SB_HEADS[SB_PERIOD] || 'Period';
+
+    var stats = periodStats(v.daily, rate, localIsoDate(new Date()));
+    var statsEl = document.getElementById('sb-stats');
+    statsEl.innerHTML = '';
+    if (stats) {
+      [['Active days', String(stats.active_days), 'of the last ' + stats.span_days],
+       ['Per active day', fmt(Math.round(stats.per_active_day.tokens)), '≈ ' + fmtUsd(stats.per_active_day.usd)],
+       ['Per week', fmt(Math.round(stats.per_week.tokens)), '≈ ' + fmtUsd(stats.per_week.usd)],
+       ['Best day', fmt(stats.best.tokens), stats.best.bucket + ' · ≈ ' + fmtUsd(stats.best.usd)]
+      ].forEach(function(t) {
+        var tile = el('div', { class: 'sb-stat' });
+        tile.innerHTML = '<div class="sb-stat-label">' + esc(t[0]) + '</div>'
+          + '<div class="sb-stat-value">' + esc(t[1]) + '</div>'
+          + '<div class="sb-stat-sub">' + esc(t[2]) + '</div>';
+        statsEl.appendChild(tile);
+      });
+    }
+
+    var rows = v[SB_PERIOD] || [];
+    var cum = 0, cumUsd = 0;
+    var withCum = rows.map(function(r) {
+      var usd = bucketDollars(r, rate);
+      cum += r.tokens_saved || 0;
+      cumUsd += usd;
+      return { bucket: r.bucket, tokens: r.tokens_saved || 0, usd: usd, cum: cum, cumUsd: cumUsd };
+    });
+    var body = document.getElementById('sb-body');
+    body.innerHTML = '';
+    withCum.reverse().forEach(function(r) {
+      var tr = el('tr');
+      tr.innerHTML = '<td>' + esc(r.bucket) + '</td>'
+        + '<td class="num">' + fmt(r.tokens) + '</td>'
+        + '<td class="num">' + fmtUsd(r.usd) + '</td>'
+        + '<td class="num dim">' + fmt(r.cum) + ' · ' + fmtUsd(r.cumUsd) + '</td>';
+      body.appendChild(tr);
+    });
+
+    var models = document.getElementById('sb-models');
+    models.innerHTML = '';
+    (v.models || []).forEach(function(m) {
+      var p = m.price;
+      var usd = p ? m.usd : m.tokens_saved * rate / 1e6;
+      var tr = el('tr');
+      tr.innerHTML = '<td class="model' + (m.model ? '' : ' dim') + '">'
+          + esc(m.model || 'not recorded') + '</td>'
+        + '<td class="num">' + fmt(m.tokens_saved) + '</td>'
+        + '<td class="num' + (p ? '' : ' dim') + '">'
+          + (p ? '$' + p.input_per_m + (p.source === 'config' ? ' (yours)' : '')
+               : '$' + rate + ' flat') + '</td>'
+        + '<td class="num' + (p ? '' : ' dim') + '">' + fmtUsd(usd) + '</td>'
+        + '<td class="num dim">' + (p ? fmtUsd(m.usd_floor) : '–') + '</td>';
+      models.appendChild(tr);
+    });
+    document.getElementById('sb-note').textContent = v.note || '';
   }
 
   function renderRecallPill(verdict) {
@@ -2540,10 +2775,14 @@
       var results = await Promise.allSettled([
         api('/api/savings-ledger?days=30'),
         api('/api/compression'),
+        api('/api/savings-value?days=365'),
       ]);
       var ledger = results[0].status === 'fulfilled' ? results[0].value : null;
       var compression = results[1].status === 'fulfilled' ? results[1].value : null;
+      var value = results[2].status === 'fulfilled' ? results[2].value : null;
+      if (ledger) ledger.value = value;
       renderSavingsHero(ledger, compression);
+      renderSavingsBreakdown(value);
     } catch (e) { console.warn(e); }
   }
   async function loadOverviewRecallPill() {
@@ -2873,6 +3112,13 @@
       SAVINGS_PERIOD = btn.dataset.period;
       renderSavingsPeriods(null);
       renderCrossTool(null);
+    });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('.sb-tab'), function(btn) {
+    btn.addEventListener('click', function() {
+      SB_PERIOD = btn.dataset.period;
+      renderSavingsBreakdown(null);
     });
   });
 

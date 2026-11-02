@@ -32,11 +32,14 @@ def extract_latest_tool_payloads(provider: str, body: dict) -> list[ToolPayload]
 
     Anthropic: Last user message's tool_result content blocks
     OpenAI: Trailing contiguous tool-role messages
+    Responses: Trailing contiguous tool-output input items
     """
     if provider == "anthropic":
         return _extract_anthropic_latest(body)
     elif provider == "openai":
         return _extract_openai_latest(body)
+    elif provider == "responses":
+        return _extract_responses_latest(body)
     else:
         return []
 
@@ -56,6 +59,8 @@ def extract_all_tool_payloads(provider: str, body: dict) -> list[ToolPayload]:
         payloads = _extract_anthropic_all(body)
     elif provider == "openai":
         payloads = _extract_openai_all(body)
+    elif provider == "responses":
+        payloads = _extract_responses_all(body)
     else:
         return []
     return _mark_latest_per_file(payloads)
@@ -261,6 +266,88 @@ def _extract_openai_all(body: dict) -> list[ToolPayload]:
             file_path=file_path,
             message_index=i,
         ))
+    return payloads
+
+
+#: Responses API input items that carry a tool's output, and the call item each
+#: answers. Codex sends shell and MCP results as ``function_call_output`` and
+#: freeform tools (apply_patch) as ``custom_tool_call_output``.
+_RESPONSES_OUTPUT_TYPES = {
+    "function_call_output": "function_call",
+    "custom_tool_call_output": "custom_tool_call",
+    "local_shell_call_output": "local_shell_call",
+}
+
+
+def _responses_items(body: dict) -> list:
+    items = body.get("input")
+    return items if isinstance(items, list) else []
+
+
+def _responses_call_index(items: list) -> dict[str, tuple[str, str | None]]:
+    """Map call_id -> (tool name, file path) across Responses call items."""
+    index: dict[str, tuple[str, str | None]] = {}
+    calls = set(_RESPONSES_OUTPUT_TYPES.values())
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") not in calls:
+            continue
+        call_id = item.get("call_id")
+        if not isinstance(call_id, str):
+            continue
+        name = item.get("name") or (
+            "local_shell" if item.get("type") == "local_shell_call" else "unknown"
+        )
+        args = item.get("arguments", item.get("input"))
+        index[call_id] = (name, _file_from_args(args))
+    return index
+
+
+def _responses_payload(
+    item, idx: int, call_index: dict[str, tuple[str, str | None]]
+) -> ToolPayload | None:
+    """A payload for one output item, or None if it carries no plain text.
+
+    Only string outputs are rewritten. An output given as a list of content
+    parts may hold images, and rewriting it as text would change its shape.
+    """
+    if not isinstance(item, dict) or item.get("type") not in _RESPONSES_OUTPUT_TYPES:
+        return None
+    output = item.get("output")
+    if not isinstance(output, str):
+        return None
+    name, file_path = call_index.get(item.get("call_id"), (None, None))
+    return ToolPayload(
+        path=["input", idx, "output"],
+        text=output,
+        tool_name=name,
+        file_path=file_path,
+        message_index=idx,
+    )
+
+
+def _extract_responses_latest(body: dict) -> list[ToolPayload]:
+    """Extract trailing contiguous tool-output items from ``input``."""
+    items = _responses_items(body)
+    call_index = _responses_call_index(items)
+    payloads = []
+    for i in range(len(items) - 1, -1, -1):
+        item = items[i]
+        if not isinstance(item, dict) or item.get("type") not in _RESPONSES_OUTPUT_TYPES:
+            break
+        payload = _responses_payload(item, i, call_index)
+        if payload is not None:
+            payloads.insert(0, payload)
+    return payloads
+
+
+def _extract_responses_all(body: dict) -> list[ToolPayload]:
+    items = _responses_items(body)
+    call_index = _responses_call_index(items)
+    payloads: list[ToolPayload] = []
+    for i, item in enumerate(items):
+        payload = _responses_payload(item, i, call_index)
+        if payload is not None:
+            payloads.append(payload)
     return payloads
 
 

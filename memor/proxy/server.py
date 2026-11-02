@@ -1,4 +1,4 @@
-"""HTTP proxy server for Anthropic API with context compression."""
+"""HTTP proxy server for the Anthropic and OpenAI APIs with context compression."""
 from __future__ import annotations
 import json
 import time
@@ -13,11 +13,7 @@ from memor.proxy.forward import (
 )
 from memor.proxy.shim import compressor_state, prepare_request_body
 from memor.proxy.upstream import resolve_agent, resolve_upstream_url
-from memor.proxy.usage import (
-    UsageSniffer,
-    usage_from_anthropic,
-    usage_from_openai,
-)
+from memor.proxy.usage import USAGE_PARSERS, UpstreamUsage, UsageSniffer
 from memor.embed.local import LocalEmbedder
 
 
@@ -92,279 +88,151 @@ def create_proxy_app(db_path: str | None = None, embedder = None) -> FastAPI:
             # Capabilities the caller can test for directly, rather than
             # inferring them from a version string.
             "captures_stream_usage": True,
+            "responses_api": True,
         }
     
+    async def proxy(request: Request, protocol: str) -> Response:
+        """Compress, inject recall, forward, and record one request.
+
+        ``protocol`` is the wire format: ``anthropic`` (Messages),
+        ``openai`` (Chat Completions) or ``responses`` (OpenAI Responses, the
+        only API current Codex speaks). The three differ in where tool output
+        sits and how usage is reported, both handled by protocol-keyed helpers,
+        so one path serves them all.
+        """
+        body = await request.json()
+
+        # A proxy is handed an HTTP request and nothing else, so the project
+        # has to be read out of the request. The header is honoured when a
+        # client sends one; no agent does today, and asking for it was why
+        # every proxied recall resolved to "unknown" and returned nothing.
+        from memor.proxy.scope import resolve_request_project
+        project_hint = (request.headers.get("x-memor-project") or
+                       request.headers.get("x-project") or "")
+        project = resolve_request_project(project_hint, body)
+        # Resolved before the pipeline runs so the recall it serves is logged
+        # against the right agent and session rather than after the fact.
+        # Agents are configured per vendor, and Responses is OpenAI's.
+        agent = resolve_agent(
+            request.headers, path=str(request.url.path),
+            protocol="openai" if protocol == "responses" else protocol,
+        )
+        session_id = (request.headers.get("x-session-id")
+                      or request.headers.get("session-id") or "")
+        result = prepare_request_body(
+            protocol, body, store,
+            db_path=db_path, embedder=embedder, project=project,
+            agent=agent, session_id=session_id,
+        )
+
+        upstream_headers = sanitize_request_headers(request.headers)
+        stream = _wants_stream(body, request.headers)
+
+        upstream_url = resolve_upstream_url(agent, protocol)
+        if upstream_url is None:
+            return Response(
+                content=json.dumps({"error": "no upstream configured for agent"}),
+                status_code=502,
+                media_type="application/json",
+            )
+        upstream_content = json.dumps(result.body).encode("utf-8")
+
+        row = {
+            "timestamp": time.time(),
+            "agent": agent,
+            "provider": protocol,
+            "session_id": session_id or None,
+            "tokens_before": result.tokens_before,
+            "tokens_after": result.tokens_after,
+            "content_types": result.content_types,
+            "passthrough": int(result.passthrough),
+            "experiment_arm": result.experiment_arm,
+            # What the saving is priced against on the dashboard.
+            "model": body.get("model"),
+        }
+
+        if not stream:
+            upstream_response = await forward_request(
+                method="POST",
+                url=upstream_url,
+                headers=upstream_headers,
+                content=upstream_content,
+                stream=False,
+            )
+
+            response_content = await upstream_response.aread()
+            usage = UpstreamUsage()
+            if upstream_response.status_code == 200:
+                try:
+                    usage = USAGE_PARSERS[protocol](json.loads(response_content))
+                except (json.JSONDecodeError, KeyError, AttributeError):
+                    pass
+
+            row.update(usage.as_row())
+            store.record_proxy_savings(row)
+
+            return Response(
+                content=response_content,
+                status_code=upstream_response.status_code,
+                headers=sanitize_response_headers(upstream_response.headers),
+            )
+
+        # Streaming: use context manager to keep client alive
+        streaming_ctx = await forward_request(
+            method="POST",
+            url=upstream_url,
+            headers=upstream_headers,
+            content=upstream_content,
+            stream=True,
+        )
+        resp = await streaming_ctx.__aenter__()
+
+        # The savings row is written before the first byte is forwarded so
+        # that a dropped stream still records that compression happened.
+        # Usage arrives in the stream itself and completes the row at the
+        # end -- see memor/proxy/usage.py. Chat Completions only emits it
+        # when the client asked via stream_options, so it may be absent.
+        row_id = store.record_proxy_savings(row)
+        sniffer = UsageSniffer(protocol)
+
+        async def stream_with_context():
+            try:
+                async for chunk in resp.aiter_bytes():
+                    sniffer.feed(chunk)
+                    yield chunk
+            finally:
+                sniffer.close()
+                store.update_proxy_usage(row_id, sniffer.usage.as_row())
+                await streaming_ctx.__aexit__(None, None, None)
+
+        return StreamingResponse(
+            stream_with_context(),
+            status_code=resp.status_code,
+            headers=sanitize_response_headers(resp.headers),
+        )
+
     @app.post("/v1/messages")
     @app.post("/cursor/v1/messages")
     @app.post("/cline/v1/messages")
     @app.post("/opencode/v1/messages")
     async def messages_endpoint(request: Request):
         """Proxy endpoint for Anthropic Messages API."""
-        # Parse request body
-        body = await request.json()
+        return await proxy(request, "anthropic")
 
-        # A proxy is handed an HTTP request and nothing else, so the project
-        # has to be read out of the request. The header is honoured when a
-        # client sends one; no agent does today, and asking for it was why
-        # every proxied recall resolved to "unknown" and returned nothing.
-        from memor.proxy.scope import resolve_request_project
-        project_hint = (request.headers.get("x-memor-project") or
-                       request.headers.get("x-project") or "")
-        project = resolve_request_project(project_hint, body)
-        # Resolved before the pipeline runs so the recall it serves is logged
-        # against the right agent and session rather than after the fact.
-        agent = resolve_agent(
-            request.headers, path=str(request.url.path), protocol="anthropic",
-        )
-        session_id = (request.headers.get("x-session-id")
-                      or request.headers.get("session-id") or "")
-        result = prepare_request_body(
-            "anthropic", body, store,
-            db_path=db_path, embedder=embedder, project=project,
-            agent=agent, session_id=session_id,
-        )
-
-        upstream_headers = sanitize_request_headers(request.headers)
-        
-        stream = _wants_stream(body, request.headers)
-        
-        upstream_url = resolve_upstream_url(agent, "anthropic")
-        if upstream_url is None:
-            return Response(
-                content=json.dumps({"error": "no upstream configured for agent"}),
-                status_code=502,
-                media_type="application/json",
-            )
-        upstream_content = json.dumps(result.body).encode("utf-8")
-
-        # Parse usage from response for non-streaming
-        upstream_usage = None
-
-        if not stream:
-            # Non-streaming: get response with buffered content
-            upstream_response = await forward_request(
-                method="POST",
-                url=upstream_url,
-                headers=upstream_headers,
-                content=upstream_content,
-                stream=False,
-            )
-
-            # Read response once and parse usage
-            response_content = await upstream_response.aread()
-            if upstream_response.status_code == 200:
-                try:
-                    upstream_usage = usage_from_anthropic(json.loads(response_content))
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-            # Record savings to database
-            session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-
-            row = {
-                "timestamp": time.time(),
-                "agent": agent,
-                "provider": "anthropic",
-                "session_id": session_id,
-                "tokens_before": result.tokens_before,
-                "tokens_after": result.tokens_after,
-                "content_types": result.content_types,
-                "passthrough": int(result.passthrough),
-                "experiment_arm": result.experiment_arm,
-            }
-            row.update((upstream_usage or UsageSniffer("anthropic").usage).as_row())
-            store.record_proxy_savings(row)
-            
-            # Return non-streaming response
-            return Response(
-                content=response_content,
-                status_code=upstream_response.status_code,
-                headers=sanitize_response_headers(upstream_response.headers),
-            )
-        else:
-            # Streaming: use context manager to keep client alive
-            streaming_ctx = await forward_request(
-                method="POST",
-                url=upstream_url,
-                headers=upstream_headers,
-                content=upstream_content,
-                stream=True,
-            )
-            
-            # Enter context to get metadata
-            resp = await streaming_ctx.__aenter__()
-            
-            # The savings row is written before the first byte is forwarded so
-            # that a dropped stream still records that compression happened.
-            # Usage arrives in the stream itself and completes the row at the
-            # end -- see memor/proxy/usage.py.
-            session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-
-            row_id = store.record_proxy_savings({
-                "timestamp": time.time(),
-                "agent": agent,
-                "provider": "anthropic",
-                "session_id": session_id,
-                "tokens_before": result.tokens_before,
-                "tokens_after": result.tokens_after,
-                "content_types": result.content_types,
-                "passthrough": int(result.passthrough),
-                "experiment_arm": result.experiment_arm,
-            })
-
-            # Return streaming response - context will be managed by the generator
-            sniffer = UsageSniffer("anthropic")
-
-            async def stream_with_context():
-                try:
-                    async for chunk in resp.aiter_bytes():
-                        sniffer.feed(chunk)
-                        yield chunk
-                finally:
-                    sniffer.close()
-                    store.update_proxy_usage(row_id, sniffer.usage.as_row())
-                    await streaming_ctx.__aexit__(None, None, None)
-            
-            return StreamingResponse(
-                stream_with_context(),
-                status_code=resp.status_code,
-                headers=sanitize_response_headers(resp.headers),
-            )
-    
     @app.post("/v1/chat/completions")
     @app.post("/cursor/v1/chat/completions")
     @app.post("/cline/v1/chat/completions")
     @app.post("/opencode/v1/chat/completions")
     async def chat_completions_endpoint(request: Request):
         """Proxy endpoint for OpenAI Chat Completions API."""
-        # Parse request body
-        body = await request.json()
+        return await proxy(request, "openai")
 
-        # A proxy is handed an HTTP request and nothing else, so the project
-        # has to be read out of the request. The header is honoured when a
-        # client sends one; no agent does today, and asking for it was why
-        # every proxied recall resolved to "unknown" and returned nothing.
-        from memor.proxy.scope import resolve_request_project
-        project_hint = (request.headers.get("x-memor-project") or
-                       request.headers.get("x-project") or "")
-        project = resolve_request_project(project_hint, body)
-        # Resolved before the pipeline runs so the recall it serves is logged
-        # against the right agent and session rather than after the fact.
-        agent = resolve_agent(
-            request.headers, path=str(request.url.path), protocol="openai",
-        )
-        session_id = (request.headers.get("x-session-id")
-                      or request.headers.get("session-id") or "")
-        result = prepare_request_body(
-            "openai", body, store,
-            db_path=db_path, embedder=embedder, project=project,
-            agent=agent, session_id=session_id,
-        )
+    @app.post("/v1/responses")
+    @app.post("/cursor/v1/responses")
+    @app.post("/cline/v1/responses")
+    @app.post("/opencode/v1/responses")
+    async def responses_endpoint(request: Request):
+        """Proxy endpoint for the OpenAI Responses API (Codex)."""
+        return await proxy(request, "responses")
 
-        upstream_headers = sanitize_request_headers(request.headers)
-        
-        stream = _wants_stream(body, request.headers)
-        
-        upstream_url = resolve_upstream_url(agent, "openai")
-        if upstream_url is None:
-            return Response(
-                content=json.dumps({"error": "no upstream configured for agent"}),
-                status_code=502,
-                media_type="application/json",
-            )
-        upstream_content = json.dumps(result.body).encode("utf-8")
-        
-        # Parse usage from response for non-streaming
-        upstream_usage = None
-        
-        if not stream:
-            # Non-streaming: get response with buffered content
-            upstream_response = await forward_request(
-                method="POST",
-                url=upstream_url,
-                headers=upstream_headers,
-                content=upstream_content,
-                stream=False,
-            )
-            
-            # Read response once and parse usage
-            response_content = await upstream_response.aread()
-            if upstream_response.status_code == 200:
-                try:
-                    upstream_usage = usage_from_openai(json.loads(response_content))
-                except (json.JSONDecodeError, KeyError):
-                    pass
-            
-            # Record savings to database
-            session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            
-            row = {
-                "timestamp": time.time(),
-                "agent": agent,
-                "provider": "openai",
-                "session_id": session_id,
-                "tokens_before": result.tokens_before,
-                "tokens_after": result.tokens_after,
-                "content_types": result.content_types,
-                "passthrough": int(result.passthrough),
-                "experiment_arm": result.experiment_arm,
-            }
-            row.update((upstream_usage or UsageSniffer("openai").usage).as_row())
-            store.record_proxy_savings(row)
-            
-            # Return non-streaming response
-            return Response(
-                content=response_content,
-                status_code=upstream_response.status_code,
-                headers=sanitize_response_headers(upstream_response.headers),
-            )
-        else:
-            # Streaming: use context manager to keep client alive
-            streaming_ctx = await forward_request(
-                method="POST",
-                url=upstream_url,
-                headers=upstream_headers,
-                content=upstream_content,
-                stream=True,
-            )
-            
-            # Enter context to get metadata
-            resp = await streaming_ctx.__aenter__()
-            
-            # Written before forwarding; completed from the stream's own usage
-            # frame once it ends. OpenAI only emits that frame when the client
-            # asked for it via stream_options, so it may legitimately be absent.
-            session_id = request.headers.get("x-session-id") or request.headers.get("session-id")
-            
-            row_id = store.record_proxy_savings({
-                "timestamp": time.time(),
-                "agent": agent,
-                "provider": "openai",
-                "session_id": session_id,
-                "tokens_before": result.tokens_before,
-                "tokens_after": result.tokens_after,
-                "content_types": result.content_types,
-                "passthrough": int(result.passthrough),
-                "experiment_arm": result.experiment_arm,
-            })
-            
-            # Return streaming response - context will be managed by the generator
-            sniffer = UsageSniffer("openai")
-
-            async def stream_with_context():
-                try:
-                    async for chunk in resp.aiter_bytes():
-                        sniffer.feed(chunk)
-                        yield chunk
-                finally:
-                    sniffer.close()
-                    store.update_proxy_usage(row_id, sniffer.usage.as_row())
-                    await streaming_ctx.__aexit__(None, None, None)
-            
-            return StreamingResponse(
-                stream_with_context(),
-                status_code=resp.status_code,
-                headers=sanitize_response_headers(resp.headers),
-            )
-    
     return app
