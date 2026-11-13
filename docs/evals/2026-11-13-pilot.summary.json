@@ -1,0 +1,108 @@
+{
+  "model": "claude-sonnet-5-5",
+  "reps": 2,
+  "tasks": [
+    "memor-310d070",
+    "memor-68a033c",
+    "memor-9f2a168",
+    "memor-eaa4790",
+    "memor-fd10ab9"
+  ],
+  "summary": {
+    "by_arm": {
+      "bare": {
+        "runs": 10,
+        "resolved": 10,
+        "cost_usd": 1.5675,
+        "mean_cost_usd": 0.1567,
+        "mean_turns": 10.7,
+        "mean_wall_seconds": 194.5,
+        "hook_firings": 0,
+        "hook_tokens_saved": 0
+      },
+      "memor": {
+        "runs": 10,
+        "resolved": 10,
+        "cost_usd": 1.454,
+        "mean_cost_usd": 0.1454,
+        "mean_turns": 10.0,
+        "mean_wall_seconds": 186.4,
+        "hook_firings": 15,
+        "hook_tokens_saved": 5294
+      }
+    },
+    "paired_cost": [
+      {
+        "task": "memor-310d070",
+        "rep": 1,
+        "bare": 0.22185280000000002,
+        "memor": 0.2039323,
+        "delta_pct": -8.1
+      },
+      {
+        "task": "memor-310d070",
+        "rep": 2,
+        "bare": 0.2690286,
+        "memor": 0.21639139999999998,
+        "delta_pct": -19.6
+      },
+      {
+        "task": "memor-68a033c",
+        "rep": 1,
+        "bare": 0.08399700000000002,
+        "memor": 0.058458600000000006,
+        "delta_pct": -30.4
+      },
+      {
+        "task": "memor-68a033c",
+        "rep": 2,
+        "bare": 0.0833844,
+        "memor": 0.062370400000000006,
+        "delta_pct": -25.2
+      },
+      {
+        "task": "memor-9f2a168",
+        "rep": 1,
+        "bare": 0.1703769,
+        "memor": 0.13628900000000002,
+        "delta_pct": -20.0
+      },
+      {
+        "task": "memor-9f2a168",
+        "rep": 2,
+        "bare": 0.1411507,
+        "memor": 0.1252808,
+        "delta_pct": -11.2
+      },
+      {
+        "task": "memor-eaa4790",
+        "rep": 1,
+        "bare": 0.1548157,
+        "memor": 0.1862383,
+        "delta_pct": 20.3
+      },
+      {
+        "task": "memor-eaa4790",
+        "rep": 2,
+        "bare": 0.1687551,
+        "memor": 0.175586,
+        "delta_pct": 4.0
+      },
+      {
+        "task": "memor-fd10ab9",
+        "rep": 1,
+        "bare": 0.12968670000000002,
+        "memor": 0.1382746,
+        "delta_pct": 6.6
+      },
+      {
+        "task": "memor-fd10ab9",
+        "rep": 2,
+        "bare": 0.1444316,
+        "memor": 0.1512057,
+        "delta_pct": 4.7
+      }
+    ],
+    "arm_problems": []
+  }
+}
