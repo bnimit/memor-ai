@@ -1,0 +1,24 @@
+{
+  "id": "memor-68a033c",
+  "commit": "68a033c",
+  "origin_subject": "Index ledger_key only after the migration adds it.",
+  "src_files": [
+    "memor/store/sqlite_store.py"
+  ],
+  "test_files": [
+    "tests/test_proxy_ledger.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_proxy_ledger.py::test_opening_a_pre_ledger_key_database_does_not_crash"
+  ],
+  "pass_to_pass": [
+    "tests/test_proxy_ledger.py::test_ccr_put_get_evict",
+    "tests/test_proxy_ledger.py::test_existing_hook_duplicates_are_collapsed_on_open",
+    "tests/test_proxy_ledger.py::test_hook_and_proxy_savings_are_split",
+    "tests/test_proxy_ledger.py::test_ledger_key_makes_hook_retries_a_noop",
+    "tests/test_proxy_ledger.py::test_lifetime_total_does_not_shrink_as_traffic_ages_out",
+    "tests/test_proxy_ledger.py::test_passthroughs_do_not_dilute_the_headline_rate",
+    "tests/test_proxy_ledger.py::test_record_and_summary"
+  ],
+  "prompt": "Opening a memor database created by an earlier version crashes with `sqlite3.OperationalError: no such column: ledger_key`. A brand-new database opens fine; only an existing one that predates that column fails, so upgrading breaks every install that already had data. Find the cause and fix it. The relevant tests are in tests/test_proxy_ledger.py.\n\nRun the tests to see the current failures, then change the source so they pass. Do not edit anything under tests/ \u2014 the test files are restored from git before grading, so changes there are discarded. Do not change unrelated behaviour."
+}

@@ -1,0 +1,32 @@
+{
+  "id": "memor-310d070",
+  "commit": "310d070",
+  "origin_subject": "Attribute nearly every Cursor thread, instead of stranding a sixth of them",
+  "src_files": [
+    "memor/ingest/cursor.py"
+  ],
+  "test_files": [
+    "tests/test_ingest_cursor.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_ingest_cursor.py::test_decode_dashed_path_handles_dashes_in_the_project_name",
+    "tests/test_ingest_cursor.py::test_encoded_scratch_dir_attributes_a_research_thread"
+  ],
+  "pass_to_pass": [
+    "tests/test_ingest_cursor.py::test_bare_tool_call_without_an_outcome_is_dropped",
+    "tests/test_ingest_cursor.py::test_cursor_state_key_is_namespaced",
+    "tests/test_ingest_cursor.py::test_decode_tool_result_unwraps_nested_json_string",
+    "tests/test_ingest_cursor.py::test_failed_tool_call_records_its_status",
+    "tests/test_ingest_cursor.py::test_missing_database_scans_clean",
+    "tests/test_ingest_cursor.py::test_parse_session_extracts_roles_and_order",
+    "tests/test_ingest_cursor.py::test_scan_all_sources_includes_cursor_units",
+    "tests/test_ingest_cursor.py::test_scan_all_sources_skips_cursor_when_unset",
+    "tests/test_ingest_cursor.py::test_scan_falls_back_to_unknown_without_any_path",
+    "tests/test_ingest_cursor.py::test_scan_prefers_workspace_project_over_path_inference",
+    "tests/test_ingest_cursor.py::test_scan_uses_newest_bubble_as_session_mtime",
+    "tests/test_ingest_cursor.py::test_terminal_failure_survives_the_prose_noise_filter",
+    "tests/test_ingest_cursor.py::test_tool_call_bubble_is_ingested_with_its_result",
+    "tests/test_ingest_cursor.py::test_workspace_map_resolves_project_for_its_composers"
+  ],
+  "prompt": "Too many Cursor threads are ingested with the project `unknown`, which on a project-scoped recall is the same as not being ingested at all. Two cases that should attribute do not: a thread whose workspace directory is encoded in a dashed path whose project name itself contains dashes, and a thread whose only path evidence is an encoded scratch directory. Fix the attribution for both. The relevant tests are in tests/test_ingest_cursor.py.\n\nRun the tests to see the current failures, then change the source so they pass. Do not edit anything under tests/ \u2014 the test files are restored from git before grading, so changes there are discarded. Do not change unrelated behaviour."
+}

@@ -1,0 +1,53 @@
+{
+  "id": "memor-eaa4790",
+  "commit": "eaa4790",
+  "origin_subject": "Count the tokens the model writes back, not only the ones we send",
+  "src_files": [
+    "memor/compression_worth.py"
+  ],
+  "test_files": [
+    "tests/test_compression_worth.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_compression_worth.py::test_a_thin_arm_reports_unmeasured_rather_than_zero",
+    "tests/test_compression_worth.py::test_output_expansion_is_reported_as_a_cost",
+    "tests/test_compression_worth.py::test_shorter_answers_are_reported_without_alarm",
+    "tests/test_compression_worth.py::test_the_comparison_is_labelled_observational"
+  ],
+  "pass_to_pass": [
+    "tests/test_compression_worth.py::test_a_proxy_only_headline_makes_no_hook_disclosure",
+    "tests/test_compression_worth.py::test_a_single_compressed_usage_row_is_not_a_sample",
+    "tests/test_compression_worth.py::test_attributable_traffic_reports_no_mismatch_warning",
+    "tests/test_compression_worth.py::test_content_types_are_counted_across_rows",
+    "tests/test_compression_worth.py::test_content_types_may_arrive_as_a_dict",
+    "tests/test_compression_worth.py::test_disabled_reports_off",
+    "tests/test_compression_worth.py::test_empty_ledger_points_at_the_opt_in",
+    "tests/test_compression_worth.py::test_enabled_but_nothing_compressed_after_enough_traffic_is_flagged",
+    "tests/test_compression_worth.py::test_enabled_with_code_compressed_is_live",
+    "tests/test_compression_worth.py::test_enabled_with_no_traffic_is_pending",
+    "tests/test_compression_worth.py::test_hook_path_savings_are_reported_separately",
+    "tests/test_compression_worth.py::test_hook_savings_are_labelled_as_unverifiable",
+    "tests/test_compression_worth.py::test_malformed_content_types_do_not_raise",
+    "tests/test_compression_worth.py::test_missing_database_returns_no_rows",
+    "tests/test_compression_worth.py::test_missing_fields_default_to_zero",
+    "tests/test_compression_worth.py::test_no_output_data_produces_no_output_section",
+    "tests/test_compression_worth.py::test_overhead_from_passthrough_traffic_is_not_attributable",
+    "tests/test_compression_worth.py::test_passthrough_rate_is_reported",
+    "tests/test_compression_worth.py::test_per_agent_breakdown",
+    "tests/test_compression_worth.py::test_proxy_only_report_omits_the_hook_section",
+    "tests/test_compression_worth.py::test_reads_real_ledger_rows",
+    "tests/test_compression_worth.py::test_report_names_coverage_as_the_cap",
+    "tests/test_compression_worth.py::test_report_names_the_mismatch_rather_than_the_sample_size",
+    "tests/test_compression_worth.py::test_rows_outside_the_window_are_excluded",
+    "tests/test_compression_worth.py::test_savings_never_go_negative",
+    "tests/test_compression_worth.py::test_scored_report_states_the_rate_and_its_limits",
+    "tests/test_compression_worth.py::test_since_filter_reads_only_rows_after_the_boundary",
+    "tests/test_compression_worth.py::test_small_samples_refuse_to_report_a_rate",
+    "tests/test_compression_worth.py::test_small_traffic_does_not_cry_wolf",
+    "tests/test_compression_worth.py::test_the_headline_discloses_hook_rows_it_counts_as_proxied",
+    "tests/test_compression_worth.py::test_thin_coverage_without_passthrough_reads_as_sample_size",
+    "tests/test_compression_worth.py::test_totals_and_realized_rate",
+    "tests/test_compression_worth.py::test_usage_from_compressed_requests_is_attributable"
+  ],
+  "prompt": "`memor compression-worth` reports only input-side figures. Output tokens bill at roughly five times input, so a compressed prompt that leads the model to write a longer answer can cost money while the report still shows a saving. The ledger has stored `upstream_output_tokens` for months and nothing reads it. Make the report account for output tokens, and make it say `unmeasured` rather than zero when an arm has too little data to tell. The relevant tests are in tests/test_compression_worth.py.\n\nRun the tests to see the current failures, then change the source so they pass. Do not edit anything under tests/ \u2014 the test files are restored from git before grading, so changes there are discarded. Do not change unrelated behaviour."
+}

@@ -1,0 +1,23 @@
+{
+  "id": "memor-fd10ab9",
+  "commit": "fd10ab9",
+  "origin_subject": "Label Codex's MCP recalls as Codex, not as jcode",
+  "src_files": [
+    "memor/proxy/install.py"
+  ],
+  "test_files": [
+    "tests/test_codex_mcp_registration.py"
+  ],
+  "fail_to_pass": [
+    "tests/test_codex_mcp_registration.py::test_a_wrong_existing_label_is_corrected",
+    "tests/test_codex_mcp_registration.py::test_existing_registration_gains_the_label",
+    "tests/test_codex_mcp_registration.py::test_registration_labels_recalls_as_codex",
+    "tests/test_codex_mcp_registration.py::test_reregistering_does_not_duplicate_the_label"
+  ],
+  "pass_to_pass": [
+    "tests/test_codex_mcp_registration.py::test_missing_binary_is_an_explicit_error",
+    "tests/test_codex_mcp_registration.py::test_registration_writes_valid_toml",
+    "tests/test_codex_mcp_registration.py::test_unrelated_codex_config_is_preserved"
+  ],
+  "prompt": "Recalls that Codex makes through the memor MCP server are being filed under the agent name `jcode` rather than `codex`. The dashboard therefore shows Codex as an agent that never reads memory, while jcode looks busier than it is. Fix the Codex MCP registration so Codex's recalls are attributed to Codex, including for an installation that was already registered with the wrong label. The relevant tests are in tests/test_codex_mcp_registration.py.\n\nRun the tests to see the current failures, then change the source so they pass. Do not edit anything under tests/ \u2014 the test files are restored from git before grading, so changes there are discarded. Do not change unrelated behaviour."
+}
