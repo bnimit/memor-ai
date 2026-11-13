@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Codex through the proxy, and savings in dollars per model
+
+**Added**
+
+- **The proxy serves the OpenAI Responses API.** Current Codex speaks nothing
+  else, so a Codex pointed at the proxy posted to `/v1/responses` and got a
+  404. Tool outputs in `input` items are now compressed, usage is read from
+  the body or the stream's `response.completed` event (cached tokens split
+  out), recall extends a trailing user turn, and the upstream is derived from
+  the stored Chat Completions URL. Tested against recorded request shapes,
+  not yet a live Codex session.
+- **Savings are priced per model.** Every ledger row records its model: the
+  request's `model` on the proxy path, the transcript's latest assistant turn
+  on the hook path. The Overview's dollar figure prices each model at its
+  first-party list input rate and uses your flat rate only for models without
+  a price; `model_prices` in `~/.memor/config.json` adds or corrects rates.
+  The cache-read value of the same tokens is shown as the lower bound.
+- **Savings by period on the Overview.** Daily, weekly and monthly savings
+  with dollars and running totals, plus active days, average per active day,
+  average per week and best day, and a lifetime table by model
+  (`/api/savings-value`).
+
+**Changed**
+
+- The three proxy handlers (Messages, Chat Completions, Responses) share one
+  code path instead of two near copies.
+
 ## [0.16.0] - 2026-10-17
 
 ### The first screen is a receipt

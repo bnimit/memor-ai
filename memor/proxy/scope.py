@@ -26,10 +26,15 @@ from pathlib import Path
 #: How agents state the working directory. Matched case-insensitively; a form
 #: that does not appear here simply falls through to the path evidence.
 _CWD_LABEL = re.compile(
-    r"(?:working directory|cwd|workspace(?:\s+root)?|project\s+root)\s*[:=]\s*"
-    r"[\"'`]?(/[^\s\"'`\n<>]+)",
+    r"(?:(?:working directory|cwd|workspace(?:\s+root)?|project\s+root)\s*[:=]\s*"
+    r"[\"'`]?|<cwd>\s*)(/[^\s\"'`\n<>]+)",
     re.IGNORECASE,
 )
+
+#: Opening user turns scanned for a declared directory. Codex sends its
+#: ``<environment_context>`` as a user message of its own, after the one
+#: carrying AGENTS.md, so the first turn alone can miss it.
+_USER_TURNS_SCANNED = 3
 
 #: Tool inputs that name a file. Mirrors memor.trajectory.
 _PATH_KEYS = ("file_path", "notebook_path", "path", "filePath", "cwd")
@@ -44,7 +49,10 @@ _MAX_TOOL_BLOCKS = 400
 
 
 def _system_text(body: dict) -> str:
+    # Anthropic's ``system``; the Responses API calls it ``instructions``.
     system = body.get("system")
+    if system is None:
+        system = body.get("instructions")
     if isinstance(system, str):
         return system[:_SYSTEM_SCAN_CHARS]
     if isinstance(system, list):
@@ -72,19 +80,30 @@ def _declared_directory(body: dict) -> str | None:
 
 
 def _first_user_text(body: dict) -> str:
-    """Agents often restate the environment in the opening user turn."""
-    for message in body.get("messages", []) or []:
+    """Agents often restate the environment in the opening user turns."""
+    messages, limit = body.get("messages"), 1
+    if messages is None:
+        messages, limit = body.get("input"), _USER_TURNS_SCANNED  # Responses
+    if isinstance(messages, str):
+        return messages[:_SYSTEM_SCAN_CHARS]
+    texts: list[str] = []
+    for message in messages or []:
         if not isinstance(message, dict) or message.get("role") != "user":
             continue
         content = message.get("content")
+        text = ""
         if isinstance(content, str):
-            return content[:_SYSTEM_SCAN_CHARS]
-        if isinstance(content, list):
+            text = content
+        elif isinstance(content, list):
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    return block.get("text", "")[:_SYSTEM_SCAN_CHARS]
-        return ""
-    return ""
+                if (isinstance(block, dict)
+                        and block.get("type") in ("text", "input_text")):
+                    text = block.get("text", "")
+                    break
+        texts.append(text[:_SYSTEM_SCAN_CHARS])
+        if len(texts) >= limit:
+            break
+    return "\n".join(texts)
 
 
 def _touched_paths(body: dict) -> list[str]:

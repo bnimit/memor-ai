@@ -52,7 +52,7 @@ def _text_of(content) -> str:
         for block in content:
             if isinstance(block, str):
                 parts.append(block)
-            elif isinstance(block, dict) and block.get("type") == "text":
+            elif isinstance(block, dict) and block.get("type") in ("text", "input_text"):
                 parts.append(block.get("text", ""))
         return "\n".join(p for p in parts if p)
     return ""
@@ -62,7 +62,16 @@ def key_from_body(body: dict) -> str:
     """Conversation key as seen by the proxy, from a request body."""
     if not isinstance(body, dict):
         return ""
-    for message in body.get("messages", []) or []:
+    messages = body.get("messages")
+    if messages is None:
+        # OpenAI Responses: the conversation lives in ``input``, which is
+        # either the opening prompt itself or a list of items.
+        messages = body.get("input")
+        if isinstance(messages, str):
+            return conversation_key(messages)
+    if not isinstance(messages, list):
+        return ""
+    for message in messages:
         if isinstance(message, dict) and message.get("role") == "user":
             return conversation_key(_text_of(message.get("content")))
     return ""

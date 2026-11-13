@@ -253,6 +253,84 @@ def create_app(db_path: str | None = None) -> FastAPI:
             ),
         }
 
+    @app.get("/api/savings-value")
+    def savings_value(days: int = Query(365, ge=1, le=3650)):
+        """Savings priced per model, lifetime and by day, week and month.
+
+        Each row is priced at its own model's list input rate (memor.pricing).
+        Rows whose model is unknown, or was never recorded, are returned as
+        ``tokens_unpriced`` for the page to price at the user's flat rate, so
+        the server never guesses a price and the page never guesses a model.
+        ``usd_floor`` prices the same tokens as cache reads: the least they
+        could be worth if every resend was served from the prompt cache.
+        """
+        import time as _time
+
+        from memor.pricing import Pricer
+
+        store = _store()
+        price = Pricer()
+
+        def priced(rows: list[dict]) -> dict:
+            out = {"tokens_saved": 0, "tokens_unpriced": 0,
+                   "usd_priced": 0.0, "usd_floor_priced": 0.0}
+            for r in rows:
+                tokens = r["tokens_saved"]
+                out["tokens_saved"] += tokens
+                p = price(r["model"])
+                if p is None:
+                    out["tokens_unpriced"] += tokens
+                else:
+                    out["usd_priced"] += tokens * p.input_per_m / 1e6
+                    out["usd_floor_priced"] += tokens * p.cache_read_per_m / 1e6
+            out["usd_priced"] = round(out["usd_priced"], 4)
+            out["usd_floor_priced"] = round(out["usd_floor_priced"], 4)
+            return out
+
+        lifetime_rows = store.get_savings_by_model()
+        models = []
+        for r in sorted(lifetime_rows, key=lambda r: -r["tokens_saved"]):
+            if r["tokens_saved"] <= 0:
+                continue
+            p = price(r["model"])
+            models.append({
+                "model": r["model"],
+                "tokens_saved": r["tokens_saved"],
+                "requests": r["requests"],
+                "price": p.as_dict() if p else None,
+                "usd": round(r["tokens_saved"] * p.input_per_m / 1e6, 4) if p else None,
+                "usd_floor": (round(r["tokens_saved"] * p.cache_read_per_m / 1e6, 4)
+                              if p else None),
+            })
+
+        since = _time.time() - days * 86400
+        periods = {}
+        for name, fmt in (("daily", "%Y-%m-%d"), ("weekly", "%Y-W%W"),
+                          ("monthly", "%Y-%m")):
+            grouped: dict[str, list[dict]] = {}
+            for r in store.get_savings_by_model(bucket=fmt, since=since):
+                if r["bucket"] is not None:
+                    grouped.setdefault(r["bucket"], []).append(r)
+            periods[name] = [
+                {"bucket": b, **priced(grouped[b])} for b in sorted(grouped)
+            ]
+
+        return {
+            "days": days,
+            "lifetime": priced(lifetime_rows),
+            "models": models,
+            "daily": periods["daily"],
+            "weekly": periods["weekly"],
+            "monthly": periods["monthly"],
+            "note": (
+                "Priced at each model's first-party list input rate; models "
+                "memor has no price for use your flat rate. Estimates, not an "
+                "invoice: cloud resellers price differently, and most resends "
+                "of a saved token are cache reads, worth the lower floor. Set "
+                "model_prices in ~/.memor/config.json to correct a rate."
+            ),
+        }
+
     @app.get("/api/session-efficiency")
     def session_efficiency():
         store = _store()

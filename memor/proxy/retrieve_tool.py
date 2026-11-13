@@ -82,6 +82,11 @@ def inject_retrieve_tool(provider: str, body: dict, *, has_marker: bool) -> dict
     """
     if not has_marker:
         return body
+    if provider == "responses":
+        # Codex, the Responses client memor proxies, gets `memor_retrieve`
+        # from the MCP server `memor install-proxy codex` registers. Declaring
+        # it here as well would hand the model a function Codex cannot run.
+        return body
 
     tools = body.get("tools")
     if not isinstance(tools, list) or not tools:

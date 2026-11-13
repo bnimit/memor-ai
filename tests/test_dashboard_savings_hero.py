@@ -46,6 +46,7 @@ const els = {};
 ["savings-pct","savings-before","savings-after","cum-saved-big",
  "cum-saved-lifetime","cum-saved-meta","content-types-list",
  "hero-subtitle","hero-dollar","hero-dollar-value","hero-rate-btn",
+ "hero-dollar-basis","hero-rate-wrap","hero-rate-rest",
  "hero-footnote","hero-recall-pill"]
   .forEach(id => els[id] = {id, textContent: "", hidden: false});
 els["hero-dollar"].hidden = true;
@@ -62,6 +63,7 @@ const out = {};
 for (const [id, e] of Object.entries(els)) {
   out[id] = e.textContent;
   if (id === "hero-dollar") out["hero-dollar-hidden"] = !!e.hidden;
+  if (id === "hero-rate-wrap") out["hero-rate-wrap-hidden"] = !!e.hidden;
 }
 console.log(JSON.stringify(out));
 """
@@ -215,3 +217,74 @@ def test_dollar_line_hidden_when_lifetime_zero(tmp_path):
     payload["lifetime"]["pct_saved"] = 0.0
     out = render(payload, tmp_path)
     assert out["hero-dollar-hidden"] is True
+
+
+# --- per-model pricing -----------------------------------------------------
+
+
+def test_bucket_dollars_prices_unpriced_tokens_at_the_flat_rate(tmp_path):
+    assert run_helper(
+        "bucketDollars({usd_priced: 8, tokens_unpriced: 2000000}, 3)", tmp_path) == 14.0
+    assert run_helper("bucketDollars(null, 3)", tmp_path) == 0
+
+
+def test_priced_dollars_names_its_basis(tmp_path):
+    def mode(unpriced):
+        return run_helper(
+            f"pricedDollars({{tokens_saved: 100, tokens_unpriced: {unpriced}, "
+            f"usd_priced: 1, usd_floor_priced: 0.1}}, 3).mode", tmp_path)
+    assert (mode(0), mode(40), mode(100)) == ("model", "mixed", "flat")
+    assert run_helper("pricedDollars({tokens_saved: 0}, 3)", tmp_path) is None
+
+
+def test_fmt_usd(tmp_path):
+    assert run_helper("[fmtUsd(0), fmtUsd(0.004), fmtUsd(3.456), fmtUsd(1234.5)]",
+                      tmp_path) == ["$0.00", "<$0.01", "$3.46", "$1,235"]
+
+
+def test_period_stats_spreads_weeks_from_the_first_active_day(tmp_path):
+    stats = run_helper(
+        "periodStats(["
+        "{bucket:'2026-10-01', tokens_saved:700, usd_priced:0, tokens_unpriced:700},"
+        "{bucket:'2026-10-05', tokens_saved:0},"
+        "{bucket:'2026-10-14', tokens_saved:1400, usd_priced:0, tokens_unpriced:1400}"
+        "], 1000000, '2026-10-14')", tmp_path)
+    assert stats["active_days"] == 2
+    assert stats["span_days"] == 14
+    assert stats["per_active_day"]["tokens"] == 1050
+    assert stats["per_week"]["tokens"] == 1050
+    assert stats["best"] == {"bucket": "2026-10-14", "tokens": 1400, "usd": 1400}
+    assert run_helper("periodStats([], 3, '2026-10-14')", tmp_path) is None
+
+
+def test_hero_prices_per_model_and_keeps_the_flat_rate_for_the_rest(tmp_path):
+    payload = _payload(date.today().isoformat(), 50, lifetime=4_000_000)
+    payload["value"] = {"lifetime": {
+        "tokens_saved": 4_000_000, "tokens_unpriced": 1_000_000,
+        "usd_priced": 12.0, "usd_floor_priced": 0.6,
+    }}
+    out = render(payload, tmp_path)
+    assert out["hero-dollar-value"] == "15.00"  # $12 priced + 1M at $3
+    assert "each model's list input rate" in out["hero-dollar-basis"]
+    assert out["hero-rate-wrap-hidden"] is False
+    assert "without a price" in out["hero-rate-rest"]
+    assert "$0.60 for the priced share" in out["hero-footnote"]
+
+
+def test_hero_hides_the_flat_rate_when_every_model_is_priced(tmp_path):
+    payload = _payload(date.today().isoformat(), 50, lifetime=1_000_000)
+    payload["value"] = {"lifetime": {
+        "tokens_saved": 1_000_000, "tokens_unpriced": 0,
+        "usd_priced": 4.0, "usd_floor_priced": 0.2,
+    }}
+    out = render(payload, tmp_path)
+    assert out["hero-dollar-value"] == "4.00"
+    assert out["hero-rate-wrap-hidden"] is True
+    assert "Priced as cache reads, which most resends are: $0.20." in out["hero-footnote"]
+
+
+def test_hero_without_model_data_keeps_the_flat_estimate(tmp_path):
+    out = render(_payload(date.today().isoformat(), 50, lifetime=1_000_000), tmp_path)
+    assert out["hero-dollar-value"] == "3.00"
+    assert out["hero-dollar-basis"] == "at"
+    assert "cache reads" not in out["hero-footnote"]

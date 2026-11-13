@@ -121,6 +121,46 @@ def usage_from_openai(payload: dict) -> UpstreamUsage:
     )
 
 
+def usage_from_responses(payload: dict) -> UpstreamUsage:
+    """Usage from an OpenAI Responses body or a streamed event.
+
+    A non-streaming response carries ``usage`` at the top level. A stream
+    carries it once, on the ``response.completed`` event, nested under
+    ``response``. Like Chat Completions, ``input_tokens`` includes the cached
+    tokens reported in ``input_tokens_details.cached_tokens``, so they are
+    split out the same way.
+    """
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        response = payload.get("response")
+        if isinstance(response, dict):
+            usage = response.get("usage")
+    if not isinstance(usage, dict):
+        return UpstreamUsage()
+    total = _as_int(usage.get("input_tokens"))
+    cached = None
+    details = usage.get("input_tokens_details")
+    if isinstance(details, dict):
+        cached = _as_int(details.get("cached_tokens"))
+    uncached = total
+    if total is not None and cached is not None:
+        uncached = max(0, total - cached)
+    return UpstreamUsage(
+        input_tokens=uncached,
+        cache_read_tokens=cached,
+        cache_creation_tokens=None,
+        output_tokens=_as_int(usage.get("output_tokens")),
+    )
+
+
+#: Usage parser per wire protocol.
+USAGE_PARSERS = {
+    "anthropic": usage_from_anthropic,
+    "openai": usage_from_openai,
+    "responses": usage_from_responses,
+}
+
+
 class UsageSniffer:
     """Extracts usage from an SSE byte stream without altering it.
 
@@ -174,10 +214,7 @@ class UsageSniffer:
 
     def observe(self, payload: dict) -> None:
         """Merge usage from one decoded frame."""
-        if self.protocol == "anthropic":
-            found = usage_from_anthropic(payload)
-        else:
-            found = usage_from_openai(payload)
+        found = USAGE_PARSERS.get(self.protocol, usage_from_openai)(payload)
         if not found.is_empty():
             self.usage.merge(found)
 
